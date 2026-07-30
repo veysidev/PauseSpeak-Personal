@@ -1,15 +1,16 @@
 (() => {
   const panelId = "pausespeak-status-panel";
 
-  // Aynı panelin iki kez oluşmasını engeller.
   if (document.getElementById(panelId)) {
     return;
   }
 
-  let lastSubtitle = "";
+  let currentSubtitle = "";
+  let sentenceParts = [];
   let lastVideoFound = null;
 
   const panel = document.createElement("div");
+  panel.id = panelId;
 
   const title = document.createElement("div");
   title.textContent = "PauseSpeak";
@@ -18,10 +19,16 @@
   status.textContent = "Video aranıyor...";
 
   const subtitleTitle = document.createElement("div");
-  subtitleTitle.textContent = "İngilizce altyazı";
+  subtitleTitle.textContent = "Aktif İngilizce altyazı";
 
   const subtitleBox = document.createElement("div");
   subtitleBox.textContent = "Altyazı bekleniyor...";
+
+  const completedTitle = document.createElement("div");
+  completedTitle.textContent = "Tamamlanan cümle";
+
+  const completedBox = document.createElement("div");
+  completedBox.textContent = "Henüz tamamlanan cümle yok.";
 
   const pauseButton = document.createElement("button");
   pauseButton.textContent = "Durdur";
@@ -29,14 +36,12 @@
   const playButton = document.createElement("button");
   playButton.textContent = "Devam Et";
 
-  panel.id = panelId;
-
   Object.assign(panel.style, {
     position: "fixed",
     top: "20px",
     right: "20px",
     zIndex: "2147483647",
-    width: "300px",
+    width: "320px",
     padding: "16px",
     backgroundColor: "#111827",
     color: "#ffffff",
@@ -56,22 +61,26 @@
     marginBottom: "12px"
   });
 
-  Object.assign(subtitleTitle.style, {
-    marginTop: "14px",
-    marginBottom: "6px",
-    fontSize: "12px",
-    fontWeight: "bold",
-    color: "#9ca3af"
+  [subtitleTitle, completedTitle].forEach((element) => {
+    Object.assign(element.style, {
+      marginTop: "12px",
+      marginBottom: "6px",
+      fontSize: "12px",
+      fontWeight: "bold",
+      color: "#9ca3af"
+    });
   });
 
-  Object.assign(subtitleBox.style, {
-    minHeight: "42px",
-    padding: "10px",
-    marginBottom: "12px",
-    backgroundColor: "#1f2937",
-    borderRadius: "8px",
-    lineHeight: "1.45",
-    color: "#ffffff"
+  [subtitleBox, completedBox].forEach((element) => {
+    Object.assign(element.style, {
+      minHeight: "38px",
+      padding: "10px",
+      marginBottom: "10px",
+      backgroundColor: "#1f2937",
+      borderRadius: "8px",
+      lineHeight: "1.45",
+      color: "#ffffff"
+    });
   });
 
   [pauseButton, playButton].forEach((button) => {
@@ -102,9 +111,7 @@
   }
 
   function cleanText(text) {
-    return text
-      .replace(/\s+/g, " ")
-      .trim();
+    return text.replace(/\s+/g, " ").trim();
   }
 
   function getNetflixSubtitle() {
@@ -121,7 +128,9 @@
       ).filter(isVisible);
 
       const texts = elements
-        .map((element) => cleanText(element.innerText || element.textContent))
+        .map((element) =>
+          cleanText(element.innerText || element.textContent || "")
+        )
         .filter(Boolean);
 
       const uniqueTexts = [...new Set(texts)];
@@ -132,6 +141,54 @@
     }
 
     return "";
+  }
+
+  function endsSentence(text) {
+    return /[.!?…]["'’”)\]]*$/.test(text.trim());
+  }
+
+  function addSentencePart(text) {
+    if (!text) {
+      return;
+    }
+
+    const lastPart = sentenceParts[sentenceParts.length - 1];
+
+    if (!lastPart) {
+      sentenceParts.push(text);
+      return;
+    }
+
+    // Netflix bazen eski satırı yeni altyazının içinde tekrar gösterir.
+    if (text.includes(lastPart)) {
+      sentenceParts[sentenceParts.length - 1] = text;
+      return;
+    }
+
+    if (lastPart.includes(text)) {
+      return;
+    }
+
+    sentenceParts.push(text);
+  }
+
+  function finishSentence(video) {
+    const fullSentence = cleanText(sentenceParts.join(" "));
+
+    if (!fullSentence) {
+      return;
+    }
+
+    completedBox.textContent = fullSentence;
+    subtitleBox.textContent = fullSentence;
+    sentenceParts = [];
+
+    if (video && !video.paused) {
+      video.pause();
+      status.textContent = "⏸️ Cümle bitti — video durduruldu";
+    } else {
+      status.textContent = "✅ Cümle tamamlandı";
+    }
   }
 
   function updateVideoStatus() {
@@ -156,16 +213,29 @@
   }
 
   function updateSubtitle() {
-    const subtitle = getNetflixSubtitle();
+    const video = getNetflixVideo();
+    const newSubtitle = getNetflixSubtitle();
 
-    if (!subtitle || subtitle === lastSubtitle) {
+    if (newSubtitle === currentSubtitle) {
       return;
     }
 
-    lastSubtitle = subtitle;
-    subtitleBox.textContent = subtitle;
+    const previousSubtitle = currentSubtitle;
+    currentSubtitle = newSubtitle;
 
-    console.log("PauseSpeak altyazı:", subtitle);
+    if (previousSubtitle) {
+      addSentencePart(previousSubtitle);
+
+      if (endsSentence(previousSubtitle)) {
+        finishSentence(video);
+      }
+    }
+
+    if (newSubtitle) {
+      subtitleBox.textContent = newSubtitle;
+    } else if (!previousSubtitle) {
+      subtitleBox.textContent = "Altyazı bekleniyor...";
+    }
   }
 
   pauseButton.addEventListener("click", () => {
@@ -193,7 +263,7 @@
       status.textContent = "▶️ Video oynatılıyor";
     } catch (error) {
       status.textContent = "Video başlatılamadı";
-      console.error(error);
+      console.error("PauseSpeak oynatma hatası:", error);
     }
   });
 
@@ -201,6 +271,8 @@
   panel.appendChild(status);
   panel.appendChild(subtitleTitle);
   panel.appendChild(subtitleBox);
+  panel.appendChild(completedTitle);
+  panel.appendChild(completedBox);
   panel.appendChild(pauseButton);
   panel.appendChild(playButton);
 
@@ -223,5 +295,5 @@
   setInterval(() => {
     updateVideoStatus();
     updateSubtitle();
-  }, 500);
+  }, 400);
 })();
