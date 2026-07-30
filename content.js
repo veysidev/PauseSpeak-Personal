@@ -1,6 +1,11 @@
 (() => {
   const panelId = "pausespeak-status-panel";
 
+  const translationApiUrl =
+    "http://localhost:3000/translate";
+
+  const translationTimeoutMs = 8000;
+
   if (document.getElementById(panelId)) {
     return;
   }
@@ -15,6 +20,10 @@
   let activeReplayRequestId = null;
   let replayTimeout = null;
   let replayGuardUntilVideoTime = null;
+  let isReplayPlaybackActive = false;
+
+  let previousCompletedSentence = "";
+  let translationRequestNumber = 0;
 
   const panel = document.createElement("div");
   panel.id = panelId;
@@ -26,33 +35,53 @@
   status.textContent = "Video aranıyor...";
 
   const subtitleTitle = document.createElement("div");
-  subtitleTitle.textContent = "Aktif İngilizce altyazı";
+  subtitleTitle.textContent =
+    "Aktif İngilizce altyazı";
 
   const subtitleBox = document.createElement("div");
-  subtitleBox.textContent = "Altyazı bekleniyor...";
+  subtitleBox.textContent =
+    "Altyazı bekleniyor...";
 
-  const completedTitle = document.createElement("div");
-  completedTitle.textContent = "Tamamlanan İngilizce cümle";
+  const completedTitle =
+    document.createElement("div");
 
-  const completedBox = document.createElement("div");
+  completedTitle.textContent =
+    "Tamamlanan İngilizce cümle";
+
+  const completedBox =
+    document.createElement("div");
+
   completedBox.textContent =
     "Henüz tamamlanan cümle yok.";
 
-  const translationTitle = document.createElement("div");
-  translationTitle.textContent = "Türkçe çeviri";
+  const translationTitle =
+    document.createElement("div");
 
-  const translationBox = document.createElement("div");
+  translationTitle.textContent =
+    "Türkçe çeviri";
+
+  const translationBox =
+    document.createElement("div");
+
   translationBox.textContent =
-    "Çeviri özelliği henüz bağlanmadı.";
+    "İngilizce cümle tamamlandığında çeviri gösterilecek.";
 
-  const replayButton = document.createElement("button");
-  replayButton.textContent = "Cümleyi Tekrar Oynat";
+  const replayButton =
+    document.createElement("button");
+
+  replayButton.textContent =
+    "Cümleyi Tekrar Oynat";
+
   replayButton.disabled = true;
 
-  const pauseButton = document.createElement("button");
+  const pauseButton =
+    document.createElement("button");
+
   pauseButton.textContent = "Durdur";
 
-  const playButton = document.createElement("button");
+  const playButton =
+    document.createElement("button");
+
   playButton.textContent = "Devam Et";
 
   Object.assign(panel.style, {
@@ -69,7 +98,8 @@
     borderRadius: "12px",
     fontFamily: "Arial, sans-serif",
     fontSize: "14px",
-    boxShadow: "0 6px 20px rgba(0, 0, 0, 0.35)"
+    boxShadow:
+      "0 6px 20px rgba(0, 0, 0, 0.35)"
   });
 
   Object.assign(title.style, {
@@ -153,7 +183,9 @@
   }
 
   function cleanText(text) {
-    return text.replace(/\s+/g, " ").trim();
+    return text
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
   function getNetflixSubtitle() {
@@ -179,7 +211,8 @@
         )
         .filter(Boolean);
 
-      const uniqueTexts = [...new Set(texts)];
+      const uniqueTexts =
+        [...new Set(texts)];
 
       if (uniqueTexts.length > 0) {
         return uniqueTexts.join(" ");
@@ -201,7 +234,9 @@
     }
 
     const lastPart =
-      sentenceParts[sentenceParts.length - 1];
+      sentenceParts[
+        sentenceParts.length - 1
+      ];
 
     if (!lastPart) {
       sentenceParts.push(text);
@@ -212,6 +247,7 @@
       sentenceParts[
         sentenceParts.length - 1
       ] = text;
+
       return;
     }
 
@@ -220,6 +256,97 @@
     }
 
     sentenceParts.push(text);
+  }
+
+  async function translateSentence(
+    text,
+    previousText
+  ) {
+    const requestNumber =
+      ++translationRequestNumber;
+
+    const controller =
+      new AbortController();
+
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, translationTimeoutMs);
+
+    translationBox.textContent =
+      "Çevriliyor...";
+
+    try {
+      const response = await fetch(
+        translationApiUrl,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+
+          body: JSON.stringify({
+            text,
+            previousText
+          }),
+
+          signal: controller.signal
+        }
+      );
+
+      const data =
+        await response.json();
+
+      if (
+        requestNumber !==
+        translationRequestNumber
+      ) {
+        return;
+      }
+
+      if (
+        !response.ok ||
+        !data?.success ||
+        typeof data.translation !==
+          "string"
+      ) {
+        throw new Error(
+          data?.error ||
+            "Çeviri alınamadı."
+        );
+      }
+
+      translationBox.textContent =
+        data.translation;
+    } catch (error) {
+      if (
+        requestNumber !==
+        translationRequestNumber
+      ) {
+        return;
+      }
+
+      if (error.name === "AbortError") {
+        translationBox.textContent =
+          "Çeviri isteği zaman aşımına uğradı.";
+      } else if (
+        error instanceof TypeError
+      ) {
+        translationBox.textContent =
+          "PauseSpeak sunucusuna ulaşılamadı. Sunucunun açık olduğunu kontrol et.";
+      } else {
+        translationBox.textContent =
+          "Çeviri alınamadı.";
+      }
+
+      console.error(
+        "PauseSpeak çeviri hatası:",
+        error
+      );
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   function finishSentence(video) {
@@ -231,11 +358,26 @@
       return;
     }
 
-    completedBox.textContent = fullSentence;
-    subtitleBox.textContent = fullSentence;
+    completedBox.textContent =
+      fullSentence;
 
-    translationBox.textContent =
-      "Bu cümlenin Türkçe çevirisi sonraki adımda gösterilecek.";
+    subtitleBox.textContent =
+      fullSentence;
+
+    if (isReplayPlaybackActive) {
+      isReplayPlaybackActive = false;
+    } else {
+      const previousText =
+        previousCompletedSentence;
+
+      previousCompletedSentence =
+        fullSentence;
+
+      void translateSentence(
+        fullSentence,
+        previousText
+      );
+    }
 
     const currentTime = video
       ? Number(video.currentTime)
@@ -249,7 +391,10 @@
         ) * 1000;
     } else {
       completedStartTimeMs =
-        Math.max(0, currentTime - 3) * 1000;
+        Math.max(
+          0,
+          currentTime - 3
+        ) * 1000;
     }
 
     replayButton.disabled = false;
@@ -285,6 +430,7 @@
 
       pauseButton.disabled = false;
       playButton.disabled = false;
+
       replayButton.disabled =
         completedStartTimeMs === null;
     } else {
@@ -299,10 +445,14 @@
 
   function updateSubtitle() {
     const video = getNetflixVideo();
+
     const newSubtitle =
       getNetflixSubtitle();
 
-    if (newSubtitle === currentSubtitle) {
+    if (
+      newSubtitle ===
+      currentSubtitle
+    ) {
       return;
     }
 
@@ -325,7 +475,8 @@
     let replayGuardActive = false;
 
     if (
-      replayGuardUntilVideoTime !== null &&
+      replayGuardUntilVideoTime !==
+        null &&
       video
     ) {
       replayGuardActive =
@@ -333,7 +484,8 @@
         replayGuardUntilVideoTime;
 
       if (!replayGuardActive) {
-        replayGuardUntilVideoTime = null;
+        replayGuardUntilVideoTime =
+          null;
       }
     }
 
@@ -341,19 +493,28 @@
       previousSubtitle &&
       !replayGuardActive
     ) {
-      addSentencePart(previousSubtitle);
+      addSentencePart(
+        previousSubtitle
+      );
 
-      if (endsSentence(previousSubtitle)) {
+      if (
+        endsSentence(
+          previousSubtitle
+        )
+      ) {
         finishSentence(video);
       }
     }
 
     if (newSubtitle) {
-      if (sentenceStartTime === null) {
+      if (
+        sentenceStartTime === null
+      ) {
         sentenceStartTime = video
           ? Math.max(
               0,
-              video.currentTime - 0.15
+              video.currentTime -
+                0.15
             )
           : null;
       }
@@ -366,7 +527,10 @@
     }
   }
 
-  function finishReplay(success, message) {
+  function finishReplay(
+    success,
+    message
+  ) {
     if (replayTimeout) {
       clearTimeout(replayTimeout);
       replayTimeout = null;
@@ -377,10 +541,13 @@
 
     pauseButton.disabled = false;
     playButton.disabled = false;
+
     replayButton.disabled =
       completedStartTimeMs === null;
 
     if (!success) {
+      isReplayPlaybackActive = false;
+
       status.textContent =
         `❌ ${
           message ||
@@ -390,6 +557,8 @@
       return;
     }
 
+    isReplayPlaybackActive = true;
+
     const replayStartSeconds =
       completedStartTimeMs !== null
         ? completedStartTimeMs / 1000
@@ -397,6 +566,7 @@
 
     currentSubtitle = "";
     sentenceParts = [];
+
     sentenceStartTime =
       replayStartSeconds;
 
@@ -413,7 +583,8 @@
   replayButton.addEventListener(
     "click",
     () => {
-      const video = getNetflixVideo();
+      const video =
+        getNetflixVideo();
 
       if (
         !video ||
@@ -427,6 +598,7 @@
 
       video.pause();
 
+      isReplayPlaybackActive = false;
       isReplayStarting = true;
       currentSubtitle = "";
       sentenceParts = [];
@@ -444,23 +616,28 @@
 
       window.postMessage(
         {
-          source: "PAUSESPEAK_EXTENSION",
+          source:
+            "PAUSESPEAK_EXTENSION",
+
           type:
             "PAUSESPEAK_REPLAY_REQUEST",
+
           requestId:
             activeReplayRequestId,
+
           targetTimeMs:
             completedStartTimeMs
         },
         "*"
       );
 
-      replayTimeout = setTimeout(() => {
-        finishReplay(
-          false,
-          "Netflix oynatıcıdan cevap alınamadı"
-        );
-      }, 6000);
+      replayTimeout =
+        setTimeout(() => {
+          finishReplay(
+            false,
+            "Netflix oynatıcıdan cevap alınamadı"
+          );
+        }, 6000);
     }
   );
 
@@ -495,11 +672,13 @@
   pauseButton.addEventListener(
     "click",
     () => {
-      const video = getNetflixVideo();
+      const video =
+        getNetflixVideo();
 
       if (!video) {
         status.textContent =
           "Video bulunamadı";
+
         return;
       }
 
@@ -513,11 +692,13 @@
   playButton.addEventListener(
     "click",
     async () => {
-      const video = getNetflixVideo();
+      const video =
+        getNetflixVideo();
 
       if (!video) {
         status.textContent =
           "Video bulunamadı";
+
         return;
       }
 
@@ -540,31 +721,56 @@
 
   panel.appendChild(title);
   panel.appendChild(status);
-  panel.appendChild(subtitleTitle);
-  panel.appendChild(subtitleBox);
-  panel.appendChild(completedTitle);
-  panel.appendChild(completedBox);
-  panel.appendChild(translationTitle);
-  panel.appendChild(translationBox);
-  panel.appendChild(replayButton);
+
+  panel.appendChild(
+    subtitleTitle
+  );
+
+  panel.appendChild(
+    subtitleBox
+  );
+
+  panel.appendChild(
+    completedTitle
+  );
+
+  panel.appendChild(
+    completedBox
+  );
+
+  panel.appendChild(
+    translationTitle
+  );
+
+  panel.appendChild(
+    translationBox
+  );
+
+  panel.appendChild(
+    replayButton
+  );
 
   panel.appendChild(
     document.createElement("br")
   );
 
-  panel.appendChild(pauseButton);
-  panel.appendChild(playButton);
+  panel.appendChild(
+    pauseButton
+  );
+
+  panel.appendChild(
+    playButton
+  );
 
   document.documentElement.appendChild(
     panel
   );
 
-  const observer = new MutationObserver(
-    () => {
+  const observer =
+    new MutationObserver(() => {
       updateVideoStatus();
       updateSubtitle();
-    }
-  );
+    });
 
   observer.observe(
     document.documentElement,
