@@ -16,6 +16,16 @@
         "content.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.netflix.com/watch/*"
+      ],
+      "js": [
+        "player-bridge.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
     }
   ]
 }
