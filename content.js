@@ -7,7 +7,17 @@
 
   let currentSubtitle = "";
   let sentenceParts = [];
+  let sentenceStartTime = null;
+  let completedStartTimeMs = null;
   let lastVideoFound = null;
+
+  let isSeeking = false;
+  let activeSeekRequestId = null;
+  let seekTimeout = null;
+
+  // Cümlenin başına döndükten sonraki ilk oynatma için kullanılır.
+  let replayPending = false;
+  let replayGuardUntilVideoTime = null;
 
   const panel = document.createElement("div");
   panel.id = panelId;
@@ -28,7 +38,12 @@
   completedTitle.textContent = "Tamamlanan cümle";
 
   const completedBox = document.createElement("div");
-  completedBox.textContent = "Henüz tamamlanan cümle yok.";
+  completedBox.textContent =
+    "Henüz tamamlanan cümle yok.";
+
+  const rewindButton = document.createElement("button");
+  rewindButton.textContent = "Cümlenin Başına Dön";
+  rewindButton.disabled = true;
 
   const pauseButton = document.createElement("button");
   pauseButton.textContent = "Durdur";
@@ -83,16 +98,19 @@
     });
   });
 
-  [pauseButton, playButton].forEach((button) => {
-    Object.assign(button.style, {
-      padding: "9px 12px",
-      marginRight: "8px",
-      border: "none",
-      borderRadius: "7px",
-      cursor: "pointer",
-      fontWeight: "bold"
-    });
-  });
+  [rewindButton, pauseButton, playButton].forEach(
+    (button) => {
+      Object.assign(button.style, {
+        padding: "9px 12px",
+        marginRight: "8px",
+        marginBottom: "8px",
+        border: "none",
+        borderRadius: "7px",
+        cursor: "pointer",
+        fontWeight: "bold"
+      });
+    }
+  );
 
   function getNetflixVideo() {
     return document.querySelector("video");
@@ -129,7 +147,11 @@
 
       const texts = elements
         .map((element) =>
-          cleanText(element.innerText || element.textContent || "")
+          cleanText(
+            element.innerText ||
+              element.textContent ||
+              ""
+          )
         )
         .filter(Boolean);
 
@@ -152,14 +174,14 @@
       return;
     }
 
-    const lastPart = sentenceParts[sentenceParts.length - 1];
+    const lastPart =
+      sentenceParts[sentenceParts.length - 1];
 
     if (!lastPart) {
       sentenceParts.push(text);
       return;
     }
 
-    // Netflix bazen eski satırı yeni altyazının içinde tekrar gösterir.
     if (text.includes(lastPart)) {
       sentenceParts[sentenceParts.length - 1] = text;
       return;
@@ -173,7 +195,9 @@
   }
 
   function finishSentence(video) {
-    const fullSentence = cleanText(sentenceParts.join(" "));
+    const fullSentence = cleanText(
+      sentenceParts.join(" ")
+    );
 
     if (!fullSentence) {
       return;
@@ -181,11 +205,30 @@
 
     completedBox.textContent = fullSentence;
     subtitleBox.textContent = fullSentence;
+
+    const currentTime = video
+      ? Number(video.currentTime)
+      : 0;
+
+    if (sentenceStartTime !== null) {
+      completedStartTimeMs =
+        Math.max(0, sentenceStartTime - 0.25) * 1000;
+    } else {
+      completedStartTimeMs =
+        Math.max(0, currentTime - 3) * 1000;
+    }
+
+    rewindButton.disabled = false;
+
     sentenceParts = [];
+    sentenceStartTime = null;
+    replayPending = false;
+    replayGuardUntilVideoTime = null;
 
     if (video && !video.paused) {
       video.pause();
-      status.textContent = "⏸️ Cümle bitti — video durduruldu";
+      status.textContent =
+        "⏸️ Cümle bitti — video durduruldu";
     } else {
       status.textContent = "✅ Cümle tamamlandı";
     }
@@ -205,10 +248,13 @@
       status.textContent = "✅ Video bulundu";
       pauseButton.disabled = false;
       playButton.disabled = false;
+      rewindButton.disabled =
+        completedStartTimeMs === null;
     } else {
       status.textContent = "⏳ Video aranıyor...";
       pauseButton.disabled = true;
       playButton.disabled = true;
+      rewindButton.disabled = true;
     }
   }
 
@@ -220,10 +266,39 @@
       return;
     }
 
+    if (isSeeking) {
+      currentSubtitle = newSubtitle;
+
+      if (newSubtitle) {
+        subtitleBox.textContent = newSubtitle;
+      }
+
+      return;
+    }
+
     const previousSubtitle = currentSubtitle;
     currentSubtitle = newSubtitle;
 
-    if (previousSubtitle) {
+    let replayGuardActive = false;
+
+    if (
+      replayGuardUntilVideoTime !== null &&
+      video
+    ) {
+      replayGuardActive =
+        video.currentTime < replayGuardUntilVideoTime;
+
+      if (!replayGuardActive) {
+        replayGuardUntilVideoTime = null;
+      }
+    }
+
+    /*
+     * Geri sarma sonrasında Netflix eski tamamlanmış
+     * altyazıyı kısa süre ekranda tutabilir.
+     * Bu süre içinde onu yeni bitmiş cümle saymıyoruz.
+     */
+    if (previousSubtitle && !replayGuardActive) {
       addSentencePart(previousSubtitle);
 
       if (endsSentence(previousSubtitle)) {
@@ -232,11 +307,125 @@
     }
 
     if (newSubtitle) {
+      if (sentenceStartTime === null) {
+        sentenceStartTime = video
+          ? Math.max(0, video.currentTime - 0.15)
+          : null;
+      }
+
       subtitleBox.textContent = newSubtitle;
     } else if (!previousSubtitle) {
-      subtitleBox.textContent = "Altyazı bekleniyor...";
+      subtitleBox.textContent =
+        "Altyazı bekleniyor...";
     }
   }
+
+  function finishSeek(success, message) {
+    if (seekTimeout) {
+      clearTimeout(seekTimeout);
+      seekTimeout = null;
+    }
+
+    isSeeking = false;
+    activeSeekRequestId = null;
+
+    pauseButton.disabled = false;
+    playButton.disabled = false;
+    rewindButton.disabled =
+      completedStartTimeMs === null;
+
+    if (!success) {
+      status.textContent =
+        `❌ ${message || "Cümlenin başına dönülemedi"}`;
+      return;
+    }
+
+    /*
+     * Eski altyazıyı hafızada tutmuyoruz.
+     * Önceki sorunun temel nedeni buydu.
+     */
+    currentSubtitle = "";
+    sentenceParts = [];
+
+    sentenceStartTime =
+      completedStartTimeMs !== null
+        ? completedStartTimeMs / 1000
+        : null;
+
+    replayPending = true;
+    replayGuardUntilVideoTime = null;
+
+    subtitleBox.textContent =
+      completedBox.textContent;
+
+    status.textContent =
+      "⏪ Cümlenin başına dönüldü — Devam Et'e bas";
+  }
+
+  rewindButton.addEventListener("click", () => {
+    const video = getNetflixVideo();
+
+    if (!video || completedStartTimeMs === null) {
+      status.textContent =
+        "Geri dönülecek cümle bulunamadı";
+      return;
+    }
+
+    video.pause();
+
+    isSeeking = true;
+    replayPending = false;
+    replayGuardUntilVideoTime = null;
+
+    currentSubtitle = "";
+    sentenceParts = [];
+
+    activeSeekRequestId =
+      `seek-${Date.now()}-${Math.random()}`;
+
+    rewindButton.disabled = true;
+    pauseButton.disabled = true;
+    playButton.disabled = true;
+
+    status.textContent =
+      "⏪ Cümlenin başına dönülüyor...";
+
+    window.postMessage(
+      {
+        source: "PAUSESPEAK_EXTENSION",
+        type: "PAUSESPEAK_SEEK_REQUEST",
+        requestId: activeSeekRequestId,
+        targetTimeMs: completedStartTimeMs
+      },
+      "*"
+    );
+
+    seekTimeout = setTimeout(() => {
+      finishSeek(
+        false,
+        "Netflix oynatıcıdan cevap alınamadı"
+      );
+    }, 5000);
+  });
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) {
+      return;
+    }
+
+    const data = event.data;
+
+    if (
+      !data ||
+      data.source !== "PAUSESPEAK_PAGE" ||
+      data.type !== "PAUSESPEAK_SEEK_RESPONSE" ||
+      data.requestId !== activeSeekRequestId
+    ) {
+      return;
+    }
+
+    finishSeek(data.success, data.message);
+  });
 
   pauseButton.addEventListener("click", () => {
     const video = getNetflixVideo();
@@ -258,12 +447,37 @@
       return;
     }
 
+    if (replayPending) {
+      replayPending = false;
+
+      currentSubtitle = "";
+      sentenceParts = [];
+
+      const replayStartSeconds =
+        completedStartTimeMs !== null
+          ? completedStartTimeMs / 1000
+          : video.currentTime;
+
+      sentenceStartTime = replayStartSeconds;
+
+      /*
+       * Geri sarma sonrası ilk 0,8 saniyede eski
+       * altyazının videoyu tekrar durdurmasını engeller.
+       */
+      replayGuardUntilVideoTime =
+        replayStartSeconds + 0.8;
+    }
+
     try {
       await video.play();
       status.textContent = "▶️ Video oynatılıyor";
     } catch (error) {
       status.textContent = "Video başlatılamadı";
-      console.error("PauseSpeak oynatma hatası:", error);
+
+      console.error(
+        "PauseSpeak oynatma hatası:",
+        error
+      );
     }
   });
 
@@ -273,6 +487,8 @@
   panel.appendChild(subtitleBox);
   panel.appendChild(completedTitle);
   panel.appendChild(completedBox);
+  panel.appendChild(rewindButton);
+  panel.appendChild(document.createElement("br"));
   panel.appendChild(pauseButton);
   panel.appendChild(playButton);
 
