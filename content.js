@@ -25,38 +25,34 @@
   const status = document.createElement("div");
   status.textContent = "Video aranıyor...";
 
-  const subtitleTitle =
-    document.createElement("div");
-  subtitleTitle.textContent =
-    "Aktif İngilizce altyazı";
+  const subtitleTitle = document.createElement("div");
+  subtitleTitle.textContent = "Aktif İngilizce altyazı";
 
-  const subtitleBox =
-    document.createElement("div");
-  subtitleBox.textContent =
-    "Altyazı bekleniyor...";
+  const subtitleBox = document.createElement("div");
+  subtitleBox.textContent = "Altyazı bekleniyor...";
 
-  const completedTitle =
-    document.createElement("div");
-  completedTitle.textContent =
-    "Tamamlanan cümle";
+  const completedTitle = document.createElement("div");
+  completedTitle.textContent = "Tamamlanan İngilizce cümle";
 
-  const completedBox =
-    document.createElement("div");
+  const completedBox = document.createElement("div");
   completedBox.textContent =
     "Henüz tamamlanan cümle yok.";
 
-  const replayButton =
-    document.createElement("button");
-  replayButton.textContent =
-    "Cümleyi Tekrar Oynat";
+  const translationTitle = document.createElement("div");
+  translationTitle.textContent = "Türkçe çeviri";
+
+  const translationBox = document.createElement("div");
+  translationBox.textContent =
+    "Çeviri özelliği henüz bağlanmadı.";
+
+  const replayButton = document.createElement("button");
+  replayButton.textContent = "Cümleyi Tekrar Oynat";
   replayButton.disabled = true;
 
-  const pauseButton =
-    document.createElement("button");
+  const pauseButton = document.createElement("button");
   pauseButton.textContent = "Durdur";
 
-  const playButton =
-    document.createElement("button");
+  const playButton = document.createElement("button");
   playButton.textContent = "Devam Et";
 
   Object.assign(panel.style, {
@@ -64,15 +60,16 @@
     top: "20px",
     right: "20px",
     zIndex: "2147483647",
-    width: "320px",
+    width: "340px",
+    maxHeight: "calc(100vh - 40px)",
+    overflowY: "auto",
     padding: "16px",
     backgroundColor: "#111827",
     color: "#ffffff",
     borderRadius: "12px",
     fontFamily: "Arial, sans-serif",
     fontSize: "14px",
-    boxShadow:
-      "0 6px 20px rgba(0, 0, 0, 0.35)"
+    boxShadow: "0 6px 20px rgba(0, 0, 0, 0.35)"
   });
 
   Object.assign(title.style, {
@@ -85,31 +82,40 @@
     marginBottom: "12px"
   });
 
-  [subtitleTitle, completedTitle].forEach(
-    (element) => {
-      Object.assign(element.style, {
-        marginTop: "12px",
-        marginBottom: "6px",
-        fontSize: "12px",
-        fontWeight: "bold",
-        color: "#9ca3af"
-      });
-    }
-  );
+  [
+    subtitleTitle,
+    completedTitle,
+    translationTitle
+  ].forEach((element) => {
+    Object.assign(element.style, {
+      marginTop: "12px",
+      marginBottom: "6px",
+      fontSize: "12px",
+      fontWeight: "bold",
+      color: "#9ca3af"
+    });
+  });
 
-  [subtitleBox, completedBox].forEach(
-    (element) => {
-      Object.assign(element.style, {
-        minHeight: "38px",
-        padding: "10px",
-        marginBottom: "10px",
-        backgroundColor: "#1f2937",
-        borderRadius: "8px",
-        lineHeight: "1.45",
-        color: "#ffffff"
-      });
-    }
-  );
+  [
+    subtitleBox,
+    completedBox,
+    translationBox
+  ].forEach((element) => {
+    Object.assign(element.style, {
+      minHeight: "38px",
+      padding: "10px",
+      marginBottom: "10px",
+      backgroundColor: "#1f2937",
+      borderRadius: "8px",
+      lineHeight: "1.45",
+      color: "#ffffff"
+    });
+  });
+
+  Object.assign(translationBox.style, {
+    backgroundColor: "#172554",
+    color: "#dbeafe"
+  });
 
   [
     replayButton,
@@ -227,6 +233,9 @@
 
     completedBox.textContent = fullSentence;
     subtitleBox.textContent = fullSentence;
+
+    translationBox.textContent =
+      "Bu cümlenin Türkçe çevirisi sonraki adımda gösterilecek.";
 
     const currentTime = video
       ? Number(video.currentTime)
@@ -357,10 +366,7 @@
     }
   }
 
-  function finishReplay(
-    success,
-    message
-  ) {
+  function finishReplay(success, message) {
     if (replayTimeout) {
       clearTimeout(replayTimeout);
       replayTimeout = null;
@@ -538,6 +544,8 @@
   panel.appendChild(subtitleBox);
   panel.appendChild(completedTitle);
   panel.appendChild(completedBox);
+  panel.appendChild(translationTitle);
+  panel.appendChild(translationBox);
   panel.appendChild(replayButton);
 
   panel.appendChild(
