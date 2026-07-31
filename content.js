@@ -78,7 +78,11 @@
 
   const pronunciationTitle = document.createElement("div");
   pronunciationTitle.textContent = "Telaffuz";
+const nowSpeakTitle = document.createElement("div");
+nowSpeakTitle.textContent = "Şimdi söyle";
 
+const nowSpeakBox = document.createElement("div");
+nowSpeakBox.textContent = "Henüz söylenecek bir cümle yok.";
   const spokenTitle = document.createElement("div");
   spokenTitle.textContent = "Söylediğin";
 
@@ -143,14 +147,15 @@
   });
 
   [
-    subtitleTitle,
-    completedTitle,
-    translationTitle,
-    pronunciationTitle,
-    spokenTitle,
-    pronunciationResultTitle,
-    chunkTitle
-  ].forEach((element) => {
+  subtitleTitle,
+  completedTitle,
+  translationTitle,
+  pronunciationTitle,
+  nowSpeakTitle,
+  spokenTitle,
+  pronunciationResultTitle,
+  chunkTitle
+].forEach((element) => {
     Object.assign(element.style, {
       marginTop: "12px",
       marginBottom: "6px",
@@ -164,6 +169,7 @@
     subtitleBox,
     completedBox,
     translationBox,
+    nowSpeakBox,
     spokenBox,
     pronunciationResultBox,
     chunkBox
@@ -183,7 +189,12 @@
     backgroundColor: "#172554",
     color: "#dbeafe"
   });
-
+Object.assign(nowSpeakBox.style, {
+  backgroundColor: "#064e3b",
+  color: "#ecfdf5",
+  fontSize: "16px",
+  fontWeight: "bold"
+});
   Object.assign(spokenBox.style, {
     color: "#d1fae5"
   });
@@ -914,6 +925,8 @@
       pronunciationChunks[
         pronunciationChunkIndex
       ] || "";
+      nowSpeakBox.textContent =
+  currentChunk;
 
     chunkBox.textContent =
       `${pronunciationChunkIndex + 1}/` +
@@ -1231,7 +1244,8 @@
 
       chunkBox.textContent =
         "Tüm parçalar tamamlandı.\nŞimdi cümlenin tamamını söyle.";
-
+nowSpeakBox.textContent =
+  completedBox.textContent;
       pronunciationResultBox.textContent =
         "✅ Parçalar tamamlandı. Şimdi tam cümleyi söyle.";
 
@@ -1762,7 +1776,8 @@
 
     completedBox.textContent =
       fullSentence;
-
+nowSpeakBox.textContent =
+  fullSentence;
     subtitleBox.textContent =
       fullSentence;
 
@@ -2268,7 +2283,13 @@ if (isAutomaticRetryReplay) {
   panel.appendChild(
     pronunciationTitle
   );
+panel.appendChild(
+  nowSpeakTitle
+);
 
+panel.appendChild(
+  nowSpeakBox
+);
   panel.appendChild(
     spokenTitle
   );
