@@ -43,6 +43,7 @@
   let pronunciationMode = "sentence";
   let pronunciationChunks = [];
   let pronunciationChunkIndex = 0;
+  let pronunciationChunkSuccessCount = 0;
   let finalSentenceAttemptCount = 0;
   let autoContinueTimeout = null;
   let speechSilenceTimeout = null;
@@ -947,6 +948,7 @@ Object.assign(nowSpeakBox.style, {
     pronunciationMode = "sentence";
     pronunciationChunks = [];
     pronunciationChunkIndex = 0;
+    pronunciationChunkSuccessCount = 0;
     finalSentenceAttemptCount = 0;
     recognizedSpeechText = "";
 
@@ -1006,7 +1008,27 @@ Object.assign(nowSpeakBox.style, {
       );
     }
   }
+function scheduleAutomaticSpeechStart(
+  delayMs = 350
+) {
+  if (autoSpeechStartTimeout) {
+    clearTimeout(
+      autoSpeechStartTimeout
+    );
+  }
 
+  if (!SpeechRecognitionClass) {
+    return;
+  }
+
+  autoSpeechStartTimeout =
+    setTimeout(() => {
+      autoSpeechStartTimeout =
+        null;
+
+      startSpeechRecognition();
+    }, delayMs);
+}
   async function startChunkPractice() {
     const sentence =
       completedBox.textContent;
@@ -1083,6 +1105,7 @@ Object.assign(nowSpeakBox.style, {
 
       pronunciationMode = "chunk";
       pronunciationChunkIndex = 0;
+      pronunciationChunkSuccessCount = 0;
 
       pronunciationResultBox.textContent =
         "Cümleyi doğal konuşma parçalarıyla çalışalım.";
@@ -1094,6 +1117,7 @@ Object.assign(nowSpeakBox.style, {
         "🎤 Parçayı Söyle";
 
       updateChunkDisplay();
+      scheduleAutomaticSpeechStart();
 
       return true;
     } catch (error) {
@@ -1194,70 +1218,100 @@ Object.assign(nowSpeakBox.style, {
         result.score * 100
       );
 
-    if (
-      pronunciationMode ===
-      "chunk"
-    ) {
-      if (!result.success) {
-        pronunciationResultBox.textContent =
-          `Bu parçayı tekrar dene. Benzerlik: %${percentage}`;
+if (
+  pronunciationMode ===
+  "chunk"
+) {
+  if (!result.success) {
+    pronunciationResultBox.textContent =
+      `Bu parçayı tekrar dene. Benzerlik: %${percentage}`;
 
-        status.textContent =
-          "🔁 Aynı parçayı tekrar söyle";
+    status.textContent =
+      pronunciationChunkSuccessCount === 1
+        ? "🔁 İkinci doğru söyleyişi tekrar dene"
+        : "🔁 Aynı parçayı tekrar söyle";
 
-        speakButton.textContent =
-          "🎤 Parçayı Tekrar Söyle";
+    speakButton.textContent =
+      "🎤 Parçayı Tekrar Söyle";
 
-        return;
-      }
+    scheduleAutomaticSpeechStart();
 
-      pronunciationChunkIndex += 1;
+    return;
+  }
 
-      if (
-        pronunciationChunkIndex <
-        pronunciationChunks.length
-      ) {
-        pronunciationResultBox.textContent =
-          `✅ Parça başarılı. Benzerlik: %${percentage}`;
+  pronunciationChunkSuccessCount += 1;
 
-        status.textContent =
-          "✅ Sıradaki parçaya geç";
+  if (
+    pronunciationChunkSuccessCount <
+    2
+  ) {
+    pronunciationResultBox.textContent =
+      `✅ İlk doğru söyleyiş tamamlandı. ` +
+      `Aynı parçayı bir kez daha söyle. Benzerlik: %${percentage}`;
 
-        speakButton.textContent =
-          "🎤 Sıradaki Parçayı Söyle";
+    status.textContent =
+      "✅ 1/2 doğru — aynı parçayı tekrar söyle";
 
-        updateChunkDisplay();
+    speakButton.textContent =
+      "🎤 Aynı Parçayı Tekrar Söyle";
 
-        return;
-      }
+    scheduleAutomaticSpeechStart();
 
-      pronunciationMode =
-        "final-sentence";
+    return;
+  }
 
-      finalSentenceAttemptCount = 0;
+  pronunciationChunkSuccessCount = 0;
+  pronunciationChunkIndex += 1;
 
-      chunkTitle.style.display =
-        "block";
+  if (
+    pronunciationChunkIndex <
+    pronunciationChunks.length
+  ) {
+    pronunciationResultBox.textContent =
+      `✅ Parça iki kez doğru söylendi. Benzerlik: %${percentage}`;
 
-      chunkBox.style.display =
-        "block";
+    status.textContent =
+      "✅ Sıradaki parçaya geçiliyor";
 
-      chunkBox.textContent =
-        "Tüm parçalar tamamlandı.\nŞimdi cümlenin tamamını söyle.";
-nowSpeakBox.textContent =
-  completedBox.textContent;
-      pronunciationResultBox.textContent =
-        "✅ Parçalar tamamlandı. Şimdi tam cümleyi söyle.";
+    speakButton.textContent =
+      "🎤 Sıradaki Parçayı Söyle";
 
-      status.textContent =
-        "🎤 Tam cümleyi söyle";
+    updateChunkDisplay();
+    scheduleAutomaticSpeechStart();
 
-      speakButton.textContent =
-        "🎤 Tam Cümleyi Söyle";
+    return;
+  }
 
-      return;
-    }
+  pronunciationMode =
+    "final-sentence";
 
+  finalSentenceAttemptCount = 0;
+
+  chunkTitle.style.display =
+    "block";
+
+  chunkBox.style.display =
+    "block";
+
+  chunkBox.textContent =
+    "Tüm parçalar tamamlandı.\nŞimdi cümlenin tamamını söyle.";
+
+  nowSpeakBox.textContent =
+    completedBox.textContent;
+
+  pronunciationResultBox.textContent =
+    "✅ Parçalar tamamlandı. Şimdi tam cümleyi söyle.";
+
+  status.textContent =
+    "🎤 Tam cümleyi söyle";
+
+  speakButton.textContent =
+    "🎤 Tam Cümleyi Söyle";
+
+  scheduleAutomaticSpeechStart();
+
+  return;
+}
     if (
       pronunciationMode ===
       "final-sentence"
@@ -1278,14 +1332,16 @@ nowSpeakBox.textContent =
 
       speakButton.textContent =
         "🎤 Tam Cümleyi Tekrar Söyle";
+        scheduleAutomaticSpeechStart();
 
       if (
         finalSentenceAttemptCount >=
         2
       ) {
         pronunciationChunkIndex = 0;
-        pronunciationMode = "chunk";
-        finalSentenceAttemptCount = 0;
+pronunciationChunkSuccessCount = 0;
+pronunciationMode = "chunk";
+finalSentenceAttemptCount = 0;
 
         pronunciationResultBox.textContent =
           "Tam cümle yine zor geldi. Parçaları bir kez daha çalışalım.";
