@@ -42,8 +42,9 @@ async function getOpenAIClient() {
   return openAIClientPromise;
 }
 
-function getTranslationErrorMessage(
-  error
+function getOpenAIErrorMessage(
+  error,
+  operationName
 ) {
   if (error?.status === 401) {
     return (
@@ -81,7 +82,226 @@ function getTranslationErrorMessage(
     );
   }
 
-  return "Çeviri sırasında hata oluştu.";
+  return (
+    `${operationName} sırasında ` +
+    "hata oluştu."
+  );
+}
+
+function getStatusCode(error) {
+  if (
+    [
+      401,
+      403,
+      404,
+      429
+    ].includes(error?.status) ||
+    error?.status >= 500
+  ) {
+    return error.status;
+  }
+
+  return 500;
+}
+
+function cleanText(text) {
+  return String(text || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function removeSubtitleDescriptions(
+  text
+) {
+  return cleanText(
+    String(text || "")
+      .replace(/\[[^\]]*\]/g, " ")
+      .replace(/\([^)]*\)/g, " ")
+      .replace(/♪[^♪]*♪/g, " ")
+      .replace(/[♪♫]/g, " ")
+  );
+}
+
+function normalizeForChunkValidation(
+  text
+) {
+  return removeSubtitleDescriptions(
+    text
+  )
+    .replace(/[’‘`]/g, "'")
+    .replace(
+      /\s+([,.;:!?…])/g,
+      "$1"
+    )
+    .replace(
+      /([—–-])\s+/g,
+      "$1 "
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseChunkArray(
+  outputText
+) {
+  const cleanedOutput =
+    String(outputText || "")
+      .trim()
+      .replace(
+        /^```(?:json)?\s*/i,
+        ""
+      )
+      .replace(
+        /\s*```$/,
+        ""
+      )
+      .trim();
+
+  const firstBracket =
+    cleanedOutput.indexOf("[");
+
+  const lastBracket =
+    cleanedOutput.lastIndexOf("]");
+
+  if (
+    firstBracket === -1 ||
+    lastBracket === -1
+  ) {
+    throw new Error(
+      "Chunk cevabında JSON dizisi bulunamadı."
+    );
+  }
+
+  const parsed =
+    JSON.parse(
+      cleanedOutput.slice(
+        firstBracket,
+        lastBracket + 1
+      )
+    );
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(
+      "Chunk cevabı bir dizi değil."
+    );
+  }
+
+  return parsed.map(
+    (chunk) => cleanText(chunk)
+  );
+}
+
+function validateChunks(
+  originalSentence,
+  chunks
+) {
+  if (
+    !Array.isArray(chunks) ||
+    chunks.length < 2 ||
+    chunks.length > 8 ||
+    chunks.some(
+      (chunk) =>
+        typeof chunk !== "string" ||
+        chunk.trim() === ""
+    )
+  ) {
+    return false;
+  }
+
+  const expected =
+    normalizeForChunkValidation(
+      originalSentence
+    );
+
+  const recombined =
+    normalizeForChunkValidation(
+      chunks.join(" ")
+    );
+
+  return (
+    expected !== "" &&
+    expected === recombined
+  );
+}
+
+async function generateSmartChunks(
+  openAI,
+  sentence
+) {
+  const openAIResponse =
+    await openAI.responses.create({
+      model: openAIModel,
+
+      reasoning: {
+        effort: "none"
+      },
+
+      instructions: [
+        "Sen İngilizce telaffuz",
+        "çalışması için doğal",
+        "konuşma parçaları",
+        "oluşturan bir uzmansın.",
+
+        "Sana verilen İngilizce",
+        "cümleyi doğal nefes ve",
+        "anlam gruplarına ayır.",
+
+        "Yalnızca geçerli bir JSON",
+        "string dizisi döndür.",
+
+        "Açıklama, başlık, Markdown",
+        "veya kod bloğu ekleme.",
+
+        "Cümledeki hiçbir kelimeyi,",
+        "noktalama işaretini veya",
+        "kısaltmayı değiştirme.",
+
+        "Hiçbir kelimeyi silme,",
+        "ekleme, düzeltme veya",
+        "yeniden sıralama.",
+
+        "Phrasal verbleri, deyimleri,",
+        "kalıpları, collocation",
+        "yapılarını ve fiil",
+        "örüntülerini bölme.",
+
+        "Olumsuzluk yapısını",
+        "yardımcı fiilden ayırma.",
+
+        "Özne ile çok kısa yüklemi",
+        "gereksiz yere ayırma.",
+
+        "Edatlı tamamlayıcıyı doğal",
+        "konuşmada ayrı bir nefes",
+        "grubuysa ayrı parça",
+        "yapabilirsin.",
+
+        "Her parça mümkünse 2 ile",
+        "7 kelime arasında olsun.",
+
+        "Tek kelimelik parça üretme;",
+        "yalnızca kaçınılmazsa üret.",
+
+        "Bütün parçalar boşlukla",
+        "birleştirildiğinde orijinal",
+        "cümle aynen oluşmalıdır."
+      ].join(" "),
+
+      input: [
+        "Cümleyi telaffuz çalışması",
+        "için doğal parçalara ayır.",
+
+        `Cümle: ${sentence}`,
+
+        "Yalnızca JSON dizisini ver."
+      ].join("\n"),
+
+      max_output_tokens: 250
+    });
+
+  return parseChunkArray(
+    openAIResponse.output_text
+  );
 }
 
 app.get(
@@ -201,7 +421,9 @@ app.post(
         });
 
       const translation =
-        openAIResponse.output_text?.trim();
+        openAIResponse
+          .output_text
+          ?.trim();
 
       if (!translation) {
         throw new Error(
@@ -222,7 +444,7 @@ app.post(
       });
     } catch (error) {
       console.error(
-        "PauseSpeak OpenAI hatası:",
+        "PauseSpeak çeviri hatası:",
         {
           message: error?.message,
           status: error?.status,
@@ -230,25 +452,143 @@ app.post(
         }
       );
 
-      const statusCode =
-        [
-          401,
-          403,
-          404,
-          429
-        ].includes(error?.status) ||
-        error?.status >= 500
-          ? error.status
-          : 500;
-
       return response
-        .status(statusCode)
+        .status(
+          getStatusCode(error)
+        )
         .json({
           success: false,
 
           error:
-            getTranslationErrorMessage(
-              error
+            getOpenAIErrorMessage(
+              error,
+              "Çeviri"
+            )
+        });
+    }
+  }
+);
+
+app.post(
+  "/chunk",
+  async (request, response) => {
+    const text =
+      request.body?.text;
+
+    if (
+      typeof text !== "string" ||
+      text.trim() === ""
+    ) {
+      return response
+        .status(400)
+        .json({
+          success: false,
+
+          error:
+            "Parçalara ayrılacak " +
+            "İngilizce cümle gönderilmedi."
+        });
+    }
+
+    const cleanedText =
+      cleanText(text);
+
+    if (
+      cleanedText.length > 1000
+    ) {
+      return response
+        .status(400)
+        .json({
+          success: false,
+
+          error:
+            "Cümle parçalara ayırmak " +
+            "için çok uzun."
+        });
+    }
+
+    try {
+      const openAI =
+        await getOpenAIClient();
+
+      let chunks = null;
+
+      for (
+        let attempt = 1;
+        attempt <= 2;
+        attempt += 1
+      ) {
+        const candidateChunks =
+          await generateSmartChunks(
+            openAI,
+            cleanedText
+          );
+
+        if (
+          validateChunks(
+            cleanedText,
+            candidateChunks
+          )
+        ) {
+          chunks =
+            candidateChunks;
+
+          break;
+        }
+
+        console.warn(
+          `PauseSpeak chunk doğrulaması ` +
+            `${attempt}. denemede ` +
+            "başarısız oldu.",
+
+          candidateChunks
+        );
+      }
+
+      if (!chunks) {
+        return response
+          .status(422)
+          .json({
+            success: false,
+
+            error:
+              "Cümle güvenli biçimde " +
+              "parçalara ayrılamadı. " +
+              "Lütfen tam cümleyi " +
+              "tekrar dene."
+          });
+      }
+
+      return response.json({
+        success: true,
+
+        chunks,
+
+        provider: "openai",
+
+        model: openAIModel
+      });
+    } catch (error) {
+      console.error(
+        "PauseSpeak chunk hatası:",
+        {
+          message: error?.message,
+          status: error?.status,
+          code: error?.code
+        }
+      );
+
+      return response
+        .status(
+          getStatusCode(error)
+        )
+        .json({
+          success: false,
+
+          error:
+            getOpenAIErrorMessage(
+              error,
+              "Parçalama"
             )
         });
     }

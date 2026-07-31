@@ -1,14 +1,13 @@
 (() => {
   const panelId = "pausespeak-status-panel";
-
-  const translationApiUrl =
-    "http://localhost:3000/translate";
-
+  const translationApiUrl = "http://localhost:3000/translate";
   const translationTimeoutMs = 8000;
+  const chunkApiUrl = "http://localhost:3000/chunk";
+  const chunkTimeoutMs = 20000;
+  const pronunciationSuccessThreshold = 0.78;
 
   const SpeechRecognitionClass =
-    window.SpeechRecognition ||
-    window.webkitSpeechRecognition;
+    window.SpeechRecognition || window.webkitSpeechRecognition;
 
   if (document.getElementById(panelId)) {
     return;
@@ -28,12 +27,23 @@
 
   let previousCompletedSentence = "";
   let translationRequestNumber = 0;
+  let chunkRequestNumber = 0;
+  let chunkAbortController = null;
+  let isChunkRequestPending = false;
 
   let speechRecognition = null;
   let isSpeechListening = false;
   let speechRecognitionHasResult = false;
   let speechRecognitionHadError = false;
   let speechRecognitionWasCancelled = false;
+  let recognizedSpeechText = "";
+
+  let pronunciationAttemptCount = 0;
+  let pronunciationMode = "sentence";
+  let pronunciationChunks = [];
+  let pronunciationChunkIndex = 0;
+  let finalSentenceAttemptCount = 0;
+  let autoContinueTimeout = null;
 
   const panel = document.createElement("div");
   panel.id = panelId;
@@ -44,84 +54,62 @@
   const status = document.createElement("div");
   status.textContent = "Video aranıyor...";
 
-  const subtitleTitle =
-    document.createElement("div");
+  const subtitleTitle = document.createElement("div");
+  subtitleTitle.textContent = "Aktif İngilizce altyazı";
 
-  subtitleTitle.textContent =
-    "Aktif İngilizce altyazı";
+  const subtitleBox = document.createElement("div");
+  subtitleBox.textContent = "Altyazı bekleniyor...";
 
-  const subtitleBox =
-    document.createElement("div");
+  const completedTitle = document.createElement("div");
+  completedTitle.textContent = "Tamamlanan İngilizce cümle";
 
-  subtitleBox.textContent =
-    "Altyazı bekleniyor...";
+  const completedBox = document.createElement("div");
+  completedBox.textContent = "Henüz tamamlanan cümle yok.";
 
-  const completedTitle =
-    document.createElement("div");
+  const translationTitle = document.createElement("div");
+  translationTitle.textContent = "Türkçe çeviri";
 
-  completedTitle.textContent =
-    "Tamamlanan İngilizce cümle";
-
-  const completedBox =
-    document.createElement("div");
-
-  completedBox.textContent =
-    "Henüz tamamlanan cümle yok.";
-
-  const translationTitle =
-    document.createElement("div");
-
-  translationTitle.textContent =
-    "Türkçe çeviri";
-
-  const translationBox =
-    document.createElement("div");
-
+  const translationBox = document.createElement("div");
   translationBox.textContent =
     "İngilizce cümle tamamlandığında çeviri gösterilecek.";
 
-  const pronunciationTitle =
-    document.createElement("div");
+  const pronunciationTitle = document.createElement("div");
+  pronunciationTitle.textContent = "Telaffuz";
 
-  pronunciationTitle.textContent =
-    "Telaffuz";
+  const spokenTitle = document.createElement("div");
+  spokenTitle.textContent = "Söylediğin";
 
-  const spokenTitle =
-    document.createElement("div");
+  const spokenBox = document.createElement("div");
+  spokenBox.textContent = SpeechRecognitionClass
+    ? "Bir cümle tamamlandıktan sonra Konuş düğmesine bas."
+    : "Bu tarayıcıda konuşma tanıma desteklenmiyor.";
 
-  spokenTitle.textContent =
-    "Söylediğin";
+  const pronunciationResultTitle = document.createElement("div");
+  pronunciationResultTitle.textContent = "Sonuç";
 
-  const spokenBox =
-    document.createElement("div");
+  const pronunciationResultBox = document.createElement("div");
+  pronunciationResultBox.textContent =
+    "Henüz telaffuz denemesi yapılmadı.";
 
-  spokenBox.textContent =
-    SpeechRecognitionClass
-      ? "Bir cümle tamamlandıktan sonra Konuş düğmesine bas."
-      : "Bu tarayıcıda konuşma tanıma desteklenmiyor.";
+  const chunkTitle = document.createElement("div");
+  chunkTitle.textContent = "Parçalı çalışma";
+  chunkTitle.style.display = "none";
 
-  const speakButton =
-    document.createElement("button");
+  const chunkBox = document.createElement("div");
+  chunkBox.style.display = "none";
 
+  const speakButton = document.createElement("button");
   speakButton.textContent = "🎤 Konuş";
   speakButton.disabled = true;
 
-  const replayButton =
-    document.createElement("button");
-
-  replayButton.textContent =
-    "Cümleyi Tekrar Oynat";
-
+  const replayButton = document.createElement("button");
+  replayButton.textContent = "Cümleyi Tekrar Oynat";
   replayButton.disabled = true;
 
-  const pauseButton =
-    document.createElement("button");
-
+  const pauseButton = document.createElement("button");
   pauseButton.textContent = "Durdur";
 
-  const playButton =
-    document.createElement("button");
-
+  const playButton = document.createElement("button");
   playButton.textContent = "Devam Et";
 
   Object.assign(panel.style, {
@@ -129,7 +117,7 @@
     top: "20px",
     right: "20px",
     zIndex: "2147483647",
-    width: "340px",
+    width: "360px",
     maxHeight: "calc(100vh - 40px)",
     overflowY: "auto",
     padding: "16px",
@@ -138,8 +126,7 @@
     borderRadius: "12px",
     fontFamily: "Arial, sans-serif",
     fontSize: "14px",
-    boxShadow:
-      "0 6px 20px rgba(0, 0, 0, 0.35)"
+    boxShadow: "0 6px 20px rgba(0, 0, 0, 0.35)"
   });
 
   Object.assign(title.style, {
@@ -157,7 +144,9 @@
     completedTitle,
     translationTitle,
     pronunciationTitle,
-    spokenTitle
+    spokenTitle,
+    pronunciationResultTitle,
+    chunkTitle
   ].forEach((element) => {
     Object.assign(element.style, {
       marginTop: "12px",
@@ -172,7 +161,9 @@
     subtitleBox,
     completedBox,
     translationBox,
-    spokenBox
+    spokenBox,
+    pronunciationResultBox,
+    chunkBox
   ].forEach((element) => {
     Object.assign(element.style, {
       minHeight: "38px",
@@ -191,8 +182,17 @@
   });
 
   Object.assign(spokenBox.style, {
-    backgroundColor: "#1f2937",
     color: "#d1fae5"
+  });
+
+  Object.assign(pronunciationResultBox.style, {
+    color: "#fef3c7"
+  });
+
+  Object.assign(chunkBox.style, {
+    backgroundColor: "#312e81",
+    color: "#e0e7ff",
+    whiteSpace: "pre-line"
   });
 
   [
@@ -217,11 +217,8 @@
   }
 
   function isVisible(element) {
-    const rectangle =
-      element.getBoundingClientRect();
-
-    const style =
-      window.getComputedStyle(element);
+    const rectangle = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
 
     return (
       rectangle.width > 0 &&
@@ -232,7 +229,17 @@
   }
 
   function cleanText(text) {
-    return text
+    return String(text || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function removeSubtitleDescriptions(text) {
+    return String(text || "")
+      .replace(/\[[^\]]*\]/g, " ")
+      .replace(/\([^)]*\)/g, " ")
+      .replace(/♪[^♪]*♪/g, " ")
+      .replace(/[♪♫]/g, " ")
       .replace(/\s+/g, " ")
       .trim();
   }
@@ -260,8 +267,7 @@
         )
         .filter(Boolean);
 
-      const uniqueTexts =
-        [...new Set(texts)];
+      const uniqueTexts = [...new Set(texts)];
 
       if (uniqueTexts.length > 0) {
         return uniqueTexts.join(" ");
@@ -377,7 +383,10 @@
         return;
       }
 
-      if (error.name === "AbortError") {
+      if (
+        error.name ===
+        "AbortError"
+      ) {
         translationBox.textContent =
           "Çeviri isteği zaman aşımına uğradı.";
       } else if (
@@ -399,11 +408,942 @@
     }
   }
 
+  function normalizeSpeechText(text) {
+    const replacements = [
+      [/\bwhere's\b/g, "where is"],
+      [/\bwhat's\b/g, "what is"],
+      [/\bwho's\b/g, "who is"],
+      [/\bhow's\b/g, "how is"],
+      [/\bwhen's\b/g, "when is"],
+      [/\bwhy's\b/g, "why is"],
+      [/\bhere's\b/g, "here is"],
+      [/\bthere's\b/g, "there is"],
+      [/\blet's\b/g, "let us"],
+
+      [/\bcan't\b/g, "cannot"],
+      [/\bwon't\b/g, "will not"],
+      [/\bdon't\b/g, "do not"],
+      [/\bdoesn't\b/g, "does not"],
+      [/\bdidn't\b/g, "did not"],
+      [/\bisn't\b/g, "is not"],
+      [/\baren't\b/g, "are not"],
+      [/\bwasn't\b/g, "was not"],
+      [/\bweren't\b/g, "were not"],
+      [/\bhaven't\b/g, "have not"],
+      [/\bhasn't\b/g, "has not"],
+      [/\bhadn't\b/g, "had not"],
+      [/\bshouldn't\b/g, "should not"],
+      [/\bwouldn't\b/g, "would not"],
+      [/\bcouldn't\b/g, "could not"],
+      [/\bmustn't\b/g, "must not"],
+
+      [/\bi'm\b/g, "i am"],
+      [/\byou're\b/g, "you are"],
+      [/\bwe're\b/g, "we are"],
+      [/\bthey're\b/g, "they are"],
+      [/\bhe's\b/g, "he is"],
+      [/\bshe's\b/g, "she is"],
+      [/\bit's\b/g, "it is"],
+      [/\bthat's\b/g, "that is"],
+
+      [/\bi've\b/g, "i have"],
+      [/\byou've\b/g, "you have"],
+      [/\bwe've\b/g, "we have"],
+      [/\bthey've\b/g, "they have"],
+      [/\bshould've\b/g, "should have"],
+      [/\bwould've\b/g, "would have"],
+      [/\bcould've\b/g, "could have"],
+      [/\bmight've\b/g, "might have"],
+      [/\bmust've\b/g, "must have"],
+
+      [/\bi'll\b/g, "i will"],
+      [/\byou'll\b/g, "you will"],
+      [/\bwe'll\b/g, "we will"],
+      [/\bthey'll\b/g, "they will"],
+      [/\bhe'll\b/g, "he will"],
+      [/\bshe'll\b/g, "she will"],
+      [/\bit'll\b/g, "it will"],
+
+      [/\bi'd\b/g, "i would"],
+      [/\byou'd\b/g, "you would"],
+      [/\bwe'd\b/g, "we would"],
+      [/\bthey'd\b/g, "they would"],
+
+      [/\bgonna\b/g, "going to"],
+      [/\bwanna\b/g, "want to"],
+      [/\bgotta\b/g, "got to"],
+      [/\bkinda\b/g, "kind of"],
+      [/\bsorta\b/g, "sort of"],
+      [/\blemme\b/g, "let me"],
+      [/\bgimme\b/g, "give me"]
+    ];
+
+    let normalized =
+      String(text || "")
+        .toLowerCase()
+        .replace(/[’‘`]/g, "'")
+        .replace(/\[[^\]]*\]/g, " ")
+        .replace(/\([^)]*\)/g, " ")
+        .replace(/♪[^♪]*♪/g, " ")
+        .replace(/[♪♫]/g, " ");
+
+    for (
+      const [
+        pattern,
+        replacement
+      ] of replacements
+    ) {
+      normalized =
+        normalized.replace(
+          pattern,
+          replacement
+        );
+    }
+
+    normalized =
+      normalized.replace(
+        /\b(?:uh|um|erm|hmm|mm|ah)\b/g,
+        " "
+      );
+
+    return normalized
+      .replace(
+        /[^a-z0-9'\s]/g,
+        " "
+      )
+      .replace(/'/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function getWordTokens(text) {
+    const normalized =
+      normalizeSpeechText(text);
+
+    return normalized
+      ? normalized.split(" ")
+      : [];
+  }
+
+  function getTokenEditDistance(
+    firstTokens,
+    secondTokens
+  ) {
+    const row =
+      Array.from(
+        {
+          length:
+            secondTokens.length + 1
+        },
+        (_, index) => index
+      );
+
+    for (
+      let firstIndex = 1;
+      firstIndex <=
+        firstTokens.length;
+      firstIndex += 1
+    ) {
+      let previousDiagonal =
+        row[0];
+
+      row[0] = firstIndex;
+
+      for (
+        let secondIndex = 1;
+        secondIndex <=
+          secondTokens.length;
+        secondIndex += 1
+      ) {
+        const previousTop =
+          row[secondIndex];
+
+        const substitutionCost =
+          firstTokens[
+            firstIndex - 1
+          ] ===
+          secondTokens[
+            secondIndex - 1
+          ]
+            ? 0
+            : 1;
+
+        row[secondIndex] =
+          Math.min(
+            row[secondIndex] + 1,
+            row[
+              secondIndex - 1
+            ] + 1,
+            previousDiagonal +
+              substitutionCost
+          );
+
+        previousDiagonal =
+          previousTop;
+      }
+    }
+
+    return row[
+      secondTokens.length
+    ];
+  }
+
+  function hasNegationMismatch(
+    targetTokens,
+    spokenTokens
+  ) {
+    const negativeWords =
+      new Set([
+        "not",
+        "no",
+        "never",
+        "nothing",
+        "nobody",
+        "neither",
+        "without"
+      ]);
+
+    const targetNegatives =
+      targetTokens.filter(
+        (token) =>
+          negativeWords.has(token)
+      );
+
+    const spokenNegatives =
+      spokenTokens.filter(
+        (token) =>
+          negativeWords.has(token)
+      );
+
+    return (
+      targetNegatives.join(" ") !==
+      spokenNegatives.join(" ")
+    );
+  }
+
+  function comparePronunciation(
+    targetText,
+    spokenText
+  ) {
+    const targetTokens =
+      getWordTokens(targetText);
+
+    const spokenTokens =
+      getWordTokens(spokenText);
+
+    if (
+      targetTokens.length === 0 ||
+      spokenTokens.length === 0
+    ) {
+      return {
+        success: false,
+        score: 0
+      };
+    }
+
+    const distance =
+      getTokenEditDistance(
+        targetTokens,
+        spokenTokens
+      );
+
+    const longestLength =
+      Math.max(
+        targetTokens.length,
+        spokenTokens.length
+      );
+
+    const score =
+      Math.max(
+        0,
+        1 -
+          distance /
+            longestLength
+      );
+
+    const success =
+      !hasNegationMismatch(
+        targetTokens,
+        spokenTokens
+      ) &&
+      score >=
+        pronunciationSuccessThreshold;
+
+    return {
+      success,
+      score
+    };
+  }
+
+  function hasMultipleClauses(
+    sentence
+  ) {
+    const originalText =
+      removeSubtitleDescriptions(
+        sentence
+      );
+
+    const normalizedText =
+      normalizeSpeechText(
+        originalText
+      );
+
+    if (!normalizedText) {
+      return false;
+    }
+
+    if (
+      /[,;:—–]/.test(
+        originalText
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      /\b(even if|although|though|because|while|whenever|unless|until|whereas|as soon as|so that|provided that|in case)\b/.test(
+        normalizedText
+      )
+    ) {
+      return true;
+    }
+
+    const words =
+      normalizedText.split(" ");
+
+    const timeClauseIndex =
+      words.findIndex(
+        (word) =>
+          [
+            "if",
+            "when",
+            "after",
+            "before",
+            "since"
+          ].includes(word)
+      );
+
+    if (
+      timeClauseIndex > 0 &&
+      timeClauseIndex <
+        words.length - 2
+    ) {
+      return true;
+    }
+
+    const clauseWordIndex =
+      words.findIndex(
+        (word) =>
+          [
+            "that",
+            "which",
+            "who",
+            "whom",
+            "whose"
+          ].includes(word)
+      );
+
+    if (
+      clauseWordIndex >= 2 &&
+      clauseWordIndex <
+        words.length - 2
+    ) {
+      return true;
+    }
+
+    if (
+      /\b(and|but|so|yet)\s+(i|you|he|she|it|we|they|this|that|there)\b/.test(
+        normalizedText
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      /\b(know|knows|knew|wonder|wonders|wondered|tell|tells|told|show|shows|showed|remember|remembers|remembered|forget|forgets|forgot|understand|understands|understood)\s+(where|why|how|when|what|who)\b/.test(
+        normalizedText
+      )
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function shouldUseChunkMode(
+    sentence
+  ) {
+    const wordCount =
+      getWordTokens(
+        sentence
+      ).length;
+
+    return (
+      wordCount > 7 ||
+      hasMultipleClauses(
+        sentence
+      )
+    );
+  }
+
+  async function requestSmartChunks(
+    sentence,
+    requestNumber
+  ) {
+    const controller =
+      new AbortController();
+
+    chunkAbortController =
+      controller;
+
+    const timeoutId =
+      setTimeout(() => {
+        controller.abort();
+      }, chunkTimeoutMs);
+
+    try {
+      const response = await fetch(
+        chunkApiUrl,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+
+          body: JSON.stringify({
+            text: sentence
+          }),
+
+          signal: controller.signal
+        }
+      );
+
+      let data = null;
+
+      try {
+        data =
+          await response.json();
+      } catch (error) {
+        throw new Error(
+          "Sunucudan geçerli chunk cevabı alınamadı."
+        );
+      }
+
+      if (
+        requestNumber !==
+        chunkRequestNumber
+      ) {
+        return null;
+      }
+
+      if (
+        !response.ok ||
+        !data?.success ||
+        !Array.isArray(
+          data.chunks
+        ) ||
+        data.chunks.some(
+          (chunk) =>
+            typeof chunk !==
+            "string"
+        )
+      ) {
+        throw new Error(
+          data?.error ||
+            "Akıllı parçalar alınamadı."
+        );
+      }
+
+      const chunks =
+        data.chunks.map(
+          (chunk) =>
+            cleanText(chunk)
+        );
+
+      if (
+        chunks.length <= 1 ||
+        chunks.some(
+          (chunk) => !chunk
+        )
+      ) {
+        throw new Error(
+          "Sunucu geçerli parçalar döndürmedi."
+        );
+      }
+
+      return chunks;
+    } finally {
+      clearTimeout(timeoutId);
+
+      if (
+        chunkAbortController ===
+        controller
+      ) {
+        chunkAbortController =
+          null;
+      }
+    }
+  }
+
+  function updateChunkDisplay() {
+    if (
+      pronunciationMode !==
+      "chunk"
+    ) {
+      chunkTitle.style.display =
+        "none";
+
+      chunkBox.style.display =
+        "none";
+
+      return;
+    }
+
+    chunkTitle.style.display =
+      "block";
+
+    chunkBox.style.display =
+      "block";
+
+    const currentChunk =
+      pronunciationChunks[
+        pronunciationChunkIndex
+      ] || "";
+
+    chunkBox.textContent =
+      `${pronunciationChunkIndex + 1}/` +
+      `${pronunciationChunks.length}\n` +
+      currentChunk;
+  }
+
+  function resetPronunciationPractice() {
+    chunkRequestNumber += 1;
+
+    if (chunkAbortController) {
+      chunkAbortController.abort();
+      chunkAbortController = null;
+    }
+
+    isChunkRequestPending = false;
+    pronunciationAttemptCount = 0;
+    pronunciationMode = "sentence";
+    pronunciationChunks = [];
+    pronunciationChunkIndex = 0;
+    finalSentenceAttemptCount = 0;
+    recognizedSpeechText = "";
+
+    if (autoContinueTimeout) {
+      clearTimeout(
+        autoContinueTimeout
+      );
+
+      autoContinueTimeout = null;
+    }
+
+    pronunciationResultBox.textContent =
+      "Henüz telaffuz denemesi yapılmadı.";
+
+    updateChunkDisplay();
+  }
+
+  async function continueVideoAfterSuccess() {
+    const video =
+      getNetflixVideo();
+
+    if (!video) {
+      status.textContent =
+        "Video bulunamadı";
+
+      return;
+    }
+
+    speakButton.disabled = true;
+    replayButton.disabled = true;
+
+    status.textContent =
+      "✅ Başarılı — video devam ediyor";
+
+    pronunciationResultBox.textContent =
+      "✅ Başarılı söyledin.";
+
+    autoContinueTimeout =
+      setTimeout(
+        async () => {
+          try {
+            await video.play();
+
+            status.textContent =
+              "▶️ Video oynatılıyor";
+          } catch (error) {
+            speakButton.disabled =
+              !SpeechRecognitionClass;
+
+            replayButton.disabled =
+              completedStartTimeMs ===
+              null;
+
+            status.textContent =
+              "Video otomatik başlatılamadı";
+
+            console.error(
+              "PauseSpeak otomatik oynatma hatası:",
+              error
+            );
+          }
+        },
+        900
+      );
+  }
+
+  async function startChunkPractice() {
+    const sentence =
+      completedBox.textContent;
+
+    if (
+      !shouldUseChunkMode(
+        sentence
+      )
+    ) {
+      return false;
+    }
+
+    if (isChunkRequestPending) {
+      return true;
+    }
+
+    if (chunkAbortController) {
+      chunkAbortController.abort();
+      chunkAbortController = null;
+    }
+
+    const requestNumber =
+      ++chunkRequestNumber;
+
+    isChunkRequestPending = true;
+
+    pronunciationMode = "sentence";
+    pronunciationChunks = [];
+    pronunciationChunkIndex = 0;
+
+    chunkTitle.style.display =
+      "block";
+
+    chunkBox.style.display =
+      "block";
+
+    chunkBox.textContent =
+      "Akıllı konuşma parçaları hazırlanıyor...";
+
+    pronunciationResultBox.textContent =
+      "İki deneme de başarılı olmadı. Cümle doğal konuşma parçalarına ayrılıyor.";
+
+    status.textContent =
+      "🧠 Akıllı parçalar hazırlanıyor";
+
+    speakButton.textContent =
+      "Hazırlanıyor...";
+
+    speakButton.disabled = true;
+    replayButton.disabled = true;
+
+    try {
+      const chunks =
+        await requestSmartChunks(
+          sentence,
+          requestNumber
+        );
+
+      if (
+        requestNumber !==
+          chunkRequestNumber ||
+        completedBox.textContent !==
+          sentence
+      ) {
+        return true;
+      }
+
+      if (!chunks) {
+        return true;
+      }
+
+      pronunciationChunks =
+        chunks;
+
+      pronunciationMode = "chunk";
+      pronunciationChunkIndex = 0;
+
+      pronunciationResultBox.textContent =
+        "Cümleyi doğal konuşma parçalarıyla çalışalım.";
+
+      status.textContent =
+        "🧩 Parçalı çalışma başladı";
+
+      speakButton.textContent =
+        "🎤 Parçayı Söyle";
+
+      updateChunkDisplay();
+
+      return true;
+    } catch (error) {
+      if (
+        requestNumber !==
+        chunkRequestNumber
+      ) {
+        return true;
+      }
+
+      pronunciationAttemptCount = 0;
+      pronunciationMode = "sentence";
+      pronunciationChunks = [];
+      pronunciationChunkIndex = 0;
+
+      updateChunkDisplay();
+
+      let errorMessage =
+        "Akıllı parçalar hazırlanamadı. Tam cümleyi tekrar dinleyip yeniden söyle.";
+
+      if (
+        error.name ===
+        "AbortError"
+      ) {
+        errorMessage =
+          "Akıllı parçalama isteği zaman aşımına uğradı. Tam cümleyi tekrar dinleyip yeniden söyle.";
+      } else if (
+        error instanceof TypeError
+      ) {
+        errorMessage =
+          "PauseSpeak sunucusuna ulaşılamadı. Sunucuyu kontrol edip tam cümleyi yeniden söyle.";
+      }
+
+      pronunciationResultBox.textContent =
+        errorMessage;
+
+      status.textContent =
+        "🔁 Tam cümleyi yeniden dene";
+
+      speakButton.textContent =
+        "🎤 Tekrar Dene";
+
+      console.error(
+        "PauseSpeak chunk isteği hatası:",
+        error
+      );
+
+      return true;
+    } finally {
+      if (
+        requestNumber ===
+        chunkRequestNumber
+      ) {
+        isChunkRequestPending =
+          false;
+
+        speakButton.disabled =
+          completedStartTimeMs ===
+            null ||
+          !SpeechRecognitionClass;
+
+        replayButton.disabled =
+          completedStartTimeMs ===
+          null;
+      }
+    }
+  }
+
+  function getCurrentPronunciationTarget() {
+    if (
+      pronunciationMode ===
+      "chunk"
+    ) {
+      return (
+        pronunciationChunks[
+          pronunciationChunkIndex
+        ] || ""
+      );
+    }
+
+    return completedBox.textContent;
+  }
+
+  async function handlePronunciationResult(
+    spokenText
+  ) {
+    const targetText =
+      getCurrentPronunciationTarget();
+
+    const result =
+      comparePronunciation(
+        targetText,
+        spokenText
+      );
+
+    const percentage =
+      Math.round(
+        result.score * 100
+      );
+
+    if (
+      pronunciationMode ===
+      "chunk"
+    ) {
+      if (!result.success) {
+        pronunciationResultBox.textContent =
+          `Bu parçayı tekrar dene. Benzerlik: %${percentage}`;
+
+        status.textContent =
+          "🔁 Aynı parçayı tekrar söyle";
+
+        speakButton.textContent =
+          "🎤 Parçayı Tekrar Söyle";
+
+        return;
+      }
+
+      pronunciationChunkIndex += 1;
+
+      if (
+        pronunciationChunkIndex <
+        pronunciationChunks.length
+      ) {
+        pronunciationResultBox.textContent =
+          `✅ Parça başarılı. Benzerlik: %${percentage}`;
+
+        status.textContent =
+          "✅ Sıradaki parçaya geç";
+
+        speakButton.textContent =
+          "🎤 Sıradaki Parçayı Söyle";
+
+        updateChunkDisplay();
+
+        return;
+      }
+
+      pronunciationMode =
+        "final-sentence";
+
+      finalSentenceAttemptCount = 0;
+
+      chunkTitle.style.display =
+        "block";
+
+      chunkBox.style.display =
+        "block";
+
+      chunkBox.textContent =
+        "Tüm parçalar tamamlandı.\nŞimdi cümlenin tamamını söyle.";
+
+      pronunciationResultBox.textContent =
+        "✅ Parçalar tamamlandı. Şimdi tam cümleyi söyle.";
+
+      status.textContent =
+        "🎤 Tam cümleyi söyle";
+
+      speakButton.textContent =
+        "🎤 Tam Cümleyi Söyle";
+
+      return;
+    }
+
+    if (
+      pronunciationMode ===
+      "final-sentence"
+    ) {
+      if (result.success) {
+        void continueVideoAfterSuccess();
+
+        return;
+      }
+
+      finalSentenceAttemptCount += 1;
+
+      pronunciationResultBox.textContent =
+        `Tam cümleyi tekrar dene. Benzerlik: %${percentage}`;
+
+      status.textContent =
+        "🔁 Tam cümleyi tekrar söyle";
+
+      speakButton.textContent =
+        "🎤 Tam Cümleyi Tekrar Söyle";
+
+      if (
+        finalSentenceAttemptCount >=
+        2
+      ) {
+        pronunciationChunkIndex = 0;
+        pronunciationMode = "chunk";
+        finalSentenceAttemptCount = 0;
+
+        pronunciationResultBox.textContent =
+          "Tam cümle yine zor geldi. Parçaları bir kez daha çalışalım.";
+
+        speakButton.textContent =
+          "🎤 Parçayı Söyle";
+
+        updateChunkDisplay();
+      }
+
+      return;
+    }
+
+    if (result.success) {
+      void continueVideoAfterSuccess();
+
+      return;
+    }
+
+    pronunciationAttemptCount += 1;
+
+    if (
+      pronunciationAttemptCount ===
+      1
+    ) {
+      pronunciationResultBox.textContent =
+        `Bir daha dene. Benzerlik: %${percentage}`;
+
+      status.textContent =
+        "🔁 İlk deneme başarılı olmadı";
+
+      speakButton.textContent =
+        "🎤 İkinci Kez Dene";
+
+      return;
+    }
+
+    const chunkStarted =
+      await startChunkPractice();
+
+    if (chunkStarted) {
+      return;
+    }
+
+    pronunciationAttemptCount = 0;
+
+    pronunciationResultBox.textContent =
+      `Bu cümle kısa olduğu için parçalara bölünmedi. ` +
+      `Cümleyi tekrar dinleyip yeniden söyle. Benzerlik: %${percentage}`;
+
+    status.textContent =
+      "🔁 Kısa cümleyi yeniden dene";
+
+    speakButton.textContent =
+      "🎤 Tekrar Dene";
+
+    chunkTitle.style.display =
+      "none";
+
+    chunkBox.style.display =
+      "none";
+  }
+
   function getSpeechErrorMessage(
     errorCode
   ) {
     if (
-      errorCode === "not-allowed" ||
+      errorCode ===
+        "not-allowed" ||
       errorCode ===
         "service-not-allowed"
     ) {
@@ -413,21 +1353,30 @@
       );
     }
 
-    if (errorCode === "no-speech") {
+    if (
+      errorCode ===
+      "no-speech"
+    ) {
       return (
         "Konuşma algılanmadı. " +
         "Mikrofona biraz daha yakın konuşup tekrar dene."
       );
     }
 
-    if (errorCode === "audio-capture") {
+    if (
+      errorCode ===
+      "audio-capture"
+    ) {
       return (
         "Mikrofona ulaşılamadı. " +
         "Mikrofonun bağlı ve kullanılabilir olduğunu kontrol et."
       );
     }
 
-    if (errorCode === "network") {
+    if (
+      errorCode ===
+      "network"
+    ) {
       return (
         "Konuşma tanıma hizmetine ulaşılamadı. " +
         "İnternet bağlantısını kontrol et."
@@ -460,7 +1409,9 @@
   }
 
   function createSpeechRecognition() {
-    if (!SpeechRecognitionClass) {
+    if (
+      !SpeechRecognitionClass
+    ) {
       return null;
     }
 
@@ -479,6 +1430,8 @@
       speechRecognitionWasCancelled =
         false;
 
+      recognizedSpeechText = "";
+
       speakButton.textContent =
         "⏹ Dinlemeyi Durdur";
 
@@ -489,89 +1442,107 @@
         "Dinleniyor...";
     };
 
-    recognition.onresult = (event) => {
-      let finalTranscript = "";
-      let interimTranscript = "";
+    recognition.onresult =
+      (event) => {
+        let finalTranscript = "";
+        let interimTranscript = "";
 
-      for (
-        let index = event.resultIndex;
-        index < event.results.length;
-        index += 1
-      ) {
-        const transcript = cleanText(
-          event.results[index][0]
-            ?.transcript || ""
-        );
-
-        if (!transcript) {
-          continue;
-        }
-
-        if (
-          event.results[index].isFinal
+        for (
+          let index = 0;
+          index <
+            event.results.length;
+          index += 1
         ) {
-          finalTranscript +=
-            `${transcript} `;
-        } else {
-          interimTranscript +=
-            `${transcript} `;
+          const transcript =
+            cleanText(
+              event.results[
+                index
+              ][0]?.transcript ||
+                ""
+            );
+
+          if (!transcript) {
+            continue;
+          }
+
+          if (
+            event.results[
+              index
+            ].isFinal
+          ) {
+            finalTranscript +=
+              `${transcript} `;
+          } else {
+            interimTranscript +=
+              `${transcript} `;
+          }
         }
-      }
 
-      const recognizedText =
-        cleanText(
-          finalTranscript ||
-            interimTranscript
-        );
+        const recognizedText =
+          cleanText(
+            `${finalTranscript} ${interimTranscript}`
+          );
 
-      if (!recognizedText) {
-        return;
-      }
+        if (!recognizedText) {
+          return;
+        }
 
-      speechRecognitionHasResult =
-        true;
+        speechRecognitionHasResult =
+          true;
 
-      spokenBox.textContent =
-        recognizedText;
-    };
+        recognizedSpeechText =
+          recognizedText;
 
-    recognition.onerror = (event) => {
-      if (
-        event.error === "aborted" &&
-        speechRecognitionWasCancelled
-      ) {
-        return;
-      }
+        spokenBox.textContent =
+          recognizedText;
+      };
 
-      speechRecognitionHadError =
-        true;
+    recognition.onerror =
+      (event) => {
+        if (
+          event.error ===
+            "aborted" &&
+          speechRecognitionWasCancelled
+        ) {
+          return;
+        }
 
-      const errorMessage =
-        getSpeechErrorMessage(
+        speechRecognitionHadError =
+          true;
+
+        const errorMessage =
+          getSpeechErrorMessage(
+            event.error
+          );
+
+        spokenBox.textContent =
+          errorMessage;
+
+        status.textContent =
+          "❌ Mikrofon veya konuşma tanıma hatası";
+
+        console.error(
+          "PauseSpeak konuşma tanıma hatası:",
           event.error
         );
-
-      spokenBox.textContent =
-        errorMessage;
-
-      status.textContent =
-        "❌ Mikrofon veya konuşma tanıma hatası";
-
-      console.error(
-        "PauseSpeak konuşma tanıma hatası:",
-        event.error
-      );
-    };
+      };
 
     recognition.onend = () => {
       isSpeechListening = false;
       speechRecognition = null;
 
       speakButton.textContent =
-        "🎤 Tekrar Konuş";
+        pronunciationMode ===
+        "chunk"
+          ? "🎤 Parçayı Söyle"
+          : pronunciationMode ===
+              "final-sentence"
+            ? "🎤 Tam Cümleyi Söyle"
+            : "🎤 Tekrar Konuş";
 
       speakButton.disabled =
-        completedStartTimeMs === null ||
+        completedStartTimeMs ===
+          null ||
         !SpeechRecognitionClass;
 
       if (
@@ -583,7 +1554,9 @@
         return;
       }
 
-      if (speechRecognitionHadError) {
+      if (
+        speechRecognitionHadError
+      ) {
         return;
       }
 
@@ -601,6 +1574,10 @@
 
       status.textContent =
         "✅ Söylediğin metne çevrildi";
+
+      void handlePronunciationResult(
+        recognizedSpeechText
+      );
     };
 
     return recognition;
@@ -610,7 +1587,8 @@
     "click",
     () => {
       if (
-        completedStartTimeMs === null ||
+        completedStartTimeMs ===
+          null ||
         completedBox.textContent ===
           "Henüz tamamlanan cümle yok."
       ) {
@@ -620,7 +1598,9 @@
         return;
       }
 
-      if (!SpeechRecognitionClass) {
+      if (
+        !SpeechRecognitionClass
+      ) {
         spokenBox.textContent =
           "Bu tarayıcıda konuşma tanıma desteklenmiyor.";
 
@@ -635,13 +1615,17 @@
         isSpeechListening
       ) {
         speechRecognition.stop();
+
         return;
       }
 
       const video =
         getNetflixVideo();
 
-      if (video && !video.paused) {
+      if (
+        video &&
+        !video.paused
+      ) {
         video.pause();
       }
 
@@ -650,6 +1634,8 @@
 
       speechRecognitionHadError =
         false;
+
+      recognizedSpeechText = "";
 
       spokenBox.textContent =
         "Mikrofon hazırlanıyor...";
@@ -703,8 +1689,11 @@
     subtitleBox.textContent =
       fullSentence;
 
-    if (isReplayPlaybackActive) {
-      isReplayPlaybackActive = false;
+    if (
+      isReplayPlaybackActive
+    ) {
+      isReplayPlaybackActive =
+        false;
     } else {
       const previousText =
         previousCompletedSentence;
@@ -718,17 +1707,22 @@
       );
     }
 
-    const currentTime = video
-      ? Number(video.currentTime)
-      : 0;
+    const currentTime =
+      video
+        ? Number(
+            video.currentTime
+          )
+        : 0;
 
     if (
-      sentenceStartTime !== null
+      sentenceStartTime !==
+      null
     ) {
       completedStartTimeMs =
         Math.max(
           0,
-          sentenceStartTime - 0.25
+          sentenceStartTime -
+            0.25
         ) * 1000;
     } else {
       completedStartTimeMs =
@@ -738,9 +1732,11 @@
         ) * 1000;
     }
 
-    replayButton.disabled = false;
+    replayButton.disabled =
+      false;
 
     stopSpeechRecognition();
+    resetPronunciationPractice();
 
     spokenBox.textContent =
       SpeechRecognitionClass
@@ -755,9 +1751,13 @@
 
     sentenceParts = [];
     sentenceStartTime = null;
-    replayGuardUntilVideoTime = null;
+    replayGuardUntilVideoTime =
+      null;
 
-    if (video && !video.paused) {
+    if (
+      video &&
+      !video.paused
+    ) {
       video.pause();
 
       status.textContent =
@@ -769,40 +1769,55 @@
   }
 
   function updateVideoStatus() {
-    const video = getNetflixVideo();
+    const video =
+      getNetflixVideo();
 
     const videoFound =
       Boolean(video);
 
     if (
-      videoFound === lastVideoFound
+      videoFound ===
+      lastVideoFound
     ) {
       return;
     }
 
-    lastVideoFound = videoFound;
+    lastVideoFound =
+      videoFound;
 
     if (videoFound) {
       status.textContent =
         "✅ Video bulundu";
 
-      pauseButton.disabled = false;
-      playButton.disabled = false;
+      pauseButton.disabled =
+        false;
+
+      playButton.disabled =
+        false;
 
       replayButton.disabled =
-        completedStartTimeMs === null;
+        completedStartTimeMs ===
+        null;
 
       speakButton.disabled =
-        completedStartTimeMs === null ||
+        completedStartTimeMs ===
+          null ||
         !SpeechRecognitionClass;
     } else {
       status.textContent =
         "⏳ Video aranıyor...";
 
-      pauseButton.disabled = true;
-      playButton.disabled = true;
-      replayButton.disabled = true;
-      speakButton.disabled = true;
+      pauseButton.disabled =
+        true;
+
+      playButton.disabled =
+        true;
+
+      replayButton.disabled =
+        true;
+
+      speakButton.disabled =
+        true;
     }
   }
 
@@ -838,7 +1853,8 @@
     currentSubtitle =
       newSubtitle;
 
-    let replayGuardActive = false;
+    let replayGuardActive =
+      false;
 
     if (
       replayGuardUntilVideoTime !==
@@ -874,20 +1890,24 @@
 
     if (newSubtitle) {
       if (
-        sentenceStartTime === null
+        sentenceStartTime ===
+        null
       ) {
-        sentenceStartTime = video
-          ? Math.max(
-              0,
-              video.currentTime -
-                0.15
-            )
-          : null;
+        sentenceStartTime =
+          video
+            ? Math.max(
+                0,
+                video.currentTime -
+                  0.15
+              )
+            : null;
       }
 
       subtitleBox.textContent =
         newSubtitle;
-    } else if (!previousSubtitle) {
+    } else if (
+      !previousSubtitle
+    ) {
       subtitleBox.textContent =
         "Altyazı bekleniyor...";
     }
@@ -898,7 +1918,10 @@
     message
   ) {
     if (replayTimeout) {
-      clearTimeout(replayTimeout);
+      clearTimeout(
+        replayTimeout
+      );
+
       replayTimeout = null;
     }
 
@@ -909,10 +1932,12 @@
     playButton.disabled = false;
 
     replayButton.disabled =
-      completedStartTimeMs === null;
+      completedStartTimeMs ===
+      null;
 
     if (!success) {
-      isReplayPlaybackActive = false;
+      isReplayPlaybackActive =
+        false;
 
       status.textContent =
         `❌ ${
@@ -926,8 +1951,10 @@
     isReplayPlaybackActive = true;
 
     const replayStartSeconds =
-      completedStartTimeMs !== null
-        ? completedStartTimeMs / 1000
+      completedStartTimeMs !==
+      null
+        ? completedStartTimeMs /
+          1000
         : 0;
 
     currentSubtitle = "";
@@ -954,7 +1981,8 @@
 
       if (
         !video ||
-        completedStartTimeMs === null
+        completedStartTimeMs ===
+          null
       ) {
         status.textContent =
           "Tekrar oynatılacak cümle bulunamadı";
@@ -963,21 +1991,28 @@
       }
 
       stopSpeechRecognition();
-
       video.pause();
 
-      isReplayPlaybackActive = false;
+      isReplayPlaybackActive =
+        false;
+
       isReplayStarting = true;
       currentSubtitle = "";
       sentenceParts = [];
-      replayGuardUntilVideoTime = null;
+      replayGuardUntilVideoTime =
+        null;
 
       activeReplayRequestId =
         `replay-${Date.now()}-${Math.random()}`;
 
-      replayButton.disabled = true;
-      pauseButton.disabled = true;
-      playButton.disabled = true;
+      replayButton.disabled =
+        true;
+
+      pauseButton.disabled =
+        true;
+
+      playButton.disabled =
+        true;
 
       status.textContent =
         "🔁 Cümle tekrar hazırlanıyor...";
@@ -1012,11 +2047,15 @@
   window.addEventListener(
     "message",
     (event) => {
-      if (event.source !== window) {
+      if (
+        event.source !==
+        window
+      ) {
         return;
       }
 
-      const data = event.data;
+      const data =
+        event.data;
 
       if (
         !data ||
@@ -1051,7 +2090,6 @@
       }
 
       stopSpeechRecognition();
-
       video.pause();
 
       status.textContent =
@@ -1131,11 +2169,29 @@
   );
 
   panel.appendChild(
+    pronunciationResultTitle
+  );
+
+  panel.appendChild(
+    pronunciationResultBox
+  );
+
+  panel.appendChild(
+    chunkTitle
+  );
+
+  panel.appendChild(
+    chunkBox
+  );
+
+  panel.appendChild(
     speakButton
   );
 
   panel.appendChild(
-    document.createElement("br")
+    document.createElement(
+      "br"
+    )
   );
 
   panel.appendChild(
@@ -1143,7 +2199,9 @@
   );
 
   panel.appendChild(
-    document.createElement("br")
+    document.createElement(
+      "br"
+    )
   );
 
   panel.appendChild(
