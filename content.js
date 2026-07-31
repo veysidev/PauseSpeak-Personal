@@ -44,6 +44,8 @@
   let pronunciationChunkIndex = 0;
   let finalSentenceAttemptCount = 0;
   let autoContinueTimeout = null;
+  let speechSilenceTimeout = null;
+  let autoSpeechStartTimeout = null;
 
   const panel = document.createElement("div");
   panel.id = panelId;
@@ -968,33 +970,27 @@
     pronunciationResultBox.textContent =
       "✅ Başarılı söyledin.";
 
-    autoContinueTimeout =
-      setTimeout(
-        async () => {
-          try {
-            await video.play();
+    try {
+      await video.play();
 
-            status.textContent =
-              "▶️ Video oynatılıyor";
-          } catch (error) {
-            speakButton.disabled =
-              !SpeechRecognitionClass;
+      status.textContent =
+        "▶️ Video oynatılıyor";
+    } catch (error) {
+      speakButton.disabled =
+        !SpeechRecognitionClass;
 
-            replayButton.disabled =
-              completedStartTimeMs ===
-              null;
+      replayButton.disabled =
+        completedStartTimeMs ===
+        null;
 
-            status.textContent =
-              "Video otomatik başlatılamadı";
+      status.textContent =
+        "Video otomatik başlatılamadı";
 
-            console.error(
-              "PauseSpeak otomatik oynatma hatası:",
-              error
-            );
-          }
-        },
-        900
+      console.error(
+        "PauseSpeak otomatik oynatma hatası:",
+        error
       );
+    }
   }
 
   async function startChunkPractice() {
@@ -1389,7 +1385,18 @@
     );
   }
 
+  function clearSpeechSilenceTimeout() {
+    if (!speechSilenceTimeout) {
+      return;
+    }
+
+    clearTimeout(speechSilenceTimeout);
+    speechSilenceTimeout = null;
+  }
+
   function stopSpeechRecognition() {
+    clearSpeechSilenceTimeout();
+
     if (
       speechRecognition &&
       isSpeechListening
@@ -1419,11 +1426,13 @@
       new SpeechRecognitionClass();
 
     recognition.lang = "en-US";
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
 
     recognition.onstart = () => {
+      clearSpeechSilenceTimeout();
+
       isSpeechListening = true;
       speechRecognitionHasResult = false;
       speechRecognitionHadError = false;
@@ -1495,10 +1504,35 @@
 
         spokenBox.textContent =
           recognizedText;
+
+        clearSpeechSilenceTimeout();
+
+        speechSilenceTimeout =
+          setTimeout(() => {
+            speechSilenceTimeout =
+              null;
+
+            if (
+              speechRecognition ===
+                recognition &&
+              isSpeechListening
+            ) {
+              try {
+                recognition.stop();
+              } catch (error) {
+                console.warn(
+                  "PauseSpeak sessizlik sonrası mikrofon durdurma uyarısı:",
+                  error
+                );
+              }
+            }
+          }, 1800);
       };
 
     recognition.onerror =
       (event) => {
+        clearSpeechSilenceTimeout();
+
         if (
           event.error ===
             "aborted" &&
@@ -1528,8 +1562,16 @@
       };
 
     recognition.onend = () => {
+      clearSpeechSilenceTimeout();
+
       isSpeechListening = false;
-      speechRecognition = null;
+
+      if (
+        speechRecognition ===
+        recognition
+      ) {
+        speechRecognition = null;
+      }
 
       speakButton.textContent =
         pronunciationMode ===
@@ -1583,93 +1625,107 @@
     return recognition;
   }
 
+  function startSpeechRecognition() {
+    if (
+      completedStartTimeMs ===
+        null ||
+      completedBox.textContent ===
+        "Henüz tamamlanan cümle yok."
+    ) {
+      status.textContent =
+        "Önce tamamlanan bir İngilizce cümle gerekli.";
+
+      return;
+    }
+
+    if (
+      !SpeechRecognitionClass
+    ) {
+      spokenBox.textContent =
+        "Bu tarayıcıda konuşma tanıma desteklenmiyor.";
+
+      status.textContent =
+        "Konuşma tanıma desteklenmiyor";
+
+      return;
+    }
+
+    if (
+      speechRecognition &&
+      isSpeechListening
+    ) {
+      return;
+    }
+
+    const video =
+      getNetflixVideo();
+
+    if (
+      video &&
+      !video.paused
+    ) {
+      video.pause();
+    }
+
+    clearSpeechSilenceTimeout();
+
+    speechRecognitionHasResult =
+      false;
+
+    speechRecognitionHadError =
+      false;
+
+    recognizedSpeechText = "";
+
+    spokenBox.textContent =
+      "Mikrofon hazırlanıyor...";
+
+    speechRecognition =
+      createSpeechRecognition();
+
+    if (!speechRecognition) {
+      spokenBox.textContent =
+        "Konuşma tanıma başlatılamadı.";
+
+      return;
+    }
+
+    try {
+      speechRecognition.start();
+    } catch (error) {
+      speechRecognition = null;
+      isSpeechListening = false;
+
+      speakButton.textContent =
+        "🎤 Konuş";
+
+      spokenBox.textContent =
+        "Mikrofon başlatılamadı. Birkaç saniye sonra tekrar dene.";
+
+      status.textContent =
+        "❌ Mikrofon başlatılamadı";
+
+      console.error(
+        "PauseSpeak mikrofon başlatma hatası:",
+        error
+      );
+    }
+  }
+
   speakButton.addEventListener(
     "click",
     () => {
       if (
-        completedStartTimeMs ===
-          null ||
-        completedBox.textContent ===
-          "Henüz tamamlanan cümle yok."
-      ) {
-        status.textContent =
-          "Önce tamamlanan bir İngilizce cümle gerekli.";
-
-        return;
-      }
-
-      if (
-        !SpeechRecognitionClass
-      ) {
-        spokenBox.textContent =
-          "Bu tarayıcıda konuşma tanıma desteklenmiyor.";
-
-        status.textContent =
-          "Konuşma tanıma desteklenmiyor";
-
-        return;
-      }
-
-      if (
         speechRecognition &&
         isSpeechListening
       ) {
+        clearSpeechSilenceTimeout();
         speechRecognition.stop();
 
         return;
       }
 
-      const video =
-        getNetflixVideo();
-
-      if (
-        video &&
-        !video.paused
-      ) {
-        video.pause();
-      }
-
-      speechRecognitionHasResult =
-        false;
-
-      speechRecognitionHadError =
-        false;
-
-      recognizedSpeechText = "";
-
-      spokenBox.textContent =
-        "Mikrofon hazırlanıyor...";
-
-      speechRecognition =
-        createSpeechRecognition();
-
-      if (!speechRecognition) {
-        spokenBox.textContent =
-          "Konuşma tanıma başlatılamadı.";
-
-        return;
-      }
-
-      try {
-        speechRecognition.start();
-      } catch (error) {
-        speechRecognition = null;
-        isSpeechListening = false;
-
-        speakButton.textContent =
-          "🎤 Konuş";
-
-        spokenBox.textContent =
-          "Mikrofon başlatılamadı. Birkaç saniye sonra tekrar dene.";
-
-        status.textContent =
-          "❌ Mikrofon başlatılamadı";
-
-        console.error(
-          "PauseSpeak mikrofon başlatma hatası:",
-          error
-        );
-      }
+      startSpeechRecognition();
     }
   );
 
@@ -1740,7 +1796,7 @@
 
     spokenBox.textContent =
       SpeechRecognitionClass
-        ? "Cümleyi İngilizce söylemek için Konuş düğmesine bas."
+        ? "Mikrofon otomatik açılıyor..."
         : "Bu tarayıcıda konuşma tanıma desteklenmiyor.";
 
     speakButton.textContent =
@@ -1765,6 +1821,22 @@
     } else {
       status.textContent =
         "✅ Cümle tamamlandı";
+    }
+
+    if (autoSpeechStartTimeout) {
+      clearTimeout(
+        autoSpeechStartTimeout
+      );
+    }
+
+    if (SpeechRecognitionClass) {
+      autoSpeechStartTimeout =
+        setTimeout(() => {
+          autoSpeechStartTimeout =
+            null;
+
+          startSpeechRecognition();
+        }, 350);
     }
   }
 
