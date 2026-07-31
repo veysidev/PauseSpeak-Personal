@@ -24,6 +24,7 @@
   let replayTimeout = null;
   let replayGuardUntilVideoTime = null;
   let isReplayPlaybackActive = false;
+  let isAutomaticRetryReplay = false;
 
   let previousCompletedSentence = "";
   let translationRequestNumber = 0;
@@ -1292,21 +1293,41 @@
 
     pronunciationAttemptCount += 1;
 
-    if (
-      pronunciationAttemptCount ===
-      1
-    ) {
-      pronunciationResultBox.textContent =
-        `Bir daha dene. Benzerlik: %${percentage}`;
+  if (
+  pronunciationAttemptCount ===
+  1
+) {
+  pronunciationResultBox.textContent =
+    `İlk deneme başarılı olmadı. ` +
+    `Cümle tekrar oynatılıyor. Benzerlik: %${percentage}`;
 
-      status.textContent =
-        "🔁 İlk deneme başarılı olmadı";
+  status.textContent =
+    "🔁 İkinci deneme için cümle tekrar oynatılıyor";
 
-      speakButton.textContent =
-        "🎤 İkinci Kez Dene";
+  speakButton.textContent =
+    "Cümle tekrar oynatılıyor...";
 
-      return;
-    }
+  speakButton.disabled = true;
+
+  if (replayButton.disabled) {
+    status.textContent =
+      "❌ Cümle otomatik tekrar oynatılamadı";
+
+    speakButton.textContent =
+      "🎤 İkinci Kez Dene";
+
+    speakButton.disabled =
+      !SpeechRecognitionClass;
+
+    return;
+  }
+
+  isAutomaticRetryReplay = true;
+
+  replayButton.click();
+
+  return;
+}
 
     const chunkStarted =
       await startChunkPractice();
@@ -1792,8 +1813,13 @@
       false;
 
     stopSpeechRecognition();
-    resetPronunciationPractice();
 
+if (isAutomaticRetryReplay) {
+  isAutomaticRetryReplay = false;
+  recognizedSpeechText = "";
+} else {
+  resetPronunciationPractice();
+}
     spokenBox.textContent =
       SpeechRecognitionClass
         ? "Mikrofon otomatik açılıyor..."
@@ -2007,18 +2033,29 @@
       completedStartTimeMs ===
       null;
 
-    if (!success) {
-      isReplayPlaybackActive =
-        false;
+   if (!success) {
+  isReplayPlaybackActive =
+    false;
 
-      status.textContent =
-        `❌ ${
-          message ||
-          "Cümle tekrar oynatılamadı"
-        }`;
+  isAutomaticRetryReplay =
+    false;
 
-      return;
-    }
+  speakButton.textContent =
+    "🎤 İkinci Kez Dene";
+
+  speakButton.disabled =
+    completedStartTimeMs ===
+      null ||
+    !SpeechRecognitionClass;
+
+  status.textContent =
+    `❌ ${
+      message ||
+      "Cümle tekrar oynatılamadı"
+    }`;
+
+  return;
+}
 
     isReplayPlaybackActive = true;
 
