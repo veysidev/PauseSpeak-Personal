@@ -138,26 +138,46 @@ chunkPracticeButton.disabled = true;
 
   const playButton = document.createElement("button");
   playButton.textContent = "Devam Et";
+  const controlsPanel = document.createElement("div");
 
- Object.assign(panel.style, {
+controlsPanel.id = "pausespeak-controls-panel";
+
+Object.assign(controlsPanel.style, {
   position: "fixed",
-  left: "50%",
-  bottom: "24px",
-  transform: "translateX(-50%)",
+  top: "16px",
+  right: "16px",
   zIndex: "2147483647",
-  width: "min(760px, calc(100vw - 32px))",
-  maxHeight: "calc(100vh - 48px)",
-  overflowY: "auto",
-  padding: "16px",
-  backgroundColor: "rgba(17, 24, 39, 0.82)",
-  color: "#ffffff",
+  width: "174px",
+padding: "10px",
+display: "flex",
+flexDirection: "column",
+gap: "6px",
+  backgroundColor: "rgba(15, 20, 20, 0.78)",
+  border: "1px solid rgba(255, 255, 255, 0.08)",
   borderRadius: "16px",
-  fontFamily: "Arial, sans-serif",
-  fontSize: "14px",
-  boxShadow: "0 12px 40px rgba(0, 0, 0, 0.45)",
+  boxShadow: "0 12px 32px rgba(0, 0, 0, 0.35)",
   backdropFilter: "blur(10px)",
   boxSizing: "border-box"
-  });
+});
+Object.assign(panel.style, {
+  position: "fixed",
+ left: "0",
+right: "0",
+bottom: "130px",
+margin: "0 auto",
+  zIndex: "2147483647",
+  width: "fit-content",
+  maxWidth: "calc(100vw - 380px)",
+  padding: "18px 22px",
+  backgroundColor: "rgba(0, 0, 0, 0.58)",
+  color: "#ffffff",
+  border: "1px solid rgba(255, 255, 255, 0.28)",
+  borderRadius: "18px",
+  fontFamily: "Arial, sans-serif",
+  fontSize: "16px",
+  boxShadow: "0 10px 30px rgba(0, 0, 0, 0.35)",
+  boxSizing: "border-box"
+});
 
   Object.assign(title.style, {
     fontSize: "18px",
@@ -208,10 +228,22 @@ chunkPracticeButton.disabled = true;
     });
   });
 
-  Object.assign(translationBox.style, {
-    backgroundColor: "#172554",
-    color: "#dbeafe"
+ [
+  subtitleBox,
+  translationBox
+].forEach((box) => {
+  Object.assign(box.style, {
+    minHeight: "0",
+    padding: "2px",
+    marginBottom: "2px",
+    backgroundColor: "transparent",
+    borderRadius: "0"
   });
+});
+
+Object.assign(translationBox.style, {
+  color: "#60a5fa"
+});
 Object.assign(nowSpeakBox.style, {
   display: "none",
   backgroundColor: "#064e3b",
@@ -260,18 +292,154 @@ Object.assign(chunkBox.style, {
   replayButton,
   pauseButton,
   playButton
-].forEach((button) => {
-  Object.assign(button.style, {
-    padding: "9px 12px",
-    marginRight: "8px",
-    marginBottom: "8px",
-    border: "none",
-    borderRadius: "7px",
-    cursor: "pointer",
-    fontWeight: "bold"
-  });
+].forEach((button, index) => {
+Object.assign(button.style, {
+  position: "static",
+  width: "100%",
+ minHeight: "50px",
+padding: "8px 12px",
+  margin: "0",
+  border: "1px solid rgba(255, 255, 255, 0.20)",
+  borderRadius: "10px",
+  cursor: "pointer",
+  fontSize: "14px",
+  fontWeight: "400",
+  lineHeight: "1.35",
+  textAlign: "left",
+  color: "#f9fafb",
+  backgroundColor: "rgba(55, 55, 58, 0.62)",
+  boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.04)",
+  whiteSpace: "normal",
+  boxSizing: "border-box",
+  opacity: "1"
+});
+});
+const speakButtonIconSvg =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0%200%2024%2024' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='2' width='6' height='12' rx='3'/%3E%3Cpath d='M5%2010a7%207%200%200%200%2014%200'/%3E%3Cpath d='M12%2017v5'/%3E%3Cpath d='M8%2022h8'/%3E%3C/svg%3E\")";
+
+Object.assign(speakButton.style, {
+  backgroundImage: speakButtonIconSvg,
+  backgroundRepeat: "no-repeat",
+  backgroundPosition: "16px center",
+  backgroundSize: "20px 20px",
+  paddingLeft: "50px"
 });
 
+const removeSpeakButtonEmoji = () => {
+  const cleanLabel =
+    speakButton.textContent.replace(
+      /^[🎤⏹]\s*/,
+      ""
+    );
+
+  if (
+    cleanLabel !==
+    speakButton.textContent
+  ) {
+    speakButton.textContent =
+      cleanLabel;
+  }
+};
+
+removeSpeakButtonEmoji();
+
+const speakButtonLabelObserver =
+  new MutationObserver(
+    removeSpeakButtonEmoji
+  );
+
+speakButtonLabelObserver.observe(
+  speakButton,
+  {
+    childList: true,
+    characterData: true,
+    subtree: true
+  }
+);
+const pronunciationButtonIconSvg =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0%200%2024%2024' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6%2010a6%206%200%200%201%2012%200c0%204-2%205-4%206-1.4.7-2%201.6-2%203a2%202%200%200%201-4%200'/%3E%3Cpath d='M10%2010a2%202%200%200%201%204%200c0%201.5-.8%202.2-2%203'/%3E%3C/svg%3E\")";
+
+Object.assign(
+  pronunciationToggleButton.style,
+  {
+    backgroundImage:
+      pronunciationButtonIconSvg,
+    backgroundRepeat: "no-repeat",
+    backgroundPosition: "16px center",
+    backgroundSize: "20px 20px",
+    paddingLeft: "50px"
+  }
+);
+const automaticPauseButtonIconSvg =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0%200%2024%2024' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8'/%3E%3Ccircle cx='12' cy='12' r='2' fill='%23ffffff' stroke='none'/%3E%3C/svg%3E\")";
+
+Object.assign(
+  automaticPauseToggleButton.style,
+  {
+    backgroundImage:
+      automaticPauseButtonIconSvg,
+    backgroundRepeat: "no-repeat",
+    backgroundPosition: "16px center",
+    backgroundSize: "20px 20px",
+    paddingLeft: "50px"
+  }
+);
+const chunkPracticeButtonIconSvg =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0%200%2024%2024' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9%203H5a2%202%200%200%200-2%202v4h1.5a2.5%202.5%200%201%201%200%205H3v5a2%202%200%200%200%202%202h5v-1.5a2.5%202.5%200%201%201%205%200V21h4a2%202%200%200%200%202-2v-5h-1.5a2.5%202.5%200%201%201%200-5H21V5a2%202%200%200%200-2-2h-4v1.5a2.5%202.5%200%201%201-5%200V3Z'/%3E%3C/svg%3E\")";
+
+Object.assign(
+  chunkPracticeButton.style,
+  {
+    backgroundImage:
+      chunkPracticeButtonIconSvg,
+    backgroundRepeat: "no-repeat",
+    backgroundPosition: "16px center",
+    backgroundSize: "20px 20px",
+    paddingLeft: "50px"
+  }
+);
+const replayButtonIconSvg =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0%200%2024%2024' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20%2011a8%208%200%201%201-2.34-5.66'/%3E%3Cpath d='M20%204v7h-7'/%3E%3C/svg%3E\")";
+
+Object.assign(
+  replayButton.style,
+  {
+    backgroundImage:
+      replayButtonIconSvg,
+    backgroundRepeat: "no-repeat",
+    backgroundPosition: "16px center",
+    backgroundSize: "20px 20px",
+    paddingLeft: "50px"
+  }
+);
+const pauseButtonIconSvg =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0%200%2024%2024'%3E%3Crect x='6' y='6' width='12' height='12' rx='1' fill='%23ffffff'/%3E%3C/svg%3E\")";
+
+Object.assign(
+  pauseButton.style,
+  {
+    backgroundImage:
+      pauseButtonIconSvg,
+    backgroundRepeat: "no-repeat",
+    backgroundPosition: "16px center",
+    backgroundSize: "20px 20px",
+    paddingLeft: "50px"
+  }
+);
+const playButtonIconSvg =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0%200%2024%2024'%3E%3Cpath d='M7%204l12%208-12%208V4Z' fill='%23ffffff'/%3E%3C/svg%3E\")";
+
+Object.assign(
+  playButton.style,
+  {
+    backgroundImage:
+      playButtonIconSvg,
+    backgroundRepeat: "no-repeat",
+    backgroundPosition: "16px center",
+    backgroundSize: "20px 20px",
+    paddingLeft: "50px"
+  }
+);
   function getNetflixVideo() {
     return document.querySelector("video");
   }
@@ -1915,11 +2083,7 @@ pronunciationToggleButton.addEventListener(
   automaticPauseToggleButton.textContent =
     "Otomatik Durdurma: Açık";
 
-  automaticPauseToggleButton.style.backgroundColor =
-    "#065f46";
-
-  automaticPauseToggleButton.style.color =
-    "#ecfdf5";
+ 
 }
 
     pronunciationToggleButton.textContent =
@@ -1927,15 +2091,7 @@ pronunciationToggleButton.addEventListener(
         ? "Telaffuz: Açık"
         : "Telaffuz: Kapalı";
 
-    pronunciationToggleButton.style.backgroundColor =
-      isPronunciationEnabled
-        ? "#065f46"
-        : "#f3f4f6";
-
-    pronunciationToggleButton.style.color =
-      isPronunciationEnabled
-        ? "#ecfdf5"
-        : "#111827";
+  
 
     if (!isPronunciationEnabled) {
       nowSpeakBox.style.display = "none";
@@ -1989,15 +2145,7 @@ automaticPauseToggleButton.addEventListener(
         ? "Otomatik Durdurma: Açık"
         : "Otomatik Durdurma: Kapalı";
 
-    automaticPauseToggleButton.style.backgroundColor =
-      isAutomaticPauseEnabled
-        ? "#065f46"
-        : "#f3f4f6";
 
-    automaticPauseToggleButton.style.color =
-      isAutomaticPauseEnabled
-        ? "#ecfdf5"
-        : "#111827";
   }
 );
 chunkPracticeButton.addEventListener(
@@ -2619,39 +2767,25 @@ panel.appendChild(
     speakButton
   );
 
-  panel.appendChild(
-  speakButton
+ [
+  speakButton,
+  pronunciationToggleButton,
+  automaticPauseToggleButton,
+  chunkPracticeButton,
+  replayButton,
+  pauseButton,
+  playButton
+].forEach((button) => {
+  controlsPanel.appendChild(button);
+});
+
+document.documentElement.appendChild(
+  panel
 );
 
-panel.appendChild(
-  pronunciationToggleButton
+document.documentElement.appendChild(
+  controlsPanel
 );
-panel.appendChild(
-  automaticPauseToggleButton
-);
-panel.appendChild(
-  chunkPracticeButton
-);
-panel.appendChild(
-  replayButton
-);
-
- 
-
- 
-
-  panel.appendChild(
-    pauseButton
-  );
-
-  panel.appendChild(
-    playButton
-  );
-
-  document.documentElement.appendChild(
-    panel
-  );
-
   const observer =
     new MutationObserver(() => {
       updateVideoStatus();
