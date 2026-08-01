@@ -190,7 +190,70 @@ function parseChunkArray(
     (chunk) => cleanText(chunk)
   );
 }
+function parseChunkDecision(
+  outputText
+) {
+  const cleanedOutput =
+    String(outputText || "")
+      .trim()
+      .replace(
+        /^```(?:json)?\s*/i,
+        ""
+      )
+      .replace(
+        /\s*```$/,
+        ""
+      )
+      .trim();
 
+  const firstBrace =
+    cleanedOutput.indexOf("{");
+
+  const lastBrace =
+    cleanedOutput.lastIndexOf("}");
+
+  if (
+    firstBrace === -1 ||
+    lastBrace === -1
+  ) {
+    throw new Error(
+      "Chunk cevabında JSON nesnesi bulunamadı."
+    );
+  }
+
+  const parsed =
+    JSON.parse(
+      cleanedOutput.slice(
+        firstBrace,
+        lastBrace + 1
+      )
+    );
+
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    typeof parsed.suitable !==
+      "boolean" ||
+    !Array.isArray(parsed.chunks) ||
+    parsed.chunks.some(
+      (chunk) =>
+        typeof chunk !== "string"
+    )
+  ) {
+    throw new Error(
+      "Chunk cevabı geçerli bir karar nesnesi değil."
+    );
+  }
+
+  return {
+    suitable: parsed.suitable,
+
+    chunks: parsed.chunks.map(
+      (chunk) => cleanText(chunk)
+    )
+  };
+}
 function validateChunks(
   originalSentence,
   chunks
@@ -303,7 +366,152 @@ async function generateSmartChunks(
     openAIResponse.output_text
   );
 }
+async function generateSmartChunkDecision(
+  openAI,
+  sentence
+) {
+  const openAIResponse =
+    await openAI.responses.create({
+      model: openAIModel,
 
+      reasoning: {
+        effort: "none"
+      },
+
+      instructions: [
+        "Sen İngilizce telaffuz ve",
+        "akıcı konuşma çalışması için",
+        "öğrenmeye değer doğal",
+        "konuşma parçaları belirleyen",
+        "bir uzmansın.",
+
+        "Önce verilen cümlenin doğal",
+        "ve faydalı biçimde en az iki",
+        "anlamlı konuşma parçasına",
+        "ayrılıp ayrılamayacağına",
+        "karar ver.",
+
+        "Cümleyi yalnızca kelime",
+        "sayısına göre bölme.",
+
+        "Doğal ve öğrenmeye değer",
+        "bir ayrım yoksa zorla bölme.",
+
+        "Phrasal verbler, deyimler,",
+        "doğal konuşma kalıpları,",
+        "B1 ve üzeri gramer yapıları,",
+        "vurgu yapıları, şart",
+        "cümleleri, duygusal ifadeler,",
+        "clause yapıları, relative",
+        "clauses, nominal clauses,",
+        "reduced clauses, collocations,",
+        "verb patterns ve akademik",
+        "veya soyut yapılar öğrenmeye",
+        "değer kabul edilir.",
+
+        "Tek kelimelik basit cevapları,",
+        "basit özne ve yardımcı fiil",
+        "yapılarını, sıradan A1-A2",
+        "cümlelerini, tek başına",
+        "anlamsız bağlaçları ve",
+        "anlamsız mikro parçaları",
+        "zorla chunk yapma.",
+        "Uh, um, erm, hmm, mm, ah,",
+"yeah, yes, no, okay, maybe",
+"ve well gibi tereddüt veya",
+"basit tepki sözlerini tek",
+"başına chunk yapma.",
+
+'"Um... yeah," gibi yalnızca',
+"dolgu ve basit tepki",
+"sözcüklerinden oluşan bir",
+"parça kesinlikle üretme.",
+
+"Bu tür sözcükleri anlamlı",
+"devamıyla birlikte tut.",
+"Anlamlı bir devamla doğal",
+"şekilde birleştirilemiyorsa",
+"suitable false döndür.",
+"Tek bir basit A1-A2 cümlesini",
+"sırf kısa olduğu için bölme.",
+
+"Ancak giriş iki veya daha",
+"fazla tam ve bağımsız",
+"cümleden oluşuyorsa ve her",
+"cümle tek başına anlamlıysa",
+"suitable true döndür.",
+
+"Bu durumda her tam cümleyi",
+"ayrı bir doğal chunk yap.",
+
+"Bu kural, ayrı cümleler",
+"A1-A2 düzeyinde olsa bile",
+"geçerlidir.",
+
+"Nokta, soru işareti veya",
+"ünlemle ayrılmış anlamlı tam",
+"cümleleri tek chunk içinde",
+"birleştirme.",
+
+        "Sahne açıklamalarını tek",
+        "başına bir chunk yapma; doğal",
+        "olarak komşu konuşmayla",
+        "birlikte tut.",
+
+        "Uygunsa suitable true ve",
+        "2 ile 8 arasında chunk döndür.",
+
+        "Uygun değilse suitable false",
+        "ve boş chunks dizisi döndür.",
+
+        "Fiil ile nesnesini bölme.",
+        "Phrasal verb bölme.",
+        "Deyim bölme.",
+        "Collocation bölme.",
+        "Verb pattern bölme.",
+
+        "Edatlı yapıları anlamı",
+        "bozacak şekilde ayırma.",
+
+        "Zamir ile yüklemi doğal",
+        "olmayan şekilde ayırma.",
+
+        "Hiçbir kelimeyi veya",
+        "noktalama işaretini silme,",
+        "ekleme, düzeltme ya da",
+        "yeniden sıralama.",
+
+        "Suitable true olduğunda",
+        "chunklar boşlukla yeniden",
+        "birleştirildiğinde orijinal",
+        "cümle aynen oluşmalıdır.",
+
+        "Yalnızca geçerli bir JSON",
+        "nesnesi döndür.",
+
+        "Açıklama, analiz, başlık,",
+        "Markdown veya kod bloğu",
+        "ekleme."
+      ].join(" "),
+
+      input: [
+        `Cümle: ${sentence}`,
+
+        "Yalnızca şu iki biçimden",
+        "birini döndür:",
+
+        '{"suitable":true,"chunks":["birinci parça","ikinci parça"]}',
+
+        '{"suitable":false,"chunks":[]}'
+      ].join("\n"),
+
+      max_output_tokens: 350
+    });
+
+  return parseChunkDecision(
+    openAIResponse.output_text
+  );
+}
 app.get(
   "/health",
   (request, response) => {
@@ -511,58 +719,71 @@ app.post(
       const openAI =
         await getOpenAIClient();
 
-      let chunks = null;
+      let decision = null;
 
       for (
         let attempt = 1;
         attempt <= 2;
         attempt += 1
       ) {
-        const candidateChunks =
-          await generateSmartChunks(
+        const candidateDecision =
+          await generateSmartChunkDecision(
             openAI,
             cleanedText
           );
 
-        if (
+        const suitableDecisionIsValid =
+          candidateDecision.suitable ===
+            true &&
           validateChunks(
             cleanedText,
-            candidateChunks
-          )
+            candidateDecision.chunks
+          );
+
+        const unsuitableDecisionIsValid =
+          candidateDecision.suitable ===
+            false &&
+          candidateDecision.chunks.length ===
+            0;
+
+        if (
+          suitableDecisionIsValid ||
+          unsuitableDecisionIsValid
         ) {
-          chunks =
-            candidateChunks;
+          decision = candidateDecision;
 
           break;
         }
 
         console.warn(
-          `PauseSpeak chunk doğrulaması ` +
+          `PauseSpeak chunk kararı ` +
             `${attempt}. denemede ` +
-            "başarısız oldu.",
+            "doğrulanamadı.",
 
-          candidateChunks
+          candidateDecision
         );
       }
 
-      if (!chunks) {
+      if (!decision) {
         return response
           .status(422)
           .json({
             success: false,
 
             error:
-              "Cümle güvenli biçimde " +
-              "parçalara ayrılamadı. " +
-              "Lütfen tam cümleyi " +
-              "tekrar dene."
+              "Cümle için güvenli bir " +
+              "chunk kararı alınamadı."
           });
       }
 
       return response.json({
         success: true,
 
-        chunks,
+        suitable:
+          decision.suitable,
+
+        chunks:
+          decision.chunks,
 
         provider: "openai",
 

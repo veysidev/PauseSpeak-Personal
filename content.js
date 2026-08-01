@@ -898,23 +898,29 @@ Object.assign(chunkBox.style, {
         return null;
       }
 
-      if (
-        !response.ok ||
-        !data?.success ||
-        !Array.isArray(
-          data.chunks
-        ) ||
-        data.chunks.some(
-          (chunk) =>
-            typeof chunk !==
-            "string"
-        )
-      ) {
-        throw new Error(
-          data?.error ||
-            "Akıllı parçalar alınamadı."
-        );
-      }
+if (
+  !response.ok ||
+  !data?.success ||
+  typeof data.suitable !==
+    "boolean" ||
+  !Array.isArray(
+    data.chunks
+  ) ||
+  data.chunks.some(
+    (chunk) =>
+      typeof chunk !==
+        "string"
+  )
+) {
+  throw new Error(
+    data?.error ||
+      "Akıllı parçalar alınamadı."
+  );
+}
+
+if (!data.suitable) {
+  return null;
+}
 
       const chunks =
         data.chunks.map(
@@ -1079,13 +1085,7 @@ function scheduleAutomaticSpeechStart(
     const sentence =
       completedBox.textContent;
 
-    if (
-      !shouldUseChunkMode(
-        sentence
-      )
-    ) {
-      return false;
-    }
+   
 
     if (isChunkRequestPending) {
       return true;
@@ -1142,9 +1142,35 @@ function scheduleAutomaticSpeechStart(
         return true;
       }
 
-      if (!chunks) {
-        return true;
-      }
+    if (!chunks) {
+  pronunciationAttemptCount = 0;
+  pronunciationMode = "sentence";
+  pronunciationChunks = [];
+  pronunciationChunkIndex = 0;
+  pronunciationChunkSuccessCount = 0;
+
+  chunkTitle.style.display = "none";
+  chunkBox.style.display = "none";
+
+  nowSpeakBox.textContent =
+    sentence;
+
+  nowSpeakBox.style.display =
+    isPronunciationEnabled
+      ? "block"
+      : "none";
+
+  pronunciationResultBox.textContent =
+    "Bu cümle doğal ve öğrenmeye değer parçalara uygun değil.";
+
+  status.textContent =
+    "Tam cümleyle devam et";
+
+  speakButton.textContent =
+    "🎤 Tam Cümleyi Söyle";
+
+  return true;
+}
 
       pronunciationChunks =
         chunks;
@@ -1445,12 +1471,19 @@ finalSentenceAttemptCount = 0;
   return;
 }
 
-    const chunkStarted =
-      await startChunkPractice();
+ pronunciationAttemptCount = 0;
 
-    if (chunkStarted) {
-      return;
-    }
+pronunciationResultBox.textContent =
+  `İkinci deneme de başarılı olmadı. ` +
+  `Tam cümleyi tekrar söyleyebilir veya ` +
+  `Parçalara Ayır düğmesini kullanabilirsin. ` +
+  `Benzerlik: %${percentage}`;
+
+status.textContent =
+  "Tam cümleyi tekrar söyle veya parçalara ayır";
+
+speakButton.textContent =
+  "🎤 Tekrar Dene";
 
     pronunciationAttemptCount = 0;
 
@@ -1918,10 +1951,7 @@ pronunciationToggleButton.addEventListener(
       completedStartTimeMs === null ||
       !SpeechRecognitionClass;
      chunkPracticeButton.disabled =
-  completedStartTimeMs === null ||
-  !shouldUseChunkMode(
-    completedBox.textContent
-  );
+  completedStartTimeMs === null;
 
     const video = getNetflixVideo();
 
@@ -1965,18 +1995,49 @@ automaticPauseToggleButton.addEventListener(
 chunkPracticeButton.addEventListener(
   "click",
   () => {
-    const sentence =
-      completedBox.textContent;
-
-    if (
-      completedStartTimeMs === null ||
-      !shouldUseChunkMode(sentence)
+        if (
+      pronunciationChunks.length > 0 &&
+      (
+        pronunciationMode === "chunk" ||
+        pronunciationMode ===
+          "final-sentence"
+      )
     ) {
-      chunkPracticeButton.disabled =
-        true;
+      stopSpeechRecognition();
+
+      pronunciationChunkSuccessCount = 0;
+      recognizedSpeechText = "";
+
+      if (
+        pronunciationMode ===
+        "final-sentence"
+      ) {
+        pronunciationMode = "chunk";
+        pronunciationChunkIndex = 0;
+      } else {
+        pronunciationChunkIndex =
+          (
+            pronunciationChunkIndex + 1
+          ) %
+          pronunciationChunks.length;
+      }
+
+      updateChunkDisplay();
+      scheduleAutomaticSpeechStart();
 
       return;
     }
+    const sentence =
+      completedBox.textContent;
+
+ if (
+  completedStartTimeMs === null
+) {
+  chunkPracticeButton.disabled =
+    true;
+
+  return;
+}
 
     isPronunciationEnabled = true;
     isAutomaticPauseEnabled = true;
