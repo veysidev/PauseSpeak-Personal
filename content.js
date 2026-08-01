@@ -1,9 +1,23 @@
 (() => {
   const panelId = "pausespeak-status-panel";
-  const translationApiUrl = "http://localhost:3000/translate";
-  const translationTimeoutMs = 8000;
-  const chunkApiUrl = "http://localhost:3000/chunk";
-  const chunkTimeoutMs = 20000;
+ const translationApiUrl =
+  "http://localhost:3000/translate";
+
+const translationTimeoutMs = 8000;
+
+const chunkApiUrl =
+  "http://localhost:3000/chunk";
+
+const chunkTimeoutMs = 20000;
+
+const studySegmentsApiUrl =
+  "http://localhost:3000/study-segments";
+
+const studySegmentsTimeoutMs = 20000;
+const studyMeaningApiUrl =
+  "http://localhost:3000/study-meaning";
+
+const studyMeaningTimeoutMs = 20000;
   const pronunciationSuccessThreshold = 0.78;
 
   const SpeechRecognitionClass =
@@ -28,9 +42,14 @@
 
   let previousCompletedSentence = "";
   let translationRequestNumber = 0;
-  let chunkRequestNumber = 0;
-  let chunkAbortController = null;
-  let isChunkRequestPending = false;
+ let chunkRequestNumber = 0;
+let chunkAbortController = null;
+let isChunkRequestPending = false;
+
+let studySegmentsRequestNumber = 0;
+let studySegmentsAbortController = null;
+let studyMeaningRequestNumber = 0;
+let studyMeaningAbortController = null;
 
   let speechRecognition = null;
   let isSpeechListening = false;
@@ -1013,7 +1032,579 @@ Object.assign(
       )
     );
   }
+  function renderStudySegments(
+  segments
+) {
+  subtitleBox.replaceChildren();
 
+  Object.assign(
+    subtitleBox.style,
+    {
+      display: "flex",
+      flexWrap: "wrap",
+      alignItems: "center",
+      gap: "4px"
+    }
+  );
+
+  for (const segment of segments) {
+    if (
+      segment.type ===
+      "punctuation"
+    ) {
+      const punctuation =
+        document.createElement(
+          "span"
+        );
+
+      punctuation.textContent =
+        segment.text;
+
+      Object.assign(
+        punctuation.style,
+        {
+          color: "#ffffff",
+          font: "inherit",
+          lineHeight: "1.35"
+        }
+      );
+
+      subtitleBox.appendChild(
+        punctuation
+      );
+
+      continue;
+    }
+
+    const segmentButton =
+      document.createElement(
+        "button"
+      );
+
+    segmentButton.type = "button";
+
+    segmentButton.textContent =
+      segment.text;
+
+    segmentButton.dataset.studyText =
+      segment.text;
+
+    segmentButton.dataset.studyType =
+      segment.type;
+
+    Object.assign(
+      segmentButton.style,
+      {
+        appearance: "none",
+        padding: "2px 5px",
+        margin: "0",
+        border:
+          "1px solid rgba(255, 255, 255, 0.42)",
+        borderRadius: "3px",
+        backgroundColor:
+          "rgba(20, 20, 24, 0.58)",
+        color: "#ffffff",
+        font: "inherit",
+        lineHeight: "1.35",
+        cursor: "pointer",
+        boxShadow:
+          "inset 0 1px 0 rgba(255, 255, 255, 0.05)"
+      }
+    );
+
+    segmentButton.addEventListener(
+      "click",
+      (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+window.speechSynthesis.cancel();
+
+const utterance =
+  new SpeechSynthesisUtterance(
+    segment.text
+  );
+
+utterance.lang = "en-US";
+utterance.rate = 0.9;
+utterance.pitch = 1;
+
+window.speechSynthesis.speak(
+  utterance
+);
+void loadStudyMeaning(
+  segment.text,
+  completedBox.textContent,
+  segment.type
+);
+        subtitleBox
+          .querySelectorAll(
+            "button[data-study-text]"
+          )
+          .forEach((button) => {
+            button.style.borderColor =
+              "rgba(255, 255, 255, 0.42)";
+
+            button.style.backgroundColor =
+              "rgba(20, 20, 24, 0.58)";
+          });
+
+        segmentButton.style.borderColor =
+          "#ffffff";
+
+        segmentButton.style.backgroundColor =
+          "rgba(255, 255, 255, 0.16)";
+      }
+    );
+
+    subtitleBox.appendChild(
+      segmentButton
+    );
+  }
+}
+async function loadStudyMeaning(
+  selectedText,
+  sentence,
+  segmentType
+) {
+  if (studyMeaningAbortController) {
+    studyMeaningAbortController.abort();
+
+    studyMeaningAbortController =
+      null;
+  }
+
+  const requestNumber =
+    ++studyMeaningRequestNumber;
+
+  try {
+    const meaning =
+      await requestStudyMeaning(
+        selectedText,
+        sentence,
+        segmentType,
+        requestNumber
+      );
+
+    if (
+      !meaning ||
+      requestNumber !==
+        studyMeaningRequestNumber ||
+      completedBox.textContent !==
+        sentence
+    ) {
+      return;
+    }
+
+    renderStudyMeaning(
+      meaning
+    );
+  } catch (error) {
+    if (
+      requestNumber !==
+        studyMeaningRequestNumber
+    ) {
+      return;
+    }
+
+    if (
+      error.name ===
+      "AbortError"
+    ) {
+      return;
+    }
+
+    console.error(
+      "PauseSpeak kelime anlamı hatası:",
+      error
+    );
+  }
+}
+function renderStudyMeaning(
+  meaning
+) {
+  let meaningBox =
+    subtitleBox.querySelector(
+      "[data-study-meaning-box]"
+    );
+
+  if (!meaningBox) {
+    meaningBox =
+      document.createElement(
+        "div"
+      );
+
+    meaningBox.dataset
+      .studyMeaningBox = "true";
+
+    meaningBox.style.width =
+      "100%";
+
+    meaningBox.style.marginTop =
+      "8px";
+
+    meaningBox.style.paddingTop =
+      "8px";
+
+    meaningBox.style.borderTop =
+      "1px solid rgba(255, 255, 255, 0.25)";
+
+    meaningBox.style.fontSize =
+      "18px";
+
+    meaningBox.style.lineHeight =
+      "1.4";
+
+    meaningBox.style.color =
+      "#ffffff";
+
+    subtitleBox.appendChild(
+      meaningBox
+    );
+  }
+
+  meaningBox.replaceChildren();
+
+  const title =
+    document.createElement(
+      "div"
+    );
+
+  title.textContent =
+    meaning.text;
+
+  title.style.fontWeight =
+    "700";
+
+  title.style.marginBottom =
+    "4px";
+
+  meaningBox.appendChild(
+    title
+  );
+
+  const meanings =
+    document.createElement(
+      "div"
+    );
+
+  meanings.textContent =
+    meaning.meanings.join(
+      " • "
+    );
+
+  meanings.style.color =
+    "#4da3ff";
+
+  meaningBox.appendChild(
+    meanings
+  );
+
+  if (meaning.expansion) {
+    const expansion =
+      document.createElement(
+        "div"
+      );
+
+    expansion.textContent =
+      `Açılım: ${meaning.expansion}`;
+
+    expansion.style.marginTop =
+      "4px";
+
+    meaningBox.appendChild(
+      expansion
+    );
+  }
+
+  if (meaning.note) {
+    const note =
+      document.createElement(
+        "div"
+      );
+
+    note.textContent =
+      meaning.note;
+
+    note.style.marginTop =
+      "4px";
+
+    note.style.opacity =
+      "0.85";
+
+    meaningBox.appendChild(
+      note
+    );
+  }
+}
+async function requestStudyMeaning(
+  selectedText,
+  sentence,
+  segmentType,
+  requestNumber
+) {
+  const abortController =
+    new AbortController();
+
+  studyMeaningAbortController =
+    abortController;
+
+  const timeoutId =
+    window.setTimeout(
+      () => {
+        abortController.abort();
+      },
+      studyMeaningTimeoutMs
+    );
+
+  try {
+    const response =
+      await fetch(
+        studyMeaningApiUrl,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+
+          body: JSON.stringify({
+            selectedText,
+            sentence,
+            segmentType
+          }),
+
+          signal:
+            abortController.signal
+        }
+      );
+
+    const data =
+      await response.json();
+
+    if (
+      requestNumber !==
+      studyMeaningRequestNumber
+    ) {
+      return null;
+    }
+
+    if (
+      !response.ok ||
+      data?.success !== true ||
+      typeof data.text !==
+        "string" ||
+      !Array.isArray(
+        data.meanings
+      ) ||
+      data.meanings.length === 0
+    ) {
+      throw new Error(
+        data?.error ||
+          "Kelime anlamı alınamadı."
+      );
+    }
+
+    return {
+      text:
+        data.text.trim(),
+
+      meanings:
+        data.meanings
+          .filter(
+            (meaning) =>
+              typeof meaning ===
+                "string" &&
+              meaning.trim() !== ""
+          )
+          .map(
+            (meaning) =>
+              meaning.trim()
+          ),
+
+      expansion:
+        typeof data.expansion ===
+          "string"
+          ? data.expansion.trim()
+          : "",
+
+      note:
+        typeof data.note ===
+          "string"
+          ? data.note.trim()
+          : ""
+    };
+  } finally {
+    window.clearTimeout(
+      timeoutId
+    );
+
+    if (
+      studyMeaningAbortController ===
+      abortController
+    ) {
+      studyMeaningAbortController =
+        null;
+    }
+  }
+}
+async function requestStudySegments(
+  sentence,
+  requestNumber
+) {
+  const controller =
+    new AbortController();
+
+  studySegmentsAbortController =
+    controller;
+
+  const timeoutId =
+    setTimeout(() => {
+      controller.abort();
+    }, studySegmentsTimeoutMs);
+
+  try {
+    const response = await fetch(
+      studySegmentsApiUrl,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+        body: JSON.stringify({
+          text: sentence
+        }),
+
+        signal: controller.signal
+      }
+    );
+
+    let data = null;
+
+    try {
+      data =
+        await response.json();
+    } catch (error) {
+      throw new Error(
+        "Sunucudan geçerli kelime analizi cevabı alınamadı."
+      );
+    }
+
+    if (
+      requestNumber !==
+      studySegmentsRequestNumber
+    ) {
+      return null;
+    }
+
+    if (
+      !response.ok ||
+      !data?.success ||
+      !Array.isArray(
+        data.segments
+      ) ||
+      data.segments.some(
+        (segment) =>
+          !segment ||
+          typeof segment !==
+            "object" ||
+          typeof segment.text !==
+            "string" ||
+          segment.text.trim() ===
+            "" ||
+          typeof segment.type !==
+            "string"
+      )
+    ) {
+      throw new Error(
+        data?.error ||
+          "Kelime ve kalıp analizi alınamadı."
+      );
+    }
+
+    return data.segments.map(
+      (segment) => ({
+        text: cleanText(
+          segment.text
+        ),
+        type: segment.type
+      })
+    );
+  } finally {
+    clearTimeout(timeoutId);
+
+    if (
+      studySegmentsAbortController ===
+      controller
+    ) {
+      studySegmentsAbortController =
+        null;
+    }
+  }
+}
+async function loadStudySegments(
+  sentence
+) {
+  if (studySegmentsAbortController) {
+    studySegmentsAbortController.abort();
+
+    studySegmentsAbortController =
+      null;
+  }
+
+  const requestNumber =
+    ++studySegmentsRequestNumber;
+
+  subtitleBox.textContent =
+    sentence;
+
+  try {
+    const segments =
+      await requestStudySegments(
+        sentence,
+        requestNumber
+      );
+
+    if (
+      !segments ||
+      requestNumber !==
+        studySegmentsRequestNumber ||
+      completedBox.textContent !==
+        sentence
+    ) {
+      return;
+    }
+
+    renderStudySegments(
+      segments
+    );
+  } catch (error) {
+    if (
+      requestNumber !==
+      studySegmentsRequestNumber
+    ) {
+      return;
+    }
+
+    subtitleBox.textContent =
+      sentence;
+
+    if (
+      error.name ===
+      "AbortError"
+    ) {
+      return;
+    }
+
+    console.error(
+      "PauseSpeak kelime analizi hatası:",
+      error
+    );
+  }
+}
   async function requestSmartChunks(
     sentence,
     requestNumber
@@ -2224,8 +2815,9 @@ nowSpeakBox.style.display =
     ? "block"
     : "none";
 
-subtitleBox.textContent =
-  fullSentence;
+void loadStudySegments(
+  fullSentence
+);
 
     if (
       isReplayPlaybackActive

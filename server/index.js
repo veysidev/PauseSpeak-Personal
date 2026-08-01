@@ -254,6 +254,248 @@ function parseChunkDecision(
     )
   };
 }
+function parseStudyMeaning(
+  outputText
+) {
+  const cleanedOutput =
+    String(outputText || "")
+      .trim()
+      .replace(
+        /^```(?:json)?\s*/i,
+        ""
+      )
+      .replace(
+        /\s*```$/,
+        ""
+      )
+      .trim();
+
+  const firstBrace =
+    cleanedOutput.indexOf("{");
+
+  const lastBrace =
+    cleanedOutput.lastIndexOf("}");
+
+  if (
+    firstBrace === -1 ||
+    lastBrace === -1
+  ) {
+    throw new Error(
+      "Kelime anlamı cevabında JSON nesnesi bulunamadı."
+    );
+  }
+
+  const parsed =
+    JSON.parse(
+      cleanedOutput.slice(
+        firstBrace,
+        lastBrace + 1
+      )
+    );
+
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    typeof parsed.text !==
+      "string" ||
+    parsed.text.trim() === "" ||
+    !Array.isArray(
+      parsed.meanings
+    ) ||
+    parsed.meanings.length === 0 ||
+    parsed.meanings.length > 5 ||
+    parsed.meanings.some(
+      (meaning) =>
+        typeof meaning !==
+          "string" ||
+        meaning.trim() === ""
+    ) ||
+    (
+      parsed.expansion !==
+        undefined &&
+      typeof parsed.expansion !==
+        "string"
+    ) ||
+    (
+      parsed.note !==
+        undefined &&
+      typeof parsed.note !==
+        "string"
+    )
+  ) {
+    throw new Error(
+      "Kelime anlamı cevabı geçerli değil."
+    );
+  }
+
+  return {
+    text: cleanText(
+      parsed.text
+    ),
+
+    meanings:
+      parsed.meanings.map(
+        (meaning) =>
+          cleanText(meaning)
+      ),
+
+    expansion:
+      cleanText(
+        parsed.expansion || ""
+      ),
+
+    note:
+      cleanText(
+        parsed.note || ""
+      )
+  };
+}
+function parseStudySegments(
+  outputText
+) {
+  const cleanedOutput =
+    String(outputText || "")
+      .trim()
+      .replace(
+        /^```(?:json)?\s*/i,
+        ""
+      )
+      .replace(
+        /\s*```$/,
+        ""
+      )
+      .trim();
+
+  const firstBrace =
+    cleanedOutput.indexOf("{");
+
+  const lastBrace =
+    cleanedOutput.lastIndexOf("}");
+
+  if (
+    firstBrace === -1 ||
+    lastBrace === -1
+  ) {
+    throw new Error(
+      "Kelime analizi cevabında JSON nesnesi bulunamadı."
+    );
+  }
+
+  const parsed =
+    JSON.parse(
+      cleanedOutput.slice(
+        firstBrace,
+        lastBrace + 1
+      )
+    );
+
+  const allowedTypes =
+    new Set([
+      "word",
+      "contraction",
+      "phrasal-verb",
+      "idiom",
+      "spoken-pattern",
+      "fixed-expression",
+      "collocation",
+      "verb-pattern",
+      "grammar-pattern",
+      "compound-noun",
+      "proper-name",
+      "multiword-preposition",
+      "conjunction-pattern",
+     "number-expression",
+"natural-expression",
+"punctuation"
+    ]);
+
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    !Array.isArray(parsed.segments) ||
+    parsed.segments.length === 0
+  ) {
+    throw new Error(
+      "Kelime analizi cevabı geçerli bir segments nesnesi değil."
+    );
+  }
+
+  const segments =
+    parsed.segments.map(
+      (segment) => {
+        if (
+          !segment ||
+          typeof segment !== "object" ||
+          Array.isArray(segment) ||
+          typeof segment.text !==
+            "string" ||
+          segment.text.trim() === "" ||
+          typeof segment.type !==
+            "string" ||
+          !allowedTypes.has(
+            segment.type
+          )
+        ) {
+          throw new Error(
+            "Kelime analizi geçersiz bir parça içeriyor."
+          );
+        }
+
+        return {
+          text: cleanText(
+            segment.text
+          ),
+          type: segment.type
+        };
+      }
+    );
+
+  return {
+    segments
+  };
+}
+function validateStudySegments(
+  originalSentence,
+  segments
+) {
+  if (
+    !Array.isArray(segments) ||
+    segments.length === 0 ||
+    segments.length > 50 ||
+    segments.some(
+      (segment) =>
+        !segment ||
+        typeof segment !== "object" ||
+        typeof segment.text !==
+          "string" ||
+        segment.text.trim() === ""
+    )
+  ) {
+    return false;
+  }
+
+  const expected =
+    normalizeForChunkValidation(
+      originalSentence
+    );
+
+  const recombined =
+    normalizeForChunkValidation(
+      segments
+        .map(
+          (segment) =>
+            segment.text
+        )
+        .join(" ")
+    );
+
+  return (
+    expected !== "" &&
+    expected === recombined
+  );
+}
 function validateChunks(
   originalSentence,
   chunks
@@ -512,6 +754,221 @@ async function generateSmartChunkDecision(
     openAIResponse.output_text
   );
 }
+async function generateStudyMeaning(
+  openAI,
+  selectedText,
+  sentence,
+  segmentType
+) {
+  const openAIResponse =
+    await openAI.responses.create({
+      model: openAIModel,
+
+      reasoning: {
+        effort: "none"
+      },
+
+      instructions: [
+        "Sen İngilizce öğrenen Türk",
+        "kullanıcılar için bağlama",
+        "uygun kelime ve ifade",
+        "anlamları hazırlayan bir",
+        "uzmansın.",
+
+        "Sana seçilen İngilizce metin,",
+        "bu metnin geçtiği tam cümle",
+        "ve segment türü verilecek.",
+
+        "Öncelikle seçilen metnin bu",
+        "cümledeki gerçek Türkçe",
+        "anlamını belirle.",
+
+        "meanings dizisinin ilk öğesi",
+        "mutlaka bu cümlede kullanılan",
+        "en doğal Türkçe karşılık",
+        "olmalıdır.",
+
+        "Gerekliyse en fazla dört kısa",
+        "ve yaygın Türkçe anlam ver.",
+
+        "Bağlamla ilgisiz, nadir veya",
+        "sözlükte bulunan bütün",
+        "anlamları sıralama.",
+
+        "Phrasal verb, deyim, kalıp,",
+        "collocation veya doğal ifade",
+        "ise bütün yapının anlamını ver;",
+
+        "kelimeleri ayrı ayrı çevirme.",
+
+        "Contraction ise expansion",
+        "alanında İngilizce açılımını",
+        "yaz.",
+
+        "Örneğin I've için expansion",
+        "I have veya bağlama göre",
+        "I am olabilir.",
+
+      "meanings dizisinde aynı veya",
+"birbirine çok yakın Türkçe",
+"karşılıkları tekrarlama.",
+
+"Yalnızca seçilen metnin",
+"anlamlarını ver; tam cümlenin",
+"Türkçe çevirisini meanings veya",
+"note alanına yazma.",
+
+"Ek açıklama gerçekten",
+"öğreticiyse note alanında kısa",
+"bir dilbilgisi veya kullanım",
+"notu ver.",
+
+"Note alanında tam cümleyi",
+"çevirme ve yeni bağlam",
+"uydurma.",
+
+"Gerekli bir öğretici not yoksa",
+"note alanını boş bırak.",
+
+"Gereksiz açıklama yapma.",
+
+        "text alanında seçilen İngilizce",
+        "metni değiştirmeden koru.",
+
+        "Yalnızca geçerli bir JSON",
+        "nesnesi döndür.",
+
+        "Markdown, kod bloğu, başlık",
+        "veya JSON dışında metin ekleme."
+      ].join(" "),
+
+      input: [
+        `Tam cümle: ${sentence}`,
+
+        `Seçilen metin: ${selectedText}`,
+
+        `Segment türü: ${segmentType}`,
+
+        "Şu biçimde yanıt ver:",
+
+        '{"text":"find out","meanings":["öğrenmek","ortaya çıkarmak"],"expansion":"","note":"Phrasal verb."}'
+      ].join("\n"),
+
+      max_output_tokens: 300
+    });
+
+  return parseStudyMeaning(
+    openAIResponse.output_text
+  );
+}
+async function generateStudySegments(
+  openAI,
+  sentence
+) {
+  const openAIResponse =
+    await openAI.responses.create({
+      model: openAIModel,
+
+      reasoning: {
+        effort: "none"
+      },
+
+      instructions: [
+        "Sen İngilizce öğrenenler için",
+        "bir cümledeki tıklanabilir",
+        "kelime ve doğal ifadeleri",
+        "belirleyen bir uzmansın.",
+
+        "Cümleyi soldan sağa, bütün",
+        "metni eksiksiz koruyan",
+        "segmentlere ayır.",
+
+        "Normal tek kelimeleri word",
+        "olarak işaretle.",
+
+        "Ancak aşağıdaki yapıları",
+        "kesinlikle bölme:",
+
+        "contractions, phrasal verbs,",
+        "idioms, doğal konuşma",
+        "kalıpları, fixed expressions,",
+        "collocations, verb patterns,",
+        "grammar patterns, compound",
+        "nouns, proper names, çok",
+        "kelimeli edatlar, bağlaç",
+        "kalıpları ve sayı ifadeleri.",
+
+        "Örneğin find out, give up,",
+        "turn it off, hose myself off,",
+        "by the way, have to, used to,",
+        "credit card ve New York tek",
+        "segment olmalıdır.",
+
+        "Contractionları bölme.",
+        "I've, don't ve we're gibi",
+        "yapılar tek segment olmalıdır.",
+
+        "En uzun doğal ve anlamlı",
+        "ifadeyi tercih et fakat tüm",
+        "cümleyi gereksiz yere tek",
+        "segment yapma.",
+"Zorunlu tamamlayıcısı olan",
+"konuşma kalıplarını eksik",
+"bırakma.",
+
+`"I've gotta go" ifadesini`,
+"tek natural-expression yap.",
+
+`"I've gotta" ve "go find"`,
+"şeklinde yapay bir ayrım",
+"oluşturma.",
+
+"Bir fiili önceki kalıptan",
+"koparıp sonraki fiille",
+"gereksiz yere birleştirme.",
+
+`"I've gotta go find somewhere`,
+`to hose myself off." cümlesi`,
+"için tercih edilen segmentler:",
+`"I've gotta go", "find",`,
+`"somewhere",`,
+`"to hose myself off", "."`,
+        "Her segment özgün cümledeki",
+        "metni ve noktalamasını",
+        "korumalıdır.",
+
+        "Hiçbir kelimeyi veya",
+        "noktalama işaretini silme,",
+        "ekleme, düzeltme ya da",
+        "yeniden sıralama.",
+
+        "Segmentler boşlukla yeniden",
+        "birleştirildiğinde özgün cümle",
+        "aynen oluşmalıdır.",
+
+        "Yalnızca geçerli JSON nesnesi",
+        "döndür.",
+
+        "Açıklama, çeviri, anlam,",
+        "Markdown veya kod bloğu",
+        "ekleme."
+      ].join(" "),
+
+      input: [
+        `Cümle: ${sentence}`,
+
+        "Şu biçimde yanıt ver:",
+
+        '{"segments":[{"text":"I","type":"word"},{"text":"need to","type":"verb-pattern"},{"text":"find out","type":"phrasal-verb"}]}'
+      ].join("\n"),
+
+      max_output_tokens: 700
+    });
+
+  return parseStudySegments(
+    openAIResponse.output_text
+  );
+}
 app.get(
   "/health",
   (request, response) => {
@@ -676,7 +1133,322 @@ app.post(
     }
   }
 );
+app.post(
+  "/study-meaning",
+  async (request, response) => {
+    const selectedText =
+      request.body?.selectedText;
 
+    const sentence =
+      request.body?.sentence;
+
+    const segmentType =
+      request.body?.segmentType;
+
+    if (
+      typeof selectedText !==
+        "string" ||
+      selectedText.trim() === "" ||
+      typeof sentence !==
+        "string" ||
+      sentence.trim() === "" ||
+      typeof segmentType !==
+        "string" ||
+      segmentType.trim() === ""
+    ) {
+      return response
+        .status(400)
+        .json({
+          success: false,
+
+          error:
+            "Kelime anlamı için gerekli " +
+            "bilgiler gönderilmedi."
+        });
+    }
+
+    const cleanedSelectedText =
+      cleanText(selectedText);
+
+    const cleanedSentence =
+      cleanText(sentence);
+
+    const cleanedSegmentType =
+      cleanText(segmentType);
+
+    if (
+      cleanedSelectedText.length >
+        200 ||
+      cleanedSentence.length >
+        1000 ||
+      cleanedSegmentType.length >
+        50
+    ) {
+      return response
+        .status(400)
+        .json({
+          success: false,
+
+          error:
+            "Kelime anlamı isteği " +
+            "izin verilen uzunluğu aşıyor."
+        });
+    }
+
+    try {
+      const openAI =
+        await getOpenAIClient();
+
+      let meaning = null;
+
+      for (
+        let attempt = 1;
+        attempt <= 2;
+        attempt += 1
+      ) {
+        try {
+          const candidate =
+            await generateStudyMeaning(
+              openAI,
+              cleanedSelectedText,
+              cleanedSentence,
+              cleanedSegmentType
+            );
+if (
+  cleanedSegmentType ===
+  "contraction"
+) {
+  candidate.note = "";
+}
+          if (
+            cleanText(
+              candidate.text
+            ) ===
+              cleanedSelectedText &&
+            candidate.meanings.length >
+              0
+          ) {
+            meaning = candidate;
+
+            break;
+          }
+
+          console.warn(
+            `PauseSpeak kelime anlamı ` +
+              `${attempt}. denemede ` +
+              "doğrulanamadı.",
+
+            candidate
+          );
+        } catch (error) {
+          if (error?.status) {
+            throw error;
+          }
+
+          console.warn(
+            `PauseSpeak kelime anlamı ` +
+              `${attempt}. denemede ` +
+              "geçersiz cevap verdi.",
+
+            error?.message
+          );
+        }
+      }
+
+      if (!meaning) {
+        return response
+          .status(422)
+          .json({
+            success: false,
+
+            error:
+              "Seçilen ifade için güvenli " +
+              "bir anlam alınamadı."
+          });
+      }
+
+      return response.json({
+        success: true,
+
+        text: meaning.text,
+
+        meanings:
+          meaning.meanings,
+
+        expansion:
+          meaning.expansion,
+
+        note:
+          meaning.note,
+
+        provider: "openai",
+
+        model: openAIModel
+      });
+    } catch (error) {
+      console.error(
+        "PauseSpeak kelime anlamı hatası:",
+        {
+          message: error?.message,
+          status: error?.status,
+          code: error?.code
+        }
+      );
+
+      return response
+        .status(
+          getStatusCode(error)
+        )
+        .json({
+          success: false,
+
+          error:
+            getOpenAIErrorMessage(
+              error,
+              "Kelime anlamı"
+            )
+        });
+    }
+  }
+);
+app.post(
+  "/study-segments",
+  async (request, response) => {
+    const text =
+      request.body?.text;
+
+    if (
+      typeof text !== "string" ||
+      text.trim() === ""
+    ) {
+      return response
+        .status(400)
+        .json({
+          success: false,
+
+          error:
+            "İncelenecek İngilizce " +
+            "cümle gönderilmedi."
+        });
+    }
+
+    const cleanedText =
+      cleanText(text);
+
+    if (
+      cleanedText.length > 1000
+    ) {
+      return response
+        .status(400)
+        .json({
+          success: false,
+
+          error:
+            "Cümle kelime analizi " +
+            "için çok uzun."
+        });
+    }
+
+    try {
+      const openAI =
+        await getOpenAIClient();
+
+      let segments = null;
+
+      for (
+        let attempt = 1;
+        attempt <= 2;
+        attempt += 1
+      ) {
+        try {
+          const candidate =
+            await generateStudySegments(
+              openAI,
+              cleanedText
+            );
+
+          if (
+            validateStudySegments(
+              cleanedText,
+              candidate.segments
+            )
+          ) {
+            segments =
+              candidate.segments;
+
+            break;
+          }
+
+          console.warn(
+            `PauseSpeak kelime analizi ` +
+              `${attempt}. denemede ` +
+              "doğrulanamadı.",
+
+            candidate
+          );
+        } catch (error) {
+          if (error?.status) {
+            throw error;
+          }
+
+          console.warn(
+            `PauseSpeak kelime analizi ` +
+              `${attempt}. denemede ` +
+              "geçersiz cevap verdi.",
+
+            error?.message
+          );
+        }
+      }
+
+      if (!segments) {
+        return response
+          .status(422)
+          .json({
+            success: false,
+
+            error:
+              "Cümle için güvenli bir " +
+              "kelime ve kalıp analizi " +
+              "alınamadı."
+          });
+      }
+
+      return response.json({
+        success: true,
+
+        segments,
+
+        provider: "openai",
+
+        model: openAIModel
+      });
+    } catch (error) {
+      console.error(
+        "PauseSpeak kelime analizi hatası:",
+        {
+          message: error?.message,
+          status: error?.status,
+          code: error?.code
+        }
+      );
+
+      return response
+        .status(
+          getStatusCode(error)
+        )
+        .json({
+          success: false,
+
+          error:
+            getOpenAIErrorMessage(
+              error,
+              "Kelime analizi"
+            )
+        });
+    }
+  }
+);
 app.post(
   "/chunk",
   async (request, response) => {
