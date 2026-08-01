@@ -45,6 +45,8 @@
   let pronunciationChunkIndex = 0;
   let pronunciationChunkSuccessCount = 0;
   let finalSentenceAttemptCount = 0;
+  let isPronunciationEnabled = false;
+  let isAutomaticPauseEnabled = true;
   let autoContinueTimeout = null;
   let speechSilenceTimeout = null;
   let autoSpeechStartTimeout = null;
@@ -109,6 +111,23 @@ nowSpeakBox.textContent = "Henüz söylenecek bir cümle yok.";
   const speakButton = document.createElement("button");
   speakButton.textContent = "🎤 Konuş";
   speakButton.disabled = true;
+  const pronunciationToggleButton =
+  document.createElement("button");
+
+pronunciationToggleButton.textContent =
+  "Telaffuz: Kapalı";
+  const automaticPauseToggleButton =
+  document.createElement("button");
+
+automaticPauseToggleButton.textContent =
+  "Otomatik Durdurma: Açık";
+  const chunkPracticeButton =
+  document.createElement("button");
+
+chunkPracticeButton.textContent =
+  "Parçalara Ayır";
+
+chunkPracticeButton.disabled = true;
 
   const replayButton = document.createElement("button");
   replayButton.textContent = "Cümleyi Tekrar Oynat";
@@ -120,21 +139,24 @@ nowSpeakBox.textContent = "Henüz söylenecek bir cümle yok.";
   const playButton = document.createElement("button");
   playButton.textContent = "Devam Et";
 
-  Object.assign(panel.style, {
-    position: "fixed",
-    top: "20px",
-    right: "20px",
-    zIndex: "2147483647",
-    width: "360px",
-    maxHeight: "calc(100vh - 40px)",
-    overflowY: "auto",
-    padding: "16px",
-    backgroundColor: "#111827",
-    color: "#ffffff",
-    borderRadius: "12px",
-    fontFamily: "Arial, sans-serif",
-    fontSize: "14px",
-    boxShadow: "0 6px 20px rgba(0, 0, 0, 0.35)"
+ Object.assign(panel.style, {
+  position: "fixed",
+  left: "50%",
+  bottom: "24px",
+  transform: "translateX(-50%)",
+  zIndex: "2147483647",
+  width: "min(760px, calc(100vw - 32px))",
+  maxHeight: "calc(100vh - 48px)",
+  overflowY: "auto",
+  padding: "16px",
+  backgroundColor: "rgba(17, 24, 39, 0.82)",
+  color: "#ffffff",
+  borderRadius: "16px",
+  fontFamily: "Arial, sans-serif",
+  fontSize: "14px",
+  boxShadow: "0 12px 40px rgba(0, 0, 0, 0.45)",
+  backdropFilter: "blur(10px)",
+  boxSizing: "border-box"
   });
 
   Object.assign(title.style, {
@@ -191,6 +213,7 @@ nowSpeakBox.textContent = "Henüz söylenecek bir cümle yok.";
     color: "#dbeafe"
   });
 Object.assign(nowSpeakBox.style, {
+  display: "none",
   backgroundColor: "#064e3b",
   color: "#ecfdf5",
   fontSize: "16px",
@@ -204,28 +227,50 @@ Object.assign(nowSpeakBox.style, {
     color: "#fef3c7"
   });
 
-  Object.assign(chunkBox.style, {
-    backgroundColor: "#312e81",
-    color: "#e0e7ff",
-    whiteSpace: "pre-line"
-  });
+Object.assign(chunkBox.style, {
+  backgroundColor: "#312e81",
+  color: "#e0e7ff",
+  whiteSpace: "pre-line"
+});
 
-  [
-    speakButton,
-    replayButton,
-    pauseButton,
-    playButton
-  ].forEach((button) => {
-    Object.assign(button.style, {
-      padding: "9px 12px",
-      marginRight: "8px",
-      marginBottom: "8px",
-      border: "none",
-      borderRadius: "7px",
-      cursor: "pointer",
-      fontWeight: "bold"
-    });
+[
+  title,
+  status,
+  subtitleTitle,
+  completedTitle,
+  completedBox,
+  translationTitle,
+  pronunciationTitle,
+  nowSpeakTitle,
+  spokenTitle,
+  spokenBox,
+  pronunciationResultTitle,
+  pronunciationResultBox,
+  chunkTitle,
+  chunkBox
+].forEach((element) => {
+  element.style.display = "none";
+});
+
+[
+  speakButton,
+  pronunciationToggleButton,
+  automaticPauseToggleButton,
+  chunkPracticeButton,
+  replayButton,
+  pauseButton,
+  playButton
+].forEach((button) => {
+  Object.assign(button.style, {
+    padding: "9px 12px",
+    marginRight: "8px",
+    marginBottom: "8px",
+    border: "none",
+    borderRadius: "7px",
+    cursor: "pointer",
+    fontWeight: "bold"
   });
+});
 
   function getNetflixVideo() {
     return document.querySelector("video");
@@ -992,8 +1037,9 @@ Object.assign(nowSpeakBox.style, {
       status.textContent =
         "▶️ Video oynatılıyor";
     } catch (error) {
-      speakButton.disabled =
-        !SpeechRecognitionClass;
+speakButton.disabled =
+  !isPronunciationEnabled ||
+  !SpeechRecognitionClass;
 
       replayButton.disabled =
         completedStartTimeMs ===
@@ -1819,7 +1865,156 @@ finalSentenceAttemptCount = 0;
       startSpeechRecognition();
     }
   );
+pronunciationToggleButton.addEventListener(
+  "click",
+  () => {
+    isPronunciationEnabled =
+      !isPronunciationEnabled;
+      if (isPronunciationEnabled) {
+  isAutomaticPauseEnabled = true;
 
+  automaticPauseToggleButton.textContent =
+    "Otomatik Durdurma: Açık";
+
+  automaticPauseToggleButton.style.backgroundColor =
+    "#065f46";
+
+  automaticPauseToggleButton.style.color =
+    "#ecfdf5";
+}
+
+    pronunciationToggleButton.textContent =
+      isPronunciationEnabled
+        ? "Telaffuz: Açık"
+        : "Telaffuz: Kapalı";
+
+    pronunciationToggleButton.style.backgroundColor =
+      isPronunciationEnabled
+        ? "#065f46"
+        : "#f3f4f6";
+
+    pronunciationToggleButton.style.color =
+      isPronunciationEnabled
+        ? "#ecfdf5"
+        : "#111827";
+
+    if (!isPronunciationEnabled) {
+      nowSpeakBox.style.display = "none";
+
+      if (autoSpeechStartTimeout) {
+        clearTimeout(autoSpeechStartTimeout);
+        autoSpeechStartTimeout = null;
+      }
+
+      stopSpeechRecognition();
+
+      speakButton.disabled = true;
+      chunkPracticeButton.disabled = true;
+
+      return;
+    }
+
+    speakButton.disabled =
+      completedStartTimeMs === null ||
+      !SpeechRecognitionClass;
+     chunkPracticeButton.disabled =
+  completedStartTimeMs === null ||
+  !shouldUseChunkMode(
+    completedBox.textContent
+  );
+
+    const video = getNetflixVideo();
+
+    if (
+      completedStartTimeMs !== null &&
+      video?.paused
+    ) {
+      nowSpeakBox.textContent =
+        completedBox.textContent;
+
+      nowSpeakBox.style.display =
+        "block";
+
+      scheduleAutomaticSpeechStart();
+    }
+  }
+);
+
+automaticPauseToggleButton.addEventListener(
+  "click",
+  () => {
+    isAutomaticPauseEnabled =
+      !isAutomaticPauseEnabled;
+
+    automaticPauseToggleButton.textContent =
+      isAutomaticPauseEnabled
+        ? "Otomatik Durdurma: Açık"
+        : "Otomatik Durdurma: Kapalı";
+
+    automaticPauseToggleButton.style.backgroundColor =
+      isAutomaticPauseEnabled
+        ? "#065f46"
+        : "#f3f4f6";
+
+    automaticPauseToggleButton.style.color =
+      isAutomaticPauseEnabled
+        ? "#ecfdf5"
+        : "#111827";
+  }
+);
+chunkPracticeButton.addEventListener(
+  "click",
+  () => {
+    const sentence =
+      completedBox.textContent;
+
+    if (
+      completedStartTimeMs === null ||
+      !shouldUseChunkMode(sentence)
+    ) {
+      chunkPracticeButton.disabled =
+        true;
+
+      return;
+    }
+
+    isPronunciationEnabled = true;
+    isAutomaticPauseEnabled = true;
+
+    pronunciationToggleButton.textContent =
+      "Telaffuz: Açık";
+
+    pronunciationToggleButton.style.backgroundColor =
+      "#065f46";
+
+    pronunciationToggleButton.style.color =
+      "#ecfdf5";
+
+    automaticPauseToggleButton.textContent =
+      "Otomatik Durdurma: Açık";
+
+    automaticPauseToggleButton.style.backgroundColor =
+      "#065f46";
+
+    automaticPauseToggleButton.style.color =
+      "#ecfdf5";
+
+    nowSpeakBox.style.display =
+      "block";
+
+    const video =
+      getNetflixVideo();
+
+    if (
+      video &&
+      !video.paused
+    ) {
+      video.pause();
+    }
+
+    void startChunkPractice();
+  }
+);
   function finishSentence(video) {
     const fullSentence =
       cleanText(
@@ -1829,13 +2024,19 @@ finalSentenceAttemptCount = 0;
     if (!fullSentence) {
       return;
     }
+completedBox.textContent =
+  fullSentence;
 
-    completedBox.textContent =
-      fullSentence;
 nowSpeakBox.textContent =
   fullSentence;
-    subtitleBox.textContent =
-      fullSentence;
+
+nowSpeakBox.style.display =
+  isPronunciationEnabled
+    ? "block"
+    : "none";
+
+subtitleBox.textContent =
+  fullSentence;
 
     if (
       isReplayPlaybackActive
@@ -1906,19 +2107,25 @@ if (isAutomaticRetryReplay) {
     sentenceStartTime = null;
     replayGuardUntilVideoTime =
       null;
+if (
+  video &&
+  !video.paused &&
+  isAutomaticPauseEnabled
+) {
+  video.pause();
 
-    if (
-      video &&
-      !video.paused
-    ) {
-      video.pause();
-
-      status.textContent =
-        "⏸️ Cümle bitti — video durduruldu";
-    } else {
-      status.textContent =
-        "✅ Cümle tamamlandı";
-    }
+  status.textContent =
+    "⏸️ Cümle bitti — video durduruldu";
+} else if (
+  video &&
+  !isAutomaticPauseEnabled
+) {
+  status.textContent =
+    "▶️ Otomatik durdurma kapalı";
+} else {
+  status.textContent =
+    "✅ Cümle tamamlandı";
+}
 
     if (autoSpeechStartTimeout) {
       clearTimeout(
@@ -1926,15 +2133,12 @@ if (isAutomaticRetryReplay) {
       );
     }
 
-    if (SpeechRecognitionClass) {
-      autoSpeechStartTimeout =
-        setTimeout(() => {
-          autoSpeechStartTimeout =
-            null;
-
-          startSpeechRecognition();
-        }, 350);
-    }
+ if (
+  SpeechRecognitionClass &&
+  isPronunciationEnabled
+) {
+  scheduleAutomaticSpeechStart();
+}
   }
 
   function updateVideoStatus() {
@@ -2375,20 +2579,25 @@ panel.appendChild(
   );
 
   panel.appendChild(
-    document.createElement(
-      "br"
-    )
-  );
+  speakButton
+);
 
-  panel.appendChild(
-    replayButton
-  );
+panel.appendChild(
+  pronunciationToggleButton
+);
+panel.appendChild(
+  automaticPauseToggleButton
+);
+panel.appendChild(
+  chunkPracticeButton
+);
+panel.appendChild(
+  replayButton
+);
 
-  panel.appendChild(
-    document.createElement(
-      "br"
-    )
-  );
+ 
+
+ 
 
   panel.appendChild(
     pauseButton
