@@ -1081,7 +1081,10 @@ function scheduleAutomaticSpeechStart(
       startSpeechRecognition();
     }, delayMs);
 }
-  async function startChunkPractice() {
+  async function startChunkPractice(
+  shouldStartSpeech =
+    isPronunciationEnabled
+) {
     const sentence =
       completedBox.textContent;
 
@@ -1187,9 +1190,12 @@ function scheduleAutomaticSpeechStart(
 
       speakButton.textContent =
         "🎤 Parçayı Söyle";
+nowSpeakBox.style.display = "block";
+   updateChunkDisplay();
 
-      updateChunkDisplay();
-      scheduleAutomaticSpeechStart();
+if (shouldStartSpeech) {
+  scheduleAutomaticSpeechStart();
+}
 
       return true;
     } catch (error) {
@@ -1941,10 +1947,12 @@ pronunciationToggleButton.addEventListener(
 
       stopSpeechRecognition();
 
-      speakButton.disabled = true;
-      chunkPracticeButton.disabled = true;
+     speakButton.disabled = true;
 
-      return;
+chunkPracticeButton.disabled =
+  completedStartTimeMs === null;
+
+return;
     }
 
     speakButton.disabled =
@@ -2023,9 +2031,12 @@ chunkPracticeButton.addEventListener(
       }
 
       updateChunkDisplay();
-      scheduleAutomaticSpeechStart();
 
-      return;
+if (isPronunciationEnabled) {
+  scheduleAutomaticSpeechStart();
+}
+
+return;
     }
     const sentence =
       completedBox.textContent;
@@ -2039,41 +2050,10 @@ chunkPracticeButton.addEventListener(
   return;
 }
 
-    isPronunciationEnabled = true;
-    isAutomaticPauseEnabled = true;
+   void startChunkPractice(
+  isPronunciationEnabled
+);
 
-    pronunciationToggleButton.textContent =
-      "Telaffuz: Açık";
-
-    pronunciationToggleButton.style.backgroundColor =
-      "#065f46";
-
-    pronunciationToggleButton.style.color =
-      "#ecfdf5";
-
-    automaticPauseToggleButton.textContent =
-      "Otomatik Durdurma: Açık";
-
-    automaticPauseToggleButton.style.backgroundColor =
-      "#065f46";
-
-    automaticPauseToggleButton.style.color =
-      "#ecfdf5";
-
-    nowSpeakBox.style.display =
-      "block";
-
-    const video =
-      getNetflixVideo();
-
-    if (
-      video &&
-      !video.paused
-    ) {
-      video.pause();
-    }
-
-    void startChunkPractice();
   }
 );
   function finishSentence(video) {
