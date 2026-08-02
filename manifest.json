@@ -7,10 +7,11 @@
     "default_popup": "popup.html",
     "default_title": "PauseSpeak"
   },
-  "host_permissions": [
-    "http://localhost:3000/*",
-    "http://127.0.0.1:3000/*"
-  ],
+"host_permissions": [
+  "http://localhost:3000/*",
+  "http://127.0.0.1:3000/*",
+  "https://pausespeak.onrender.com/*"
+],
   "content_scripts": [
     {
       "matches": [

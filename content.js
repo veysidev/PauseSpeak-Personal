@@ -1,26 +1,26 @@
 (() => {
   const panelId = "pausespeak-status-panel";
  const translationApiUrl =
-  "http://localhost:3000/translate";
+  "https://pausespeak.onrender.com/translate";
 
-const translationTimeoutMs = 8000;
+const translationTimeoutMs = 70000;
 const translationSpeechApiUrl =
-  "http://localhost:3000/speak-translation";
+  "https://pausespeak.onrender.com/speak-translation";
 
 const translationSpeechTimeoutMs =
-  30000;
+  70000
 
 const chunkApiUrl =
-  "http://localhost:3000/chunk";
+  "https://pausespeak.onrender.com/chunk";
 
 const chunkTimeoutMs = 20000;
 
 const studySegmentsApiUrl =
-  "http://localhost:3000/study-segments";
+  "https://pausespeak.onrender.com/study-segments";
 
 const studySegmentsTimeoutMs = 20000;
 const studyMeaningApiUrl =
-  "http://localhost:3000/study-meaning";
+  "https://pausespeak.onrender.com/study-meaning";
 
 const studyMeaningTimeoutMs = 20000;
   const pronunciationSuccessThreshold = 0.78;

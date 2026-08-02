@@ -1,11 +1,15 @@
 const express = require("express");
 const cors = require("cors");
+const { rateLimit } = require("express-rate-limit");
 require("dotenv").config();
 
 const app = express();
+app.set("trust proxy", 1);
 
 const port =
   Number(process.env.PORT) || 3000;
+  const pauseSpeakAccessKey =
+  process.env.PAUSESPEAK_ACCESS_KEY || "";
 
 const openAIModel =
   process.env.OPENAI_MODEL ||
@@ -24,7 +28,56 @@ app.use(
     limit: "20kb"
   })
 );
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (request) =>
+    request.method !== "POST",
+  message: {
+    success: false,
+    error:
+      "Çok fazla istek gönderildi. Lütfen kısa bir süre sonra tekrar deneyin."
+  }
+});
 
+app.use(apiLimiter);
+function requirePauseSpeakAccessKey(
+  request,
+  response,
+  next
+) {
+  if (
+    request.method !== "POST" ||
+    !pauseSpeakAccessKey
+  ) {
+    next();
+    return;
+  }
+
+  const providedAccessKey =
+    request.get(
+      "x-pausespeak-access-key"
+    ) || "";
+
+  if (
+    providedAccessKey !==
+    pauseSpeakAccessKey
+  ) {
+    response.status(401).json({
+      success: false,
+      error: "Yetkisiz istek."
+    });
+    return;
+  }
+
+  next();
+}
+
+app.use(
+  requirePauseSpeakAccessKey
+);
 async function getOpenAIClient() {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error(
@@ -1366,13 +1419,22 @@ app.post(
 
           input: cleanedText,
 
-          instructions: [
-            "Doğal, sıcak ve anlaşılır",
-            "Türkçe konuş.",
-            "Günlük ve samimi bir ton kullan.",
-            "Robotik okuma yapma.",
-            "Biraz yavaş ve net seslendir."
-          ].join(" "),
+       instructions:
+  language === "en"
+    ? [
+        "Speak natural American English.",
+        "Pronounce the word or phrase clearly.",
+        "Use a warm, human voice.",
+        "Do not sound robotic.",
+        "Speak slightly slowly for a language learner."
+      ].join(" ")
+    : [
+        "Doğal, sıcak ve anlaşılır",
+        "Türkçe konuş.",
+        "Günlük ve samimi bir ton kullan.",
+        "Robotik okuma yapma.",
+        "Biraz yavaş ve net seslendir."
+      ].join(" "),
 
           response_format: "mp3"
         });
