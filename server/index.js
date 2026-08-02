@@ -374,6 +374,12 @@ function parseStudyMeaning(
       typeof parsed.expansion !==
         "string"
     ) ||
+        (
+      parsed.pronunciation !==
+        undefined &&
+      typeof parsed.pronunciation !==
+        "string"
+    ) ||
     (
       parsed.note !==
         undefined &&
@@ -400,6 +406,11 @@ function parseStudyMeaning(
     expansion:
       cleanText(
         parsed.expansion || ""
+      ),
+
+      pronunciation:
+      cleanText(
+        parsed.pronunciation || ""
       ),
 
     note:
@@ -887,7 +898,21 @@ async function generateStudyMeaning(
 "Gerekli bir öğretici not yoksa",
 "note alanını boş bırak.",
 
-"Gereksiz açıklama yapma.",
+        "Gereksiz açıklama yapma.",
+
+        "pronunciation alanında seçilen",
+        "İngilizce kelime veya ifadenin",
+        "Türkçe harflerle yaklaşık",
+        "okunuşunu yaz.",
+
+        "IPA veya fonetik sembol kullanma.",
+
+        "Okunuş başlangıç seviyesindeki",
+        "Türk kullanıcı için kolay",
+        "anlaşılır olmalıdır.",
+
+        "pronunciation alanına anlam,",
+        "çeviri veya açıklama yazma.",
 
         "text alanında seçilen İngilizce",
         "metni değiştirmeden koru.",
@@ -908,7 +933,7 @@ async function generateStudyMeaning(
 
         "Şu biçimde yanıt ver:",
 
-        '{"text":"find out","meanings":["öğrenmek","ortaya çıkarmak"],"expansion":"","note":"Phrasal verb."}'
+      '{"text":"find out","meanings":["öğrenmek","ortaya çıkarmak"],"pronunciation":"faynd aut","expansion":"","note":"Phrasal verb."}'
       ].join("\n"),
 
       max_output_tokens: 300
@@ -1331,6 +1356,9 @@ if (
 
         meanings:
           meaning.meanings,
+
+              pronunciation:
+          meaning.pronunciation,
 
         expansion:
           meaning.expansion,

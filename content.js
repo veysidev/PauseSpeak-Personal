@@ -19,8 +19,10 @@ const studySegmentsApiUrl =
   "https://pausespeak.onrender.com/study-segments";
 
 const studySegmentsTimeoutMs = 20000;
+
 const studyMeaningApiUrl =
   "https://pausespeak.onrender.com/study-meaning";
+
 
 const studyMeaningTimeoutMs = 20000;
   const pronunciationSuccessThreshold = 0.78;
@@ -273,7 +275,8 @@ margin: "0 auto",
     padding: "2px",
     marginBottom: "2px",
     backgroundColor: "transparent",
-    borderRadius: "0"
+    borderRadius: "0",
+    fontSize: "24px"
   });
 });
 
@@ -1456,6 +1459,26 @@ function renderStudyMeaning(
     meanings
   );
 
+  if (meaning.pronunciation) {
+    const pronunciation =
+      document.createElement(
+        "div"
+      );
+
+    pronunciation.textContent =
+      `Okunuş: ${meaning.pronunciation}`;
+
+    pronunciation.style.marginTop =
+      "4px";
+
+    pronunciation.style.color =
+      "#fbbf24";
+
+    meaningBox.appendChild(
+      pronunciation
+    );
+  }
+
   if (meaning.expansion) {
     const expansion =
       document.createElement(
@@ -1578,6 +1601,12 @@ async function requestStudyMeaning(
             (meaning) =>
               meaning.trim()
           ),
+
+           pronunciation:
+        typeof data.pronunciation ===
+          "string"
+          ? data.pronunciation.trim()
+          : "",
 
       expansion:
         typeof data.expansion ===
