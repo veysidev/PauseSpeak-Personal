@@ -4,6 +4,11 @@
   "http://localhost:3000/translate";
 
 const translationTimeoutMs = 8000;
+const translationSpeechApiUrl =
+  "http://localhost:3000/speak-translation";
+
+const translationSpeechTimeoutMs =
+  30000;
 
 const chunkApiUrl =
   "http://localhost:3000/chunk";
@@ -42,6 +47,11 @@ const studyMeaningTimeoutMs = 20000;
 
   let previousCompletedSentence = "";
   let translationRequestNumber = 0;
+  let translationSpeechRequestNumber = 0;
+let translationSpeechAbortController =
+  null;
+let translationSpeechAudio = null;
+let translationSpeechObjectUrl = null;
  let chunkRequestNumber = 0;
 let chunkAbortController = null;
 let isChunkRequestPending = false;
@@ -65,6 +75,8 @@ let studyMeaningAbortController = null;
   let pronunciationChunkSuccessCount = 0;
   let finalSentenceAttemptCount = 0;
   let isPronunciationEnabled = false;
+  let isTurkishTranslationSpeechEnabled =
+  false;
   let isAutomaticPauseEnabled = true;
   let autoContinueTimeout = null;
   let speechSilenceTimeout = null;
@@ -135,6 +147,11 @@ nowSpeakBox.textContent = "Henüz söylenecek bir cümle yok.";
 
 pronunciationToggleButton.textContent =
   "Telaffuz: Kapalı";
+  const turkishTranslationSpeechToggleButton =
+  document.createElement("button");
+
+turkishTranslationSpeechToggleButton.textContent =
+  "Türkçe Ses: Kapalı";
   const automaticPauseToggleButton =
   document.createElement("button");
 
@@ -306,6 +323,7 @@ Object.assign(chunkBox.style, {
 [
   speakButton,
   pronunciationToggleButton,
+  turkishTranslationSpeechToggleButton,
   automaticPauseToggleButton,
   chunkPracticeButton,
   replayButton,
@@ -559,7 +577,153 @@ Object.assign(
 
     sentenceParts.push(text);
   }
+function stopTranslationSpeech() {
+  translationSpeechRequestNumber += 1;
 
+  if (translationSpeechAbortController) {
+    translationSpeechAbortController.abort();
+
+    translationSpeechAbortController =
+      null;
+  }
+
+  if (translationSpeechAudio) {
+    translationSpeechAudio.pause();
+    translationSpeechAudio.currentTime = 0;
+
+    translationSpeechAudio = null;
+  }
+
+  if (translationSpeechObjectUrl) {
+    URL.revokeObjectURL(
+      translationSpeechObjectUrl
+    );
+
+    translationSpeechObjectUrl = null;
+  }
+}
+async function speakTranslation(
+  text,
+  language = "tr"
+) {
+if (
+  (
+    language === "tr" &&
+    !isTurkishTranslationSpeechEnabled
+  ) ||
+  typeof text !== "string" ||
+  text.trim() === ""
+) {
+    return;
+  }
+
+  stopTranslationSpeech();
+
+  const requestNumber =
+    translationSpeechRequestNumber;
+
+  const controller =
+    new AbortController();
+
+  translationSpeechAbortController =
+    controller;
+
+  const timeoutId =
+    setTimeout(() => {
+      controller.abort();
+    }, translationSpeechTimeoutMs);
+
+  try {
+    const response = await fetch(
+      translationSpeechApiUrl,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+       body: JSON.stringify({
+  text: text.trim(),
+  language
+}),
+
+        signal: controller.signal
+      }
+    );
+
+if (
+  requestNumber !==
+    translationSpeechRequestNumber ||
+  (
+    language === "tr" &&
+    !isTurkishTranslationSpeechEnabled
+  )
+) {
+  return;
+}
+
+    if (!response.ok) {
+      throw new Error(
+        "Türkçe ses alınamadı."
+      );
+    }
+
+    const audioBlob =
+      await response.blob();
+
+ if (
+  requestNumber !==
+    translationSpeechRequestNumber ||
+  (
+    language === "tr" &&
+    !isTurkishTranslationSpeechEnabled
+  )
+) {
+  return;
+}
+
+    translationSpeechObjectUrl =
+      URL.createObjectURL(
+        audioBlob
+      );
+
+    translationSpeechAudio =
+      new Audio(
+        translationSpeechObjectUrl
+      );
+
+    await translationSpeechAudio.play();
+  } catch (error) {
+    if (
+      requestNumber !==
+      translationSpeechRequestNumber
+    ) {
+      return;
+    }
+
+    if (
+      error.name !==
+      "AbortError"
+    ) {
+      console.error(
+        "PauseSpeak Türkçe ses oynatma hatası:",
+        error
+      );
+    }
+  } finally {
+    clearTimeout(timeoutId);
+
+    if (
+      translationSpeechAbortController ===
+      controller
+    ) {
+      translationSpeechAbortController =
+        null;
+    }
+  }
+}
   async function translateSentence(
     text,
     previousText
@@ -622,6 +786,9 @@ Object.assign(
 
       translationBox.textContent =
         data.translation;
+        void speakTranslation(
+  data.translation
+);
     } catch (error) {
       if (
         requestNumber !==
@@ -1117,19 +1284,9 @@ Object.assign(
       (event) => {
         event.preventDefault();
         event.stopPropagation();
-window.speechSynthesis.cancel();
-
-const utterance =
-  new SpeechSynthesisUtterance(
-    segment.text
-  );
-
-utterance.lang = "en-US";
-utterance.rate = 0.9;
-utterance.pitch = 1;
-
-window.speechSynthesis.speak(
-  utterance
+void speakTranslation(
+  segment.text,
+  "en"
 );
 void loadStudyMeaning(
   segment.text,
@@ -2724,7 +2881,21 @@ return;
     }
   }
 );
+turkishTranslationSpeechToggleButton.addEventListener(
+  "click",
+  () => {
+    isTurkishTranslationSpeechEnabled =
+      !isTurkishTranslationSpeechEnabled;
 
+    turkishTranslationSpeechToggleButton.textContent =
+      isTurkishTranslationSpeechEnabled
+        ? "Türkçe Ses: Açık"
+        : "Türkçe Ses: Kapalı";
+        if (!isTurkishTranslationSpeechEnabled) {
+  stopTranslationSpeech();
+}
+  }
+);
 automaticPauseToggleButton.addEventListener(
   "click",
   () => {
@@ -2819,12 +2990,16 @@ void loadStudySegments(
   fullSentence
 );
 
-    if (
-      isReplayPlaybackActive
-    ) {
-      isReplayPlaybackActive =
-        false;
-    } else {
+if (
+  isReplayPlaybackActive
+) {
+  isReplayPlaybackActive =
+    false;
+
+  void speakTranslation(
+    translationBox.textContent
+  );
+} else {
       const previousText =
         previousCompletedSentence;
 
@@ -3362,6 +3537,7 @@ panel.appendChild(
  [
   speakButton,
   pronunciationToggleButton,
+  turkishTranslationSpeechToggleButton,
   automaticPauseToggleButton,
   chunkPracticeButton,
   replayButton,

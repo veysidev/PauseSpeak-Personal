@@ -10,7 +10,11 @@ const port =
 const openAIModel =
   process.env.OPENAI_MODEL ||
   "gpt-5.6-terra";
+const openAITtsModel =
+  "gpt-4o-mini-tts";
 
+const openAITtsVoice =
+  "marin";
 let openAIClientPromise = null;
 
 app.use(cors());
@@ -1306,6 +1310,111 @@ if (
             getOpenAIErrorMessage(
               error,
               "Kelime anlamı"
+            )
+        });
+    }
+  }
+);
+app.post(
+  "/speak-translation",
+  async (request, response) => {
+    const text =
+      request.body?.text;
+      const language =
+  request.body?.language === "en"
+    ? "en"
+    : "tr";
+
+    if (
+      typeof text !== "string" ||
+      text.trim() === ""
+    ) {
+      return response
+        .status(400)
+        .json({
+          success: false,
+
+          error:
+            "Seslendirilecek Türkçe " +
+            "çeviri gönderilmedi."
+        });
+    }
+
+    const cleanedText =
+      text.trim();
+
+    if (cleanedText.length > 1000) {
+      return response
+        .status(400)
+        .json({
+          success: false,
+
+          error:
+            "Seslendirilecek metin çok uzun."
+        });
+    }
+
+    try {
+      const openAI =
+        await getOpenAIClient();
+
+      const speech =
+        await openAI.audio.speech.create({
+          model: openAITtsModel,
+
+          voice: openAITtsVoice,
+
+          input: cleanedText,
+
+          instructions: [
+            "Doğal, sıcak ve anlaşılır",
+            "Türkçe konuş.",
+            "Günlük ve samimi bir ton kullan.",
+            "Robotik okuma yapma.",
+            "Biraz yavaş ve net seslendir."
+          ].join(" "),
+
+          response_format: "mp3"
+        });
+
+      const audioBuffer =
+        Buffer.from(
+          await speech.arrayBuffer()
+        );
+
+      response.set({
+        "Content-Type": "audio/mpeg",
+
+        "Content-Length":
+          audioBuffer.length,
+
+        "Cache-Control": "no-store"
+      });
+
+      return response.send(
+        audioBuffer
+      );
+    } catch (error) {
+      console.error(
+        "PauseSpeak Türkçe ses hatası:",
+        {
+          message: error?.message,
+          status: error?.status,
+          code: error?.code
+        }
+      );
+
+      return response
+        .status(
+          getStatusCode(error)
+        )
+        .json({
+          success: false,
+
+          error:
+            getOpenAIErrorMessage(
+              error,
+              "Türkçe seslendirme"
             )
         });
     }
