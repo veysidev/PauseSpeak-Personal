@@ -4387,6 +4387,75 @@ document.documentElement.appendChild(
   controlsPanel
 );
 
+const controlsToggleButton =
+  document.createElement(
+    "button"
+  );
+
+controlsToggleButton.type =
+  "button";
+
+controlsToggleButton.textContent =
+  "☰";
+
+controlsToggleButton.title =
+  "Kontrolleri göster";
+
+Object.assign(
+  controlsToggleButton.style,
+  {
+    position: "fixed",
+    top: "24px",
+    right: "18px",
+    zIndex: "2147483647",
+    width: "52px",
+    height: "46px",
+    padding: "0",
+    border:
+      "1px solid rgba(255, 255, 255, 0.35)",
+    borderRadius: "14px",
+    backgroundColor:
+      "rgba(15, 20, 20, 0.62)",
+    color: "#ffffff",
+    fontSize: "24px",
+    fontWeight: "700",
+    cursor: "pointer",
+    backdropFilter: "blur(10px)",
+    boxShadow:
+      "0 8px 22px rgba(0, 0, 0, 0.35)"
+  }
+);
+
+let areRemoteControlsVisible =
+  window.innerWidth >= 1200;
+
+controlsToggleButton.addEventListener(
+  "click",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    areRemoteControlsVisible =
+      !areRemoteControlsVisible;
+
+    controlsPanel.style.display =
+      areRemoteControlsVisible
+        ? "flex"
+        : "none";
+
+    controlsToggleButton.textContent =
+      areRemoteControlsVisible
+        ? "✕"
+        : "☰";
+
+    controlsToggleButton.title =
+      areRemoteControlsVisible
+        ? "Kontrolleri gizle"
+        : "Kontrolleri göster";
+  },
+  true
+);
+
 function movePauseSpeakPanelsForFullscreen() {
   const fullscreenContainer =
     document.fullscreenElement;
@@ -4395,20 +4464,48 @@ function movePauseSpeakPanelsForFullscreen() {
     fullscreenContainer ||
     document.documentElement;
 
+  const isSmallScreen =
+    window.innerWidth < 1200;
+
   panel.style.bottom =
     fullscreenContainer
       ? "165px"
       : "130px";
 
- controlsPanel.style.top =
-  fullscreenContainer
-    ? "135px"
-    : "60px";
+  controlsPanel.style.top =
+    fullscreenContainer
+      ? "135px"
+      : "60px";
 
-controlsPanel.style.backgroundColor =
-  fullscreenContainer
-    ? "rgba(15, 20, 20, 0.55)"
-    : "rgba(15, 20, 20, 0.78)";
+  controlsPanel.style.backgroundColor =
+    fullscreenContainer
+      ? "rgba(15, 20, 20, 0.55)"
+      : "rgba(15, 20, 20, 0.78)";
+
+  controlsToggleButton.style.top =
+    fullscreenContainer
+      ? "24px"
+      : "20px";
+
+  if (isSmallScreen) {
+    controlsToggleButton.style.display =
+      "block";
+
+    controlsPanel.style.display =
+      areRemoteControlsVisible
+        ? "flex"
+        : "none";
+  } else {
+    controlsToggleButton.style.display =
+      "none";
+
+    controlsPanel.style.display =
+      "flex";
+
+    areRemoteControlsVisible =
+      true;
+  }
+
   targetContainer.appendChild(
     panel
   );
@@ -4416,11 +4513,19 @@ controlsPanel.style.backgroundColor =
   targetContainer.appendChild(
     controlsPanel
   );
-}
 
+  targetContainer.appendChild(
+    controlsToggleButton
+  );
+}
 
 document.addEventListener(
   "fullscreenchange",
+  movePauseSpeakPanelsForFullscreen
+);
+
+window.addEventListener(
+  "resize",
   movePauseSpeakPanelsForFullscreen
 );
 
