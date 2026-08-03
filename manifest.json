@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "PauseSpeak",
+"name": "PauseSpeak Personal",
   "version": "0.6.0",
   "description": "Video izlerken konuşma pratiği yapmaya yardımcı olan uzantı.",
   "action": {
     "default_popup": "popup.html",
-    "default_title": "PauseSpeak"
+    "default_title": "PauseSpeak Personal"
   },
 "host_permissions": [
   "http://localhost:3000/*",
