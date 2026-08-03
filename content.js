@@ -1,4 +1,103 @@
 (() => {
+  let remoteStudyButtonIndex = -1;
+
+window.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.repeat) {
+      return;
+    }
+
+  const isPreviousWordKey =
+  event.key === "ArrowDown";
+
+const isNextWordKey =
+  event.key === "ArrowUp";
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      event.stopPropagation();
+
+      previousSentenceButton.click();
+
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      event.stopPropagation();
+
+      replayButton.click();
+
+      return;
+    }
+
+    if (
+      isPreviousWordKey ||
+      isNextWordKey
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const studyButtons = [
+        ...subtitleBox.querySelectorAll(
+          "button[data-study-text]"
+        )
+      ];
+
+      if (!studyButtons.length) {
+        return;
+      }
+
+      if (isNextWordKey) {
+        remoteStudyButtonIndex =
+          (
+            remoteStudyButtonIndex + 1
+          ) % studyButtons.length;
+      } else {
+        remoteStudyButtonIndex =
+          (
+            remoteStudyButtonIndex -
+            1 +
+            studyButtons.length
+          ) % studyButtons.length;
+      }
+
+      const selectedButton =
+        studyButtons[
+          remoteStudyButtonIndex
+        ];
+
+      selectedButton.click();
+
+      selectedButton.scrollIntoView({
+        block: "nearest",
+        inline: "nearest"
+      });
+
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const video =
+        getNetflixVideo();
+
+      if (!video) {
+        return;
+      }
+
+      if (video.paused) {
+        void video.play();
+      } else {
+        video.pause();
+      }
+    }
+  },
+  true
+);
   const panelId = "pausespeak-status-panel";
  const translationApiUrl =
   "https://pausespeak.onrender.com/translate";
@@ -222,7 +321,7 @@ Object.assign(
   controlsPanel.style,
   {
     position: "fixed",
-    top: "16px",
+    top: "60px",
     right: "16px",
     zIndex: "2147483647",
     width: "300px",
@@ -277,7 +376,7 @@ margin: "0 auto",
   width: "fit-content",
   maxWidth: "calc(100vw - 380px)",
   padding: "18px 22px",
-  backgroundColor: "rgba(0, 0, 0, 0.58)",
+ backgroundColor: "#000000",
   color: "#ffffff",
   border: "1px solid rgba(255, 255, 255, 0.28)",
   borderRadius: "18px",
@@ -642,15 +741,23 @@ moreButton.textContent =
       .trim();
   }
 
-  function removeSubtitleDescriptions(text) {
-    return String(text || "")
-      .replace(/\[[^\]]*\]/g, " ")
-      .replace(/\([^)]*\)/g, " ")
-      .replace(/♪[^♪]*♪/g, " ")
-      .replace(/[♪♫]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
+function removeSubtitleDescriptions(text) {
+  return String(text || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\[[^\]]*\]/g, " ")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\{[^}]*\}/g, " ")
+    .replace(/♪[^♪]*♪/g, " ")
+    .replace(/♫[^♫]*♫/g, " ")
+    .replace(/[♪♫♬♩]+/g, " ")
+    .replace(
+      /^\s*[\p{L}][\p{L}\p{N} .'-]{0,30}:\s*/u,
+      ""
+    )
+    .replace(/^\s*[-–—]+\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
   function getNetflixSubtitle() {
     const selectors = [
@@ -1764,7 +1871,7 @@ function renderStudyMeaning(
       "1px solid rgba(255, 255, 255, 0.25)";
 
     meaningBox.style.fontSize =
-      "18px";
+      "22px";
 
     meaningBox.style.lineHeight =
       "1.4";
@@ -1828,6 +1935,11 @@ function renderStudyMeaning(
 
     pronunciation.style.color =
       "#fbbf24";
+      pronunciation.style.fontWeight =
+  "700";
+
+pronunciation.style.fontStyle =
+  "italic";
 
     meaningBox.appendChild(
       pronunciation
@@ -3797,12 +3909,27 @@ if (
     }
   }
 
-  function updateSubtitle() {
-    const video =
-      getNetflixVideo();
+function updateSubtitle() {
+  const video =
+    getNetflixVideo();
 
-    const newSubtitle =
-      getNetflixSubtitle();
+  const hasStudyMeaning =
+    Boolean(
+      subtitleBox.querySelector(
+        "[data-study-meaning-box]"
+      )
+    );
+
+  panel.style.backgroundColor =
+    video?.paused &&
+    hasStudyMeaning
+      ? "#000000"
+      : "rgba(0, 0, 0, 0.38)";
+
+  const newSubtitle =
+  removeSubtitleDescriptions(
+    getNetflixSubtitle()
+  );
 
     if (
       newSubtitle ===
@@ -4259,7 +4386,47 @@ document.documentElement.appendChild(
 document.documentElement.appendChild(
   controlsPanel
 );
-  const observer =
+
+function movePauseSpeakPanelsForFullscreen() {
+  const fullscreenContainer =
+    document.fullscreenElement;
+
+  const targetContainer =
+    fullscreenContainer ||
+    document.documentElement;
+
+  panel.style.bottom =
+    fullscreenContainer
+      ? "165px"
+      : "130px";
+
+ controlsPanel.style.top =
+  fullscreenContainer
+    ? "135px"
+    : "60px";
+
+controlsPanel.style.backgroundColor =
+  fullscreenContainer
+    ? "rgba(15, 20, 20, 0.55)"
+    : "rgba(15, 20, 20, 0.78)";
+  targetContainer.appendChild(
+    panel
+  );
+
+  targetContainer.appendChild(
+    controlsPanel
+  );
+}
+
+
+document.addEventListener(
+  "fullscreenchange",
+  movePauseSpeakPanelsForFullscreen
+);
+
+movePauseSpeakPanelsForFullscreen();
+
+const observer =
     new MutationObserver(() => {
       updateVideoStatus();
       updateSubtitle();
