@@ -48,6 +48,11 @@ const studyMeaningTimeoutMs = 20000;
   let isAutomaticRetryReplay = false;
 
   let previousCompletedSentence = "";
+
+  let previousSentenceText = "";
+  let previousSentenceStartTimeMs =
+    null;
+
   let translationRequestNumber = 0;
   let translationSpeechRequestNumber = 0;
 let translationSpeechAbortController =
@@ -68,7 +73,10 @@ let studyMeaningAbortController = null;
   let speechRecognitionHasResult = false;
   let speechRecognitionHadError = false;
   let speechRecognitionWasCancelled = false;
-  let recognizedSpeechText = "";
+   let recognizedSpeechText = "";
+
+  let pronunciationRetryWords = [];
+  let pronunciationRetryWordIndex = 0;
 
   let pronunciationAttemptCount = 0;
   let pronunciationMode = "sentence";
@@ -174,29 +182,91 @@ chunkPracticeButton.disabled = true;
   const pauseButton = document.createElement("button");
   pauseButton.textContent = "Durdur";
 
-  const playButton = document.createElement("button");
-  playButton.textContent = "Devam Et";
-  const controlsPanel = document.createElement("div");
+  const playButton =
+    document.createElement("button");
 
-controlsPanel.id = "pausespeak-controls-panel";
+  playButton.textContent =
+    "Devam Et";
 
-Object.assign(controlsPanel.style, {
-  position: "fixed",
-  top: "16px",
-  right: "16px",
-  zIndex: "2147483647",
-  width: "174px",
-padding: "10px",
-display: "flex",
-flexDirection: "column",
-gap: "6px",
-  backgroundColor: "rgba(15, 20, 20, 0.78)",
-  border: "1px solid rgba(255, 255, 255, 0.08)",
-  borderRadius: "16px",
-  boxShadow: "0 12px 32px rgba(0, 0, 0, 0.35)",
-  backdropFilter: "blur(10px)",
-  boxSizing: "border-box"
-});
+  const previousSentenceButton =
+    document.createElement("button");
+
+  previousSentenceButton.textContent =
+    "↶ Önceki Cümle";
+
+  previousSentenceButton.disabled =
+    true;
+
+  const moreButton =
+    document.createElement("button");
+
+  moreButton.textContent =
+    "☰ Daha Fazla";
+
+  const topControlsRow =
+    document.createElement("div");
+
+  const moreMenu =
+    document.createElement("div");
+
+  moreMenu.style.display =
+    "none";
+
+  const controlsPanel =
+    document.createElement("div");
+
+  controlsPanel.id =
+    "pausespeak-controls-panel";
+
+Object.assign(
+  controlsPanel.style,
+  {
+    position: "fixed",
+    top: "16px",
+    right: "16px",
+    zIndex: "2147483647",
+    width: "300px",
+    padding: "8px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    backgroundColor:
+      "rgba(15, 20, 20, 0.78)",
+    border:
+      "1px solid rgba(255, 255, 255, 0.10)",
+    borderRadius: "20px",
+    boxShadow:
+      "0 12px 32px rgba(0, 0, 0, 0.35)",
+    backdropFilter: "blur(12px)",
+    boxSizing: "border-box"
+  }
+);
+
+Object.assign(
+  topControlsRow.style,
+  {
+    display: "grid",
+    gridTemplateColumns:
+      "repeat(3, 1fr)",
+    gap: "10px"
+  }
+);
+
+Object.assign(
+  moreMenu.style,
+  {
+    alignSelf: "flex-end",
+    width: "250px",
+    overflow: "hidden",
+    backgroundColor:
+      "rgba(45, 48, 52, 0.96)",
+    border:
+      "1px solid rgba(255, 255, 255, 0.18)",
+    borderRadius: "16px",
+    boxShadow:
+      "0 14px 30px rgba(0, 0, 0, 0.40)"
+  }
+);
 Object.assign(panel.style, {
   position: "fixed",
  left: "0",
@@ -324,12 +394,14 @@ Object.assign(chunkBox.style, {
 });
 
 [
+  previousSentenceButton,
+  replayButton,
+  moreButton,
   speakButton,
   pronunciationToggleButton,
   turkishTranslationSpeechToggleButton,
   automaticPauseToggleButton,
   chunkPracticeButton,
-  replayButton,
   pauseButton,
   playButton
 ].forEach((button, index) => {
@@ -410,6 +482,21 @@ Object.assign(
     paddingLeft: "50px"
   }
 );
+const turkishSpeechButtonIconSvg =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0%200%2024%2024' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11%205L6%209H2v6h4l5%204V5Z'/%3E%3Cpath d='M15.5%208.5a5%205%200%200%201%200%207'/%3E%3Cpath d='M18%206a9%209%200%200%201%200%2012'/%3E%3C/svg%3E\")";
+
+Object.assign(
+  turkishTranslationSpeechToggleButton.style,
+  {
+    backgroundImage:
+      turkishSpeechButtonIconSvg,
+    backgroundRepeat: "no-repeat",
+    backgroundPosition: "16px center",
+    backgroundSize: "20px 20px",
+    paddingLeft: "40px"
+  }
+);
+
 const automaticPauseButtonIconSvg =
   "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0%200%2024%2024' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8'/%3E%3Ccircle cx='12' cy='12' r='2' fill='%23ffffff' stroke='none'/%3E%3C/svg%3E\")";
 
@@ -480,6 +567,59 @@ Object.assign(
     paddingLeft: "50px"
   }
 );
+
+previousSentenceButton.textContent =
+  "↶\nÖnceki Cümle";
+
+replayButton.textContent =
+  "↻\nCümleyi Tekrar Oynat";
+
+moreButton.textContent =
+  "☰\nDaha Fazla";
+
+[
+  previousSentenceButton,
+  replayButton,
+  moreButton
+].forEach((button) => {
+  Object.assign(
+    button.style,
+    {
+      minHeight: "54px",
+      padding: "6px",
+      backgroundImage: "none",
+      backgroundPosition: "initial",
+      backgroundSize: "initial",
+      textAlign: "center",
+      fontSize: "12px",
+      fontWeight: "500",
+      lineHeight: "1.25",
+      whiteSpace: "pre-line"
+    }
+  );
+});
+[
+  speakButton,
+  pronunciationToggleButton,
+  turkishTranslationSpeechToggleButton,
+  automaticPauseToggleButton,
+  chunkPracticeButton,
+  pauseButton,
+  playButton
+].forEach((button) => {
+  Object.assign(
+    button.style,
+    {
+      minHeight: "38px",
+      paddingTop: "5px",
+      paddingRight: "8px",
+      paddingBottom: "5px",
+      paddingLeft: "40px",
+      fontSize: "12px",
+      borderRadius: "8px"
+    }
+  );
+});
   function getNetflixVideo() {
     return document.querySelector("video");
   }
@@ -696,6 +836,14 @@ if (
       new Audio(
         translationSpeechObjectUrl
       );
+
+    translationSpeechAudio.playbackRate =
+      language === "tr"
+        ? 1.2
+        : 1;
+
+    translationSpeechAudio.preservesPitch =
+      true;
 
     await translationSpeechAudio.play();
   } catch (error) {
@@ -1045,8 +1193,24 @@ if (
     const targetTokens =
       getWordTokens(targetText);
 
-    const spokenTokens =
+      const spokenTokens =
       getWordTokens(spokenText);
+
+    const compactTarget =
+      targetTokens.join("");
+
+    const compactSpoken =
+      spokenTokens.join("");
+
+    if (
+      compactTarget &&
+      compactTarget === compactSpoken
+    ) {
+      return {
+        success: true,
+        score: 1
+      };
+    }
 
     if (
       targetTokens.length === 0 ||
@@ -1086,10 +1250,167 @@ if (
       score >=
         pronunciationSuccessThreshold;
 
-    return {
+      return {
       success,
       score
     };
+  }
+
+  function getPronunciationRetryWords(
+    targetText,
+    spokenText
+  ) {
+    const targetTokens =
+      getWordTokens(targetText);
+
+    const spokenTokens =
+      getWordTokens(spokenText);
+
+    const distances =
+      Array.from(
+        {
+          length:
+            targetTokens.length + 1
+        },
+        () =>
+          Array(
+            spokenTokens.length + 1
+          ).fill(0)
+      );
+
+    for (
+      let targetIndex = 0;
+      targetIndex <=
+        targetTokens.length;
+      targetIndex += 1
+    ) {
+      distances[targetIndex][0] =
+        targetIndex;
+    }
+
+    for (
+      let spokenIndex = 0;
+      spokenIndex <=
+        spokenTokens.length;
+      spokenIndex += 1
+    ) {
+      distances[0][spokenIndex] =
+        spokenIndex;
+    }
+
+    for (
+      let targetIndex = 1;
+      targetIndex <=
+        targetTokens.length;
+      targetIndex += 1
+    ) {
+      for (
+        let spokenIndex = 1;
+        spokenIndex <=
+          spokenTokens.length;
+        spokenIndex += 1
+      ) {
+        const substitutionCost =
+          targetTokens[
+            targetIndex - 1
+          ] ===
+          spokenTokens[
+            spokenIndex - 1
+          ]
+            ? 0
+            : 1;
+
+        distances[
+          targetIndex
+        ][spokenIndex] =
+          Math.min(
+            distances[
+              targetIndex - 1
+            ][spokenIndex] + 1,
+
+            distances[
+              targetIndex
+            ][spokenIndex - 1] + 1,
+
+            distances[
+              targetIndex - 1
+            ][spokenIndex - 1] +
+              substitutionCost
+          );
+      }
+    }
+
+    const retryWords = [];
+
+    let targetIndex =
+      targetTokens.length;
+
+    let spokenIndex =
+      spokenTokens.length;
+
+    while (
+      targetIndex > 0 ||
+      spokenIndex > 0
+    ) {
+      if (
+        targetIndex > 0 &&
+        spokenIndex > 0 &&
+        targetTokens[
+          targetIndex - 1
+        ] ===
+          spokenTokens[
+            spokenIndex - 1
+          ]
+      ) {
+        targetIndex -= 1;
+        spokenIndex -= 1;
+        continue;
+      }
+
+      if (
+        targetIndex > 0 &&
+        spokenIndex > 0 &&
+        distances[
+          targetIndex
+        ][spokenIndex] ===
+          distances[
+            targetIndex - 1
+          ][spokenIndex - 1] + 1
+      ) {
+        retryWords.unshift(
+          targetTokens[
+            targetIndex - 1
+          ]
+        );
+
+        targetIndex -= 1;
+        spokenIndex -= 1;
+        continue;
+      }
+
+      if (
+        targetIndex > 0 &&
+        distances[
+          targetIndex
+        ][spokenIndex] ===
+          distances[
+            targetIndex - 1
+          ][spokenIndex] + 1
+      ) {
+        retryWords.unshift(
+          targetTokens[
+            targetIndex - 1
+          ]
+        );
+
+        targetIndex -= 1;
+        continue;
+      }
+
+      spokenIndex -= 1;
+    }
+
+    return retryWords;
   }
 
   function hasMultipleClauses(
@@ -1202,6 +1523,27 @@ if (
       )
     );
   }
+  function createImmediateStudySegments(
+  sentence
+) {
+  const pieces =
+    String(sentence || "").match(
+      /[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*(?:-[\p{L}\p{N}]+)*|[^\s\p{L}\p{N}]+/gu
+    ) || [];
+
+  return pieces.map(
+    (piece) => ({
+      text: piece,
+      type:
+        /^[\p{L}\p{N}]/u.test(
+          piece
+        )
+          ? "word"
+          : "punctuation"
+    })
+  );
+}
+
   function renderStudySegments(
   segments
 ) {
@@ -1281,12 +1623,25 @@ if (
           "inset 0 1px 0 rgba(255, 255, 255, 0.05)"
       }
     );
+segmentButton.addEventListener(
+  "click",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
 
-    segmentButton.addEventListener(
-      "click",
-      (event) => {
-        event.preventDefault();
-        event.stopPropagation();
+    const video =
+      getNetflixVideo();
+
+    if (
+      video &&
+      !video.paused
+    ) {
+      video.pause();
+
+      status.textContent =
+        "⏸️ Kelime inceleniyor";
+    }
+
 void speakTranslation(
   segment.text,
   "en"
@@ -1744,8 +2099,11 @@ async function loadStudySegments(
   const requestNumber =
     ++studySegmentsRequestNumber;
 
-  subtitleBox.textContent =
-    sentence;
+  renderStudySegments(
+    createImmediateStudySegments(
+      sentence
+    )
+  );
 
   try {
     const segments =
@@ -1775,8 +2133,11 @@ async function loadStudySegments(
       return;
     }
 
-    subtitleBox.textContent =
-      sentence;
+    renderStudySegments(
+      createImmediateStudySegments(
+        sentence
+      )
+    );
 
     if (
       error.name ===
@@ -1947,6 +2308,9 @@ if (!data.suitable) {
     pronunciationChunkSuccessCount = 0;
     finalSentenceAttemptCount = 0;
     recognizedSpeechText = "";
+
+    pronunciationRetryWords = [];
+    pronunciationRetryWordIndex = 0;
 
     if (autoContinueTimeout) {
       clearTimeout(
@@ -2212,6 +2576,17 @@ if (shouldStartSpeech) {
   function getCurrentPronunciationTarget() {
     if (
       pronunciationMode ===
+      "retry-word"
+    ) {
+      return (
+        pronunciationRetryWords[
+          pronunciationRetryWordIndex
+        ] || ""
+      );
+    }
+
+    if (
+      pronunciationMode ===
       "chunk"
     ) {
       return (
@@ -2222,6 +2597,49 @@ if (shouldStartSpeech) {
     }
 
     return completedBox.textContent;
+  }
+
+  function startPronunciationWordRetry(
+    targetText,
+    spokenText
+  ) {
+    const retryWords =
+      getPronunciationRetryWords(
+        targetText,
+        spokenText
+      );
+
+    if (retryWords.length === 0) {
+      return false;
+    }
+
+    pronunciationRetryWords =
+      retryWords;
+
+    pronunciationRetryWordIndex = 0;
+    pronunciationMode = "retry-word";
+
+    const firstWord =
+      pronunciationRetryWords[0];
+
+    nowSpeakBox.textContent =
+      firstWord;
+
+    nowSpeakBox.style.display =
+      "block";
+
+    pronunciationResultBox.textContent =
+      `Yalnızca "${firstWord}" kelimesini tekrar söyle.`;
+
+    status.textContent =
+      "🎤 Yanlış kelimeyi söyle";
+
+    speakButton.textContent =
+      "🎤 Kelimeyi Söyle";
+
+    scheduleAutomaticSpeechStart();
+
+    return true;
   }
 
   async function handlePronunciationResult(
@@ -2240,6 +2658,65 @@ if (shouldStartSpeech) {
       Math.round(
         result.score * 100
       );
+
+    if (
+      pronunciationMode ===
+      "retry-word"
+    ) {
+      const currentWord =
+        getCurrentPronunciationTarget();
+
+      if (!result.success) {
+        pronunciationResultBox.textContent =
+          `"${currentWord}" kelimesini tekrar söyle. ` +
+          `Benzerlik: %${percentage}`;
+
+        status.textContent =
+          "🔁 Yanlış kelimeyi tekrar söyle";
+
+        speakButton.textContent =
+          "🎤 Kelimeyi Tekrar Söyle";
+
+        scheduleAutomaticSpeechStart();
+
+        return;
+      }
+
+      pronunciationRetryWordIndex += 1;
+
+      if (
+        pronunciationRetryWordIndex <
+        pronunciationRetryWords.length
+      ) {
+        const nextWord =
+          pronunciationRetryWords[
+            pronunciationRetryWordIndex
+          ];
+
+        nowSpeakBox.textContent =
+          nextWord;
+
+        pronunciationResultBox.textContent =
+          `✅ Doğru. Şimdi "${nextWord}" kelimesini söyle.`;
+
+        status.textContent =
+          "🎤 Sıradaki yanlış kelimeyi söyle";
+
+        speakButton.textContent =
+          "🎤 Kelimeyi Söyle";
+
+        scheduleAutomaticSpeechStart();
+
+        return;
+      }
+
+      pronunciationRetryWords = [];
+      pronunciationRetryWordIndex = 0;
+
+      void continueVideoAfterSuccess();
+
+      return;
+    }
 
 if (
   pronunciationMode ===
@@ -2262,30 +2739,9 @@ if (
     return;
   }
 
-  pronunciationChunkSuccessCount += 1;
-
-  if (
-    pronunciationChunkSuccessCount <
-    2
-  ) {
-    pronunciationResultBox.textContent =
-      `✅ İlk doğru söyleyiş tamamlandı. ` +
-      `Aynı parçayı bir kez daha söyle. Benzerlik: %${percentage}`;
-
-    status.textContent =
-      "✅ 1/2 doğru — aynı parçayı tekrar söyle";
-
-    speakButton.textContent =
-      "🎤 Aynı Parçayı Tekrar Söyle";
-
-    scheduleAutomaticSpeechStart();
-
-    return;
-  }
 
   pronunciationChunkSuccessCount = 0;
   pronunciationChunkIndex += 1;
-
   if (
     pronunciationChunkIndex <
     pronunciationChunks.length
@@ -2339,11 +2795,15 @@ if (
       pronunciationMode ===
       "final-sentence"
     ) {
-      if (result.success) {
+           if (result.success) {
         void continueVideoAfterSuccess();
 
         return;
       }
+
+        await startChunkPractice(true);
+
+    return;
 
       finalSentenceAttemptCount += 1;
 
@@ -2378,11 +2838,15 @@ finalSentenceAttemptCount = 0;
       return;
     }
 
-    if (result.success) {
+      if (result.success) {
       void continueVideoAfterSuccess();
 
       return;
     }
+
+     await startChunkPractice(true);
+
+    return;
 
     pronunciationAttemptCount += 1;
 
@@ -2549,7 +3013,7 @@ speakButton.textContent =
     recognition.lang = "en-US";
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
+ recognition.maxAlternatives = 5;
 
     recognition.onstart = () => {
       clearSpeechSilenceTimeout();
@@ -2568,6 +3032,12 @@ speakButton.textContent =
       status.textContent =
         "🎤 İngilizce konuşmanı dinliyorum...";
 
+         spokenTitle.style.display =
+        "block";
+
+      spokenBox.style.display =
+        "block";
+
       spokenBox.textContent =
         "Dinleniyor...";
     };
@@ -2583,13 +3053,65 @@ speakButton.textContent =
             event.results.length;
           index += 1
         ) {
-          const transcript =
+                    const speechResult =
+            event.results[index];
+
+          let transcript =
             cleanText(
-              event.results[
-                index
-              ][0]?.transcript ||
-                ""
+              speechResult[
+                0
+              ]?.transcript || ""
             );
+
+          if (
+            pronunciationMode ===
+              "retry-word" &&
+            speechResult.length > 1
+          ) {
+            const targetWord =
+              getCurrentPronunciationTarget();
+
+            let bestScore =
+              comparePronunciation(
+                targetWord,
+                transcript
+              ).score;
+
+            for (
+              let alternativeIndex = 1;
+              alternativeIndex <
+                speechResult.length;
+              alternativeIndex += 1
+            ) {
+              const alternativeText =
+                cleanText(
+                  speechResult[
+                    alternativeIndex
+                  ]?.transcript || ""
+                );
+
+              if (!alternativeText) {
+                continue;
+              }
+
+              const alternativeScore =
+                comparePronunciation(
+                  targetWord,
+                  alternativeText
+                ).score;
+
+              if (
+                alternativeScore >
+                bestScore
+              ) {
+                transcript =
+                  alternativeText;
+
+                bestScore =
+                  alternativeScore;
+              }
+            }
+          }
 
           if (!transcript) {
             continue;
@@ -2623,10 +3145,47 @@ speakButton.textContent =
         recognizedSpeechText =
           recognizedText;
 
-        spokenBox.textContent =
+             spokenBox.textContent =
           recognizedText;
 
+        const currentTargetResult =
+          pronunciationMode ===
+            "retry-word" ||
+          pronunciationMode ===
+            "chunk"
+            ? comparePronunciation(
+                getCurrentPronunciationTarget(),
+                recognizedText
+              )
+            : null;
+
+        if (
+          currentTargetResult?.success
+        ) {
+          clearSpeechSilenceTimeout();
+
+          try {
+            recognition.stop();
+          } catch (error) {
+            console.warn(
+              "PauseSpeak doğru kelime sonrası durdurma uyarısı:",
+              error
+            );
+          }
+
+          return;
+        }
+
         clearSpeechSilenceTimeout();
+
+            const silenceDelayMs =
+          pronunciationMode ===
+          "retry-word"
+            ? 450
+            : pronunciationMode ===
+                "chunk"
+              ? 5000
+              : 1800;
 
         speechSilenceTimeout =
           setTimeout(() => {
@@ -2647,7 +3206,7 @@ speakButton.textContent =
                 );
               }
             }
-          }, 1800);
+                }, silenceDelayMs);
       };
 
     recognition.onerror =
@@ -2849,6 +3408,31 @@ speakButton.textContent =
       startSpeechRecognition();
     }
   );
+  moreButton.addEventListener(
+  "click",
+  () => {
+    const isMenuOpen =
+      moreMenu.style.display !==
+      "none";
+
+    moreMenu.style.display =
+      isMenuOpen
+        ? "none"
+        : "flex";
+
+    moreMenu.style.flexDirection =
+      "column";
+
+    moreMenu.style.gap =
+      "6px";
+
+    moreMenu.style.padding =
+      isMenuOpen
+        ? "0"
+        : "10px";
+  }
+);
+
 pronunciationToggleButton.addEventListener(
   "click",
   () => {
@@ -3004,6 +3588,23 @@ return;
     if (!fullSentence) {
       return;
     }
+
+    if (
+      !isReplayPlaybackActive &&
+      completedStartTimeMs !== null
+    ) {
+      previousSentenceText =
+        cleanText(
+          completedBox.textContent
+        );
+
+      previousSentenceStartTimeMs =
+        completedStartTimeMs;
+
+      previousSentenceButton.disabled =
+        !previousSentenceText;
+    }
+
 completedBox.textContent =
   fullSentence;
 
@@ -3092,15 +3693,31 @@ if (isAutomaticRetryReplay) {
     sentenceStartTime = null;
     replayGuardUntilVideoTime =
       null;
+const spokenWordCount =
+  getWordTokens(
+    fullSentence
+  ).length;
+
+const shouldPauseForSentence =
+  spokenWordCount >= 3;
+
 if (
   video &&
   !video.paused &&
-  isAutomaticPauseEnabled
+  isAutomaticPauseEnabled &&
+  shouldPauseForSentence
 ) {
   video.pause();
 
   status.textContent =
     "⏸️ Cümle bitti — video durduruldu";
+} else if (
+  video &&
+  isAutomaticPauseEnabled &&
+  !shouldPauseForSentence
+) {
+  status.textContent =
+    "⏭️ Kısa ifade — video devam ediyor";
 } else if (
   video &&
   !isAutomaticPauseEnabled
@@ -3118,9 +3735,10 @@ if (
       );
     }
 
- if (
+if (
   SpeechRecognitionClass &&
-  isPronunciationEnabled
+  isPronunciationEnabled &&
+  shouldPauseForSentence
 ) {
   scheduleAutomaticSpeechStart();
 }
@@ -3341,6 +3959,54 @@ if (
     status.textContent =
       "🔁 Cümle tekrar oynatılıyor";
   }
+previousSentenceButton.addEventListener(
+  "click",
+  () => {
+    if (
+      !previousSentenceText ||
+      previousSentenceStartTimeMs ===
+        null
+    ) {
+      status.textContent =
+        "Önceki cümle bulunamadı";
+
+      return;
+    }
+
+    completedBox.textContent =
+      previousSentenceText;
+
+    nowSpeakBox.textContent =
+      previousSentenceText;
+
+    completedStartTimeMs =
+      previousSentenceStartTimeMs;
+
+    previousSentenceText = "";
+
+    previousSentenceStartTimeMs =
+      null;
+
+    previousSentenceButton.disabled =
+      true;
+
+    replayButton.disabled =
+      false;
+
+    resetPronunciationPractice();
+
+    void loadStudySegments(
+      completedBox.textContent
+    );
+
+    void translateSentence(
+      completedBox.textContent,
+      ""
+    );
+
+    replayButton.click();
+  }
+);
 
   replayButton.addEventListener(
     "click",
@@ -3552,29 +4218,39 @@ panel.appendChild(
   );
 
   panel.appendChild(
-    chunkTitle
-  );
-
-  panel.appendChild(
-    chunkBox
-  );
-
-  panel.appendChild(
     speakButton
   );
+[
+  previousSentenceButton,
+  replayButton,
+  moreButton
+].forEach((button) => {
+  topControlsRow.appendChild(
+    button
+  );
+});
 
- [
+[
   speakButton,
   pronunciationToggleButton,
   turkishTranslationSpeechToggleButton,
   automaticPauseToggleButton,
   chunkPracticeButton,
-  replayButton,
   pauseButton,
   playButton
 ].forEach((button) => {
-  controlsPanel.appendChild(button);
+  moreMenu.appendChild(
+    button
+  );
 });
+
+controlsPanel.appendChild(
+  topControlsRow
+);
+
+controlsPanel.appendChild(
+  moreMenu
+);
 
 document.documentElement.appendChild(
   panel

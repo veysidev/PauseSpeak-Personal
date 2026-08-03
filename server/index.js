@@ -186,6 +186,9 @@ function normalizeForChunkValidation(
     text
   )
     .replace(/[’‘`]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/\s+"/g, '"')
+    .replace(/"\s+/g, '"')
     .replace(
       /\s+([,.;:!?…])/g,
       "$1"
@@ -1302,14 +1305,33 @@ if (
 ) {
   candidate.note = "";
 }
-          if (
+          const normalizedCandidateText =
             cleanText(
               candidate.text
-            ) ===
-              cleanedSelectedText &&
+            )
+              .replace(
+                /^[\s"'“”‘’.,!?;:—–-]+|[\s"'“”‘’.,!?;:—–-]+$/g,
+                ""
+              )
+              .toLowerCase();
+
+          const normalizedSelectedText =
+            cleanedSelectedText
+              .replace(
+                /^[\s"'“”‘’.,!?;:—–-]+|[\s"'“”‘’.,!?;:—–-]+$/g,
+                ""
+              )
+              .toLowerCase();
+
+          if (
+            normalizedCandidateText ===
+              normalizedSelectedText &&
             candidate.meanings.length >
               0
           ) {
+            candidate.text =
+              cleanedSelectedText;
+
             meaning = candidate;
 
             break;
