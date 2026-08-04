@@ -363,7 +363,8 @@ Object.assign(
     top: "60px",
     right: "16px",
     zIndex: "2147483647",
-    width: "300px",
+  width: "fit-content",
+minWidth: "145px",
     padding: "8px",
     display: "flex",
     flexDirection: "column",
@@ -384,8 +385,8 @@ Object.assign(
   topControlsRow.style,
   {
     display: "grid",
-    gridTemplateColumns:
-      "repeat(3, 1fr)",
+  gridTemplateColumns:
+  "1fr",
     gap: "10px"
   }
 );
@@ -5172,17 +5173,13 @@ panel.appendChild(
   panel.appendChild(
     speakButton
   );
+topControlsRow.appendChild(
+  moreButton
+);
+
 [
   previousSentenceButton,
   replayButton,
-  moreButton
-].forEach((button) => {
-  topControlsRow.appendChild(
-    button
-  );
-});
-
-[
   speakButton,
   pronunciationToggleButton,
   turkishTranslationSpeechToggleButton,
@@ -5339,10 +5336,15 @@ panel.style.bottom =
       ? "35px"
       : "130px";
 
-  controlsPanel.style.top =
-    fullscreenContainer
-      ? "135px"
-      : "60px";
+controlsPanel.style.top =
+  fullscreenContainer
+    ? "8px"
+    : "60px";
+
+controlsPanel.style.right =
+  fullscreenContainer
+    ? "8px"
+    : "16px";
 
   controlsPanel.style.backgroundColor =
     fullscreenContainer
@@ -5400,26 +5402,33 @@ window.addEventListener(
 
 movePauseSpeakPanelsForFullscreen();
 
-const observer =
-    new MutationObserver(() => {
-      updateVideoStatus();
-      updateSubtitle();
-    });
+const runPauseSpeakUpdate = () => {
+  const isNetflixWatchPage =
+    /^\/watch(?:\/|$)/.test(
+      window.location.pathname
+    );
 
-  observer.observe(
-    document.documentElement,
-    {
-      childList: true,
-      subtree: true,
-      characterData: true
-    }
-  );
+  if (!isNetflixWatchPage) {
+    panel.style.display = "none";
+    subtitleOpenButton.style.display =
+      "none";
+    controlsPanel.style.display =
+      "none";
+    controlsToggleButton.style.display =
+      "none";
+
+    lastVideoFound = null;
+    return;
+  }
 
   updateVideoStatus();
   updateSubtitle();
+};
 
-  setInterval(() => {
-    updateVideoStatus();
-    updateSubtitle();
-  }, 400);
+runPauseSpeakUpdate();
+
+setInterval(
+  runPauseSpeakUpdate,
+  400
+);
 })();
