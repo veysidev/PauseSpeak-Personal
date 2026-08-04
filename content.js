@@ -384,7 +384,10 @@ Object.assign(panel.style, {
   position: "fixed",
  left: "0",
 right: "0",
-bottom: "130px",
+bottom:
+  window.innerWidth <= 1100
+    ? "45px"
+    : "130px",
 margin: "0 auto",
   zIndex: "2147483647",
   width: "fit-content",
