@@ -5330,9 +5330,13 @@ function movePauseSpeakPanelsForFullscreen() {
   const isSmallScreen =
     window.innerWidth < 1200;
 
-  panel.style.bottom =
-    fullscreenContainer
-      ? "165px"
+panel.style.bottom =
+  window.innerWidth <= 1100
+    ? fullscreenContainer
+      ? "8px"
+      : "15px"
+    : fullscreenContainer
+      ? "35px"
       : "130px";
 
   controlsPanel.style.top =
