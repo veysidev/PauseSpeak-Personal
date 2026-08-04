@@ -363,8 +363,7 @@ Object.assign(
     top: "60px",
     right: "16px",
     zIndex: "2147483647",
-  width: "fit-content",
-minWidth: "145px",
+    width: "300px",
     padding: "8px",
     display: "flex",
     flexDirection: "column",
@@ -385,8 +384,8 @@ Object.assign(
   topControlsRow.style,
   {
     display: "grid",
-  gridTemplateColumns:
-  "1fr",
+    gridTemplateColumns:
+      "repeat(3, 1fr)",
     gap: "10px"
   }
 );
@@ -5173,13 +5172,17 @@ panel.appendChild(
   panel.appendChild(
     speakButton
   );
-topControlsRow.appendChild(
-  moreButton
-);
-
 [
   previousSentenceButton,
   replayButton,
+  moreButton
+].forEach((button) => {
+  topControlsRow.appendChild(
+    button
+  );
+});
+
+[
   speakButton,
   pronunciationToggleButton,
   turkishTranslationSpeechToggleButton,
@@ -5336,15 +5339,10 @@ panel.style.bottom =
       ? "35px"
       : "130px";
 
-controlsPanel.style.top =
-  fullscreenContainer
-    ? "8px"
-    : "60px";
-
-controlsPanel.style.right =
-  fullscreenContainer
-    ? "8px"
-    : "16px";
+  controlsPanel.style.top =
+    fullscreenContainer
+      ? "135px"
+      : "60px";
 
   controlsPanel.style.backgroundColor =
     fullscreenContainer
