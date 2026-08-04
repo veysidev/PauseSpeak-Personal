@@ -181,6 +181,8 @@ let currentSubtitleChunks = [];
 let currentSubtitleChunkTranslations = [];
 
 let isChunkTranslationVisible = false;
+let isSubtitlePanelHidden = false;
+let subtitleHiddenAtSentence = "";
 
   let speechRecognition = null;
   let isSpeechListening = false;
@@ -208,6 +210,29 @@ let isChunkTranslationVisible = false;
 
   const panel = document.createElement("div");
   panel.id = panelId;
+  const subtitleCloseButton =
+  document.createElement("button");
+
+subtitleCloseButton.type =
+  "button";
+
+subtitleCloseButton.textContent =
+  "×";
+
+subtitleCloseButton.title =
+  "Altyazı kutusunu kapat";
+
+const subtitleOpenButton =
+  document.createElement("button");
+
+subtitleOpenButton.type =
+  "button";
+
+subtitleOpenButton.textContent =
+  "Altyazıyı Aç";
+
+subtitleOpenButton.title =
+  "Altyazı kutusunu aç";
 
   const title = document.createElement("div");
   title.textContent = "PauseSpeak";
@@ -386,7 +411,7 @@ Object.assign(panel.style, {
 right: "0",
 bottom:
   window.innerWidth <= 1100
-    ? "45px"
+    ? "15px"
     : "130px",
 margin: "0 auto",
   zIndex: "2147483647",
@@ -402,7 +427,55 @@ margin: "0 auto",
   boxShadow: "0 10px 30px rgba(0, 0, 0, 0.35)",
   boxSizing: "border-box"
 });
+Object.assign(
+  subtitleCloseButton.style,
+  {
+    position: "absolute",
+  top: "-12px",
+  right: "-12px",
+    zIndex: "2",
+   width: "34px",
+  height: "34px",
+    padding: "0",
+    border:
+      "1px solid rgba(255, 255, 255, 0.35)",
+    borderRadius: "50%",
+    backgroundColor:
+      "rgba(40, 40, 44, 0.92)",
+    color: "#ffffff",
+   fontSize: "22px",
+    fontWeight: "700",
+  lineHeight: "30px",
+    textAlign: "center",
+    cursor: "pointer"
+  }
+);
 
+Object.assign(
+  subtitleOpenButton.style,
+  {
+    position: "fixed",
+    left: "50%",
+    bottom:
+      window.innerWidth <= 1100
+        ? "15px"
+        : "130px",
+    transform: "translateX(-50%)",
+    zIndex: "2147483647",
+    display: "none",
+    padding: "10px 18px",
+    border:
+      "1px solid rgba(255, 255, 255, 0.35)",
+    borderRadius: "12px",
+    backgroundColor: "#000000",
+    color: "#ffffff",
+    fontSize: "16px",
+    fontWeight: "700",
+    cursor: "pointer",
+    boxShadow:
+      "0 8px 22px rgba(0, 0, 0, 0.45)"
+  }
+);
   Object.assign(title.style, {
     fontSize: "18px",
     fontWeight: "bold"
@@ -4412,7 +4485,21 @@ chunkPracticeButton.addEventListener(
       previousSentenceButton.disabled =
         !previousSentenceText;
     }
+if (
+  isSubtitlePanelHidden &&
+  fullSentence.trim() &&
+  fullSentence.trim() !==
+    subtitleHiddenAtSentence
+) {
+  isSubtitlePanelHidden = false;
+  subtitleHiddenAtSentence = "";
 
+  panel.style.display =
+    "block";
+
+  subtitleOpenButton.style.display =
+    "none";
+}
 completedBox.textContent =
   fullSentence;
 
@@ -4565,7 +4652,8 @@ function updateVideoStatus() {
   if (!isNetflixWatchPage) {
     panel.style.display =
       "none";
-
+subtitleOpenButton.style.display =
+  "none";
     controlsPanel.style.display =
       "none";
 
@@ -4573,18 +4661,18 @@ function updateVideoStatus() {
       "none";
 
     lastVideoFound = null;
+panel.style.display =
+  isSubtitlePanelHidden
+    ? "none"
+    : "block";
 
-    return;
-  }
+subtitleOpenButton.style.display =
+  isSubtitlePanelHidden
+    ? "block"
+    : "none";
 
-  panel.style.display =
-    "block";
-
-  const isSmallScreen =
-    window.innerWidth < 1200;
-
-  if (isSmallScreen) {
-    controlsToggleButton.style.display =
+const isSmallScreen =
+  window.innerWidth < 1200; controlsToggleButton.style.display =
       "block";
 
     controlsPanel.style.display =
@@ -5025,7 +5113,9 @@ previousSentenceButton.addEventListener(
       }
     }
   );
-
+panel.appendChild(
+  subtitleCloseButton
+);
   panel.appendChild(title);
   panel.appendChild(status);
 
@@ -5113,11 +5203,49 @@ controlsPanel.appendChild(
 controlsPanel.appendChild(
   moreMenu
 );
+subtitleCloseButton.addEventListener(
+  "click",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
 
+    isSubtitlePanelHidden = true;
+
+    subtitleHiddenAtSentence =
+      completedBox.textContent.trim();
+
+    panel.style.display =
+      "none";
+
+    subtitleOpenButton.style.display =
+      "block";
+  },
+  true
+);
+
+subtitleOpenButton.addEventListener(
+  "click",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    isSubtitlePanelHidden = false;
+    subtitleHiddenAtSentence = "";
+
+    panel.style.display =
+      "block";
+
+    subtitleOpenButton.style.display =
+      "none";
+  },
+  true
+);
 document.documentElement.appendChild(
   panel
 );
-
+document.documentElement.appendChild(
+  subtitleOpenButton
+);
 document.documentElement.appendChild(
   controlsPanel
 );
@@ -5244,7 +5372,9 @@ function movePauseSpeakPanelsForFullscreen() {
   targetContainer.appendChild(
     panel
   );
-
+targetContainer.appendChild(
+  subtitleOpenButton
+);
   targetContainer.appendChild(
     controlsPanel
   );
