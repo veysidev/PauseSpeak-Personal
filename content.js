@@ -166,6 +166,21 @@ let studySegmentsRequestNumber = 0;
 let studySegmentsAbortController = null;
 let studyMeaningRequestNumber = 0;
 let studyMeaningAbortController = null;
+let currentSentenceStudySegments = [];
+let currentStudyTokenMappings = [];
+
+const studyMeaningCache =
+  new Map();
+let subtitleChunkRequestNumber = 0;
+let subtitleChunkAbortController = null;
+
+let subtitleTranslationRequestNumber = 0;
+let subtitleTranslationAbortController = null;
+
+let currentSubtitleChunks = [];
+let currentSubtitleChunkTranslations = [];
+
+let isChunkTranslationVisible = false;
 
   let speechRecognition = null;
   let isSpeechListening = false;
@@ -270,8 +285,7 @@ automaticPauseToggleButton.textContent =
   document.createElement("button");
 
 chunkPracticeButton.textContent =
-  "Parçalara Ayır";
-
+  "Parça Çevirisi: Kapalı";
 chunkPracticeButton.disabled = true;
 
   const replayButton = document.createElement("button");
@@ -400,6 +414,7 @@ margin: "0 auto",
   subtitleTitle,
   completedTitle,
   translationTitle,
+  translationBox,
   pronunciationTitle,
   nowSpeakTitle,
   spokenTitle,
@@ -1650,22 +1665,39 @@ if (
     })
   );
 }
-
-  function renderStudySegments(
+function createStudyTokenMappings(
   segments
 ) {
-  subtitleBox.replaceChildren();
+  const mappings = [];
 
-  Object.assign(
-    subtitleBox.style,
-    {
-      display: "flex",
-      flexWrap: "wrap",
-      alignItems: "center",
-      gap: "4px"
+  for (const segment of segments) {
+    if (
+      !segment ||
+      segment.type === "punctuation"
+    ) {
+      continue;
     }
-  );
 
+    const words =
+      String(segment.text || "").match(
+        /[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*(?:-[\p{L}\p{N}]+)*/gu
+      ) || [];
+
+    for (const word of words) {
+      mappings.push({
+        word,
+        text: segment.text,
+        type: segment.type
+      });
+    }
+  }
+
+  return mappings;
+}
+function appendStudySegments(
+  container,
+  segments
+) {
   for (const segment of segments) {
     if (
       segment.type ===
@@ -1688,7 +1720,7 @@ if (
         }
       );
 
-      subtitleBox.appendChild(
+      container.appendChild(
         punctuation
       );
 
@@ -1711,52 +1743,79 @@ if (
     segmentButton.dataset.studyType =
       segment.type;
 
-    Object.assign(
-      segmentButton.style,
-      {
-        appearance: "none",
-        padding: "2px 5px",
-        margin: "0",
-        border:
-          "1px solid rgba(255, 255, 255, 0.42)",
-        borderRadius: "3px",
-        backgroundColor:
-          "rgba(20, 20, 24, 0.58)",
-        color: "#ffffff",
-        font: "inherit",
-        lineHeight: "1.35",
-        cursor: "pointer",
-        boxShadow:
-          "inset 0 1px 0 rgba(255, 255, 255, 0.05)"
-      }
-    );
-segmentButton.addEventListener(
-  "click",
-  (event) => {
-    event.preventDefault();
-    event.stopPropagation();
+Object.assign(
+  segmentButton.style,
+  {
+    appearance: "none",
+    display: "inline",
+    padding: "0",
+    margin: "0",
+    border: "none",
+    borderRadius: "0",
+    outline: "none",
+    backgroundColor: "transparent",
+    color: "#ffffff",
+    font: "inherit",
+    lineHeight: "1.35",
+    cursor: "pointer",
+    boxShadow: "none",
+    verticalAlign: "baseline"
+  }
+);
+    segmentButton.addEventListener(
+      "click",
+      (event) => {
+        event.preventDefault();
+        event.stopPropagation();
 
-    const video =
-      getNetflixVideo();
+        const video =
+          getNetflixVideo();
 
-    if (
-      video &&
-      !video.paused
-    ) {
-      video.pause();
+        if (
+          video &&
+          !video.paused
+        ) {
+          video.pause();
 
-      status.textContent =
-        "⏸️ Kelime inceleniyor";
-    }
+          status.textContent =
+            "⏸️ Kelime inceleniyor";
+        }
+
+ const studyButtons = [
+  ...subtitleBox.querySelectorAll(
+    "button[data-study-text]"
+  )
+];
+
+const buttonIndex =
+  studyButtons.indexOf(
+    segmentButton
+  );
+
+const mappedSegment =
+  buttonIndex >= 0
+    ? currentStudyTokenMappings[
+        buttonIndex
+      ]
+    : null;
+
+const studyText =
+  mappedSegment?.text ||
+  segment.text;
+
+const studyType =
+  mappedSegment?.type ||
+  segment.type;
 
 void speakTranslation(
-  segment.text,
+  studyText,
   "en"
 );
+
 void loadStudyMeaning(
-  segment.text,
+  studyText,
   completedBox.textContent,
-  segment.type
+  studyType
 );
         subtitleBox
           .querySelectorAll(
@@ -1778,16 +1837,123 @@ void loadStudyMeaning(
       }
     );
 
-    subtitleBox.appendChild(
+    container.appendChild(
       segmentButton
     );
   }
+}
+
+function renderChunkedSubtitle() {
+  subtitleBox.replaceChildren();
+
+  remoteStudyButtonIndex = -1;
+
+  Object.assign(
+    subtitleBox.style,
+    {
+      display: "flex",
+      flexDirection: "column",
+      flexWrap: "nowrap",
+      alignItems: "stretch",
+      gap: "12px"
+    }
+  );
+
+  if (
+    currentSubtitleChunks.length === 0
+  ) {
+    subtitleBox.textContent =
+      "Altyazı bekleniyor...";
+
+    return;
+  }
+
+  currentSubtitleChunks.forEach(
+    (chunk, index) => {
+      const chunkRow =
+        document.createElement(
+          "div"
+        );
+
+      Object.assign(
+        chunkRow.style,
+        {
+          width: "100%"
+        }
+      );
+
+      const englishLine =
+        document.createElement(
+          "div"
+        );
+
+      Object.assign(
+        englishLine.style,
+        {
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: "4px"
+        }
+      );
+
+      appendStudySegments(
+        englishLine,
+        createImmediateStudySegments(
+          chunk
+        )
+      );
+
+      chunkRow.appendChild(
+        englishLine
+      );
+
+      if (
+        isChunkTranslationVisible
+      ) {
+        const translationLine =
+          document.createElement(
+            "div"
+          );
+
+        translationLine.textContent =
+          currentSubtitleChunkTranslations[
+            index
+          ] ||
+          "Çevriliyor...";
+
+        Object.assign(
+          translationLine.style,
+          {
+            marginTop: "4px",
+            color: "#60a5fa",
+            fontSize: "20px",
+            lineHeight: "1.35"
+          }
+        );
+
+        chunkRow.appendChild(
+          translationLine
+        );
+      }
+
+      subtitleBox.appendChild(
+        chunkRow
+      );
+    }
+  );
 }
 async function loadStudyMeaning(
   selectedText,
   sentence,
   segmentType
 ) {
+  const cacheKey = [
+    cleanText(sentence).toLowerCase(),
+    cleanText(selectedText).toLowerCase(),
+    cleanText(segmentType).toLowerCase()
+  ].join("::");
+
   if (studyMeaningAbortController) {
     studyMeaningAbortController.abort();
 
@@ -1797,6 +1963,19 @@ async function loadStudyMeaning(
 
   const requestNumber =
     ++studyMeaningRequestNumber;
+
+  const cachedMeaning =
+    studyMeaningCache.get(
+      cacheKey
+    );
+
+  if (cachedMeaning) {
+    renderStudyMeaning(
+      cachedMeaning
+    );
+
+    return;
+  }
 
   try {
     const meaning =
@@ -1817,6 +1996,25 @@ async function loadStudyMeaning(
       return;
     }
 
+    studyMeaningCache.set(
+      cacheKey,
+      meaning
+    );
+
+    if (
+      studyMeaningCache.size > 100
+    ) {
+      const oldestKey =
+        studyMeaningCache
+          .keys()
+          .next()
+          .value;
+
+      studyMeaningCache.delete(
+        oldestKey
+      );
+    }
+
     renderStudyMeaning(
       meaning
     );
@@ -1830,7 +2028,7 @@ async function loadStudyMeaning(
 
     if (
       error.name ===
-      "AbortError"
+        "AbortError"
     ) {
       return;
     }
@@ -1983,6 +2181,120 @@ pronunciation.style.fontStyle =
     );
   }
 }
+let blockNextNetflixTap = false;
+let blockNextNetflixTapTimeout = null;
+
+function closeStudyMeaningWithoutPlaying(
+  event
+) {
+  const meaningBox =
+    subtitleBox.querySelector(
+      "[data-study-meaning-box]"
+    );
+
+  if (!meaningBox) {
+    return;
+  }
+
+  if (
+    event.target instanceof Node &&
+    meaningBox.contains(
+      event.target
+    )
+  ) {
+    return;
+  }
+
+  const clickedStudyButton =
+    event.target instanceof Element
+      ? event.target.closest(
+          "button[data-study-text]"
+        )
+      : null;
+
+  if (clickedStudyButton) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+
+  meaningBox.remove();
+
+  subtitleBox
+    .querySelectorAll(
+      "button[data-study-text]"
+    )
+    .forEach((button) => {
+      button.style.color =
+        "#ffffff";
+
+      button.style.textDecoration =
+        "none";
+    });
+
+  panel.style.backgroundColor =
+    "rgba(0, 0, 0, 0.38)";
+
+  blockNextNetflixTap = true;
+
+  if (blockNextNetflixTapTimeout) {
+    clearTimeout(
+      blockNextNetflixTapTimeout
+    );
+  }
+
+  blockNextNetflixTapTimeout =
+    setTimeout(() => {
+      blockNextNetflixTap = false;
+      blockNextNetflixTapTimeout =
+        null;
+    }, 700);
+}
+
+function stopNetflixTapAfterMeaningClose(
+  event
+) {
+  if (!blockNextNetflixTap) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+
+  if (event.type === "click") {
+    blockNextNetflixTap = false;
+
+    if (blockNextNetflixTapTimeout) {
+      clearTimeout(
+        blockNextNetflixTapTimeout
+      );
+
+      blockNextNetflixTapTimeout =
+        null;
+    }
+  }
+}
+
+document.addEventListener(
+  "pointerdown",
+  closeStudyMeaningWithoutPlaying,
+  true
+);
+
+document.addEventListener(
+  "pointerup",
+  stopNetflixTapAfterMeaningClose,
+  true
+);
+
+document.addEventListener(
+  "click",
+  stopNetflixTapAfterMeaningClose,
+  true
+);
 async function requestStudyMeaning(
   selectedText,
   sentence,
@@ -2015,11 +2327,13 @@ async function requestStudyMeaning(
               "application/json"
           },
 
-          body: JSON.stringify({
-            selectedText,
-            sentence,
-            segmentType
-          }),
+  body: JSON.stringify({
+  selectedText,
+  sentence,
+  segmentType,
+  analysisMode:
+    "context-expression-v1"
+}),
 
           signal:
             abortController.signal
@@ -2127,9 +2441,11 @@ async function requestStudySegments(
             "application/json"
         },
 
-        body: JSON.stringify({
-          text: sentence
-        }),
+   body: JSON.stringify({
+  text: sentence,
+  analysisMode:
+    "context-expression-v1"
+}),
 
         signal: controller.signal
       }
@@ -2178,14 +2494,49 @@ async function requestStudySegments(
       );
     }
 
-    return data.segments.map(
-      (segment) => ({
-        text: cleanText(
-          segment.text
-        ),
-        type: segment.type
-      })
-    );
+return data.segments.map(
+  (segment) => ({
+    text: cleanText(
+      segment.text
+    ),
+
+    type: segment.type,
+
+    meanings:
+      Array.isArray(
+        segment.meanings
+      )
+        ? segment.meanings.map(
+            (meaning) =>
+              cleanText(meaning)
+          )
+        : [],
+
+    pronunciation:
+      typeof segment.pronunciation ===
+        "string"
+        ? cleanText(
+            segment.pronunciation
+          )
+        : "",
+
+    expansion:
+      typeof segment.expansion ===
+        "string"
+        ? cleanText(
+            segment.expansion
+          )
+        : "",
+
+    note:
+      typeof segment.note ===
+        "string"
+        ? cleanText(
+            segment.note
+          )
+        : ""
+  })
+);
   } finally {
     clearTimeout(timeoutId);
 
@@ -2198,7 +2549,7 @@ async function requestStudySegments(
     }
   }
 }
-async function loadStudySegments(
+async function loadSentenceStudyAnalysis(
   sentence
 ) {
   if (studySegmentsAbortController) {
@@ -2211,11 +2562,8 @@ async function loadStudySegments(
   const requestNumber =
     ++studySegmentsRequestNumber;
 
-  renderStudySegments(
-    createImmediateStudySegments(
-      sentence
-    )
-  );
+  currentSentenceStudySegments = [];
+  currentStudyTokenMappings = [];
 
   try {
     const segments =
@@ -2234,22 +2582,376 @@ async function loadStudySegments(
       return;
     }
 
-    renderStudySegments(
-      segments
-    );
+    currentSentenceStudySegments =
+      segments;
+
+    currentStudyTokenMappings =
+      createStudyTokenMappings(
+        segments
+      );
+      for (const segment of segments) {
+  if (
+    segment.type === "punctuation" ||
+    !Array.isArray(
+      segment.meanings
+    ) ||
+    segment.meanings.length === 0
+  ) {
+    continue;
+  }
+
+  const cacheKey = [
+    cleanText(sentence).toLowerCase(),
+    cleanText(segment.text).toLowerCase(),
+    cleanText(segment.type).toLowerCase()
+  ].join("::");
+
+  studyMeaningCache.set(
+    cacheKey,
+    {
+      text: segment.text,
+      meanings: segment.meanings,
+      pronunciation:
+        segment.pronunciation || "",
+      expansion:
+        segment.expansion || "",
+      note:
+        segment.note || ""
+    }
+  );
+}
   } catch (error) {
     if (
       requestNumber !==
-      studySegmentsRequestNumber
+        studySegmentsRequestNumber ||
+      error.name === "AbortError"
     ) {
       return;
     }
 
-    renderStudySegments(
-      createImmediateStudySegments(
-        sentence
-      )
+    console.error(
+      "PauseSpeak cümle ifade analizi hatası:",
+      error
     );
+  }
+}
+async function requestSubtitleChunks(
+  sentence,
+  requestNumber
+) {
+  const controller =
+    new AbortController();
+
+  subtitleChunkAbortController =
+    controller;
+
+  const timeoutId =
+    setTimeout(() => {
+      controller.abort();
+    }, chunkTimeoutMs);
+
+  try {
+    const response =
+      await fetch(
+        chunkApiUrl,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+
+          body: JSON.stringify({
+            text: sentence
+          }),
+
+          signal:
+            controller.signal
+        }
+      );
+
+    const data =
+      await response.json();
+
+    if (
+      requestNumber !==
+      subtitleChunkRequestNumber
+    ) {
+      return null;
+    }
+
+    if (
+      !response.ok ||
+      !data?.success ||
+      !Array.isArray(
+        data.chunks
+      )
+    ) {
+      throw new Error(
+        data?.error ||
+          "Altyazı parçaları alınamadı."
+      );
+    }
+
+    const chunks =
+      data.chunks
+        .filter(
+          (chunk) =>
+            typeof chunk ===
+              "string" &&
+            chunk.trim() !== ""
+        )
+        .map(
+          (chunk) =>
+            cleanText(chunk)
+        );
+
+    return chunks.length > 0
+      ? chunks
+      : [sentence];
+  } finally {
+    clearTimeout(timeoutId);
+
+    if (
+      subtitleChunkAbortController ===
+      controller
+    ) {
+      subtitleChunkAbortController =
+        null;
+    }
+  }
+}
+
+async function requestSubtitleChunkTranslation(
+  text,
+  previousText,
+  signal
+) {
+  const response =
+    await fetch(
+      translationApiUrl,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+        body: JSON.stringify({
+          text,
+          previousText
+        }),
+
+        signal
+      }
+    );
+
+  const data =
+    await response.json();
+
+  if (
+    !response.ok ||
+    !data?.success ||
+    typeof data.translation !==
+      "string"
+  ) {
+    throw new Error(
+      data?.error ||
+        "Parça çevirisi alınamadı."
+    );
+  }
+
+  return cleanText(
+    data.translation
+  );
+}
+
+async function loadSubtitleChunkTranslations(
+  sentence
+) {
+  if (
+    subtitleTranslationAbortController
+  ) {
+    subtitleTranslationAbortController
+      .abort();
+
+    subtitleTranslationAbortController =
+      null;
+  }
+
+  const requestNumber =
+    ++subtitleTranslationRequestNumber;
+
+  if (
+    !isChunkTranslationVisible ||
+    currentSubtitleChunks.length === 0
+  ) {
+    return;
+  }
+
+  const controller =
+    new AbortController();
+
+  subtitleTranslationAbortController =
+    controller;
+
+  const timeoutId =
+    setTimeout(() => {
+      controller.abort();
+    }, translationTimeoutMs);
+
+  const chunks =
+    [...currentSubtitleChunks];
+
+  currentSubtitleChunkTranslations =
+    new Array(
+      chunks.length
+    ).fill("");
+
+  renderChunkedSubtitle();
+
+  try {
+    let previousText = "";
+
+    for (
+      let index = 0;
+      index < chunks.length;
+      index += 1
+    ) {
+      const translation =
+        await requestSubtitleChunkTranslation(
+          chunks[index],
+          previousText,
+          controller.signal
+        );
+
+      if (
+        requestNumber !==
+          subtitleTranslationRequestNumber ||
+        !isChunkTranslationVisible ||
+        completedBox.textContent !==
+          sentence
+      ) {
+        return;
+      }
+
+      currentSubtitleChunkTranslations[
+        index
+      ] = translation;
+
+      previousText =
+        chunks[index];
+
+      renderChunkedSubtitle();
+    }
+  } catch (error) {
+    if (
+      requestNumber !==
+        subtitleTranslationRequestNumber ||
+      error.name ===
+        "AbortError"
+    ) {
+      return;
+    }
+
+    console.error(
+      "PauseSpeak parça çevirisi hatası:",
+      error
+    );
+  } finally {
+    clearTimeout(timeoutId);
+
+    if (
+      subtitleTranslationAbortController ===
+      controller
+    ) {
+      subtitleTranslationAbortController =
+        null;
+    }
+  }
+}
+
+async function loadStudySegments(
+  sentence
+) {
+    void loadSentenceStudyAnalysis(
+    sentence
+  );
+  if (subtitleChunkAbortController) {
+    subtitleChunkAbortController.abort();
+
+    subtitleChunkAbortController =
+      null;
+  }
+
+  const requestNumber =
+    ++subtitleChunkRequestNumber;
+
+  currentSubtitleChunks =
+    [sentence];
+
+  currentSubtitleChunkTranslations =
+    [];
+
+  renderChunkedSubtitle();
+
+  try {
+    const chunks =
+      await requestSubtitleChunks(
+        sentence,
+        requestNumber
+      );
+
+    if (
+      !chunks ||
+      requestNumber !==
+        subtitleChunkRequestNumber ||
+      completedBox.textContent !==
+        sentence
+    ) {
+      return;
+    }
+
+    currentSubtitleChunks =
+      chunks;
+
+    currentSubtitleChunkTranslations =
+      [];
+
+    renderChunkedSubtitle();
+
+    if (
+      isChunkTranslationVisible
+    ) {
+      void loadSubtitleChunkTranslations(
+        sentence
+      );
+    }
+  } catch (error) {
+    if (
+      requestNumber !==
+        subtitleChunkRequestNumber
+    ) {
+      return;
+    }
+
+    currentSubtitleChunks =
+      [sentence];
+
+    currentSubtitleChunkTranslations =
+      [];
+
+    renderChunkedSubtitle();
+
+    if (
+      isChunkTranslationVisible
+    ) {
+      void loadSubtitleChunkTranslations(
+        sentence
+      );
+    }
 
     if (
       error.name ===
@@ -2259,7 +2961,7 @@ async function loadStudySegments(
     }
 
     console.error(
-      "PauseSpeak kelime analizi hatası:",
+      "PauseSpeak altyazı parçalama hatası:",
       error
     );
   }
@@ -3638,57 +4340,48 @@ automaticPauseToggleButton.addEventListener(
 chunkPracticeButton.addEventListener(
   "click",
   () => {
-        if (
-      pronunciationChunks.length > 0 &&
-      (
-        pronunciationMode === "chunk" ||
-        pronunciationMode ===
-          "final-sentence"
-      )
-    ) {
-      stopSpeechRecognition();
+    isChunkTranslationVisible =
+      !isChunkTranslationVisible;
 
-      pronunciationChunkSuccessCount = 0;
-      recognizedSpeechText = "";
+    chunkPracticeButton.textContent =
+      isChunkTranslationVisible
+        ? "Parça Çevirisi: Açık"
+        : "Parça Çevirisi: Kapalı";
+
+    if (
+      completedStartTimeMs === null ||
+      completedBox.textContent ===
+        "Henüz tamamlanan cümle yok."
+    ) {
+      return;
+    }
+
+    if (
+      !isChunkTranslationVisible
+    ) {
+      subtitleTranslationRequestNumber +=
+        1;
 
       if (
-        pronunciationMode ===
-        "final-sentence"
+        subtitleTranslationAbortController
       ) {
-        pronunciationMode = "chunk";
-        pronunciationChunkIndex = 0;
-      } else {
-        pronunciationChunkIndex =
-          (
-            pronunciationChunkIndex + 1
-          ) %
-          pronunciationChunks.length;
+        subtitleTranslationAbortController
+          .abort();
+
+        subtitleTranslationAbortController =
+          null;
       }
 
-      updateChunkDisplay();
+      renderChunkedSubtitle();
 
-if (isPronunciationEnabled) {
-  scheduleAutomaticSpeechStart();
-}
-
-return;
+      return;
     }
-    const sentence =
-      completedBox.textContent;
 
- if (
-  completedStartTimeMs === null
-) {
-  chunkPracticeButton.disabled =
-    true;
+    renderChunkedSubtitle();
 
-  return;
-}
-
-   void startChunkPractice(
-  isPronunciationEnabled
-);
-
+    void loadSubtitleChunkTranslations(
+      completedBox.textContent
+    );
   }
 );
   function finishSentence(video) {
@@ -3778,7 +4471,8 @@ if (
           currentTime - 3
         ) * 1000;
     }
-
+chunkPracticeButton.disabled =
+  false;
     replayButton.disabled =
       false;
 
@@ -3856,58 +4550,100 @@ if (
 }
   }
 
-  function updateVideoStatus() {
-    const video =
-      getNetflixVideo();
+function updateVideoStatus() {
+  const video =
+    getNetflixVideo();
 
-    const videoFound =
-      Boolean(video);
+  const isNetflixWatchPage =
+    /^\/watch(?:\/|$)/.test(
+      window.location.pathname
+    );
 
-    if (
-      videoFound ===
-      lastVideoFound
-    ) {
-      return;
-    }
+  if (!isNetflixWatchPage) {
+    panel.style.display =
+      "none";
 
-    lastVideoFound =
-      videoFound;
+    controlsPanel.style.display =
+      "none";
 
-    if (videoFound) {
-      status.textContent =
-        "✅ Video bulundu";
+    controlsToggleButton.style.display =
+      "none";
 
-      pauseButton.disabled =
-        false;
+    lastVideoFound = null;
 
-      playButton.disabled =
-        false;
-
-      replayButton.disabled =
-        completedStartTimeMs ===
-        null;
-
-      speakButton.disabled =
-        completedStartTimeMs ===
-          null ||
-        !SpeechRecognitionClass;
-    } else {
-      status.textContent =
-        "⏳ Video aranıyor...";
-
-      pauseButton.disabled =
-        true;
-
-      playButton.disabled =
-        true;
-
-      replayButton.disabled =
-        true;
-
-      speakButton.disabled =
-        true;
-    }
+    return;
   }
+
+  panel.style.display =
+    "block";
+
+  const isSmallScreen =
+    window.innerWidth < 1200;
+
+  if (isSmallScreen) {
+    controlsToggleButton.style.display =
+      "block";
+
+    controlsPanel.style.display =
+      areRemoteControlsVisible
+        ? "flex"
+        : "none";
+  } else {
+    controlsToggleButton.style.display =
+      "none";
+
+    controlsPanel.style.display =
+      "flex";
+  }
+
+  const videoFound =
+    Boolean(video);
+
+  if (
+    videoFound ===
+    lastVideoFound
+  ) {
+    return;
+  }
+
+  lastVideoFound =
+    videoFound;
+
+  if (videoFound) {
+    status.textContent =
+      "✅ Video bulundu";
+
+    pauseButton.disabled =
+      false;
+
+    playButton.disabled =
+      false;
+
+    replayButton.disabled =
+      completedStartTimeMs ===
+      null;
+
+    speakButton.disabled =
+      completedStartTimeMs ===
+        null ||
+      !SpeechRecognitionClass;
+  } else {
+    status.textContent =
+      "⏳ Video aranıyor...";
+
+    pauseButton.disabled =
+      true;
+
+    playButton.disabled =
+      true;
+
+    replayButton.disabled =
+      true;
+
+    speakButton.disabled =
+      true;
+  }
+}
 
 function updateSubtitle() {
   const video =
@@ -3920,12 +4656,8 @@ function updateSubtitle() {
       )
     );
 
-  panel.style.backgroundColor =
-    video?.paused &&
-    hasStudyMeaning
-      ? "#000000"
-      : "rgba(0, 0, 0, 0.38)";
-
+panel.style.backgroundColor =
+  "#000000";
   const newSubtitle =
   removeSubtitleDescriptions(
     getNetflixSubtitle()

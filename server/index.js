@@ -423,8 +423,12 @@ function parseStudyMeaning(
   };
 }
 function parseStudySegments(
-  outputText
+  outputText,
+  analysisMode
 ) {
+  const isContextExpressionMode =
+    analysisMode ===
+    "context-expression-v1";
   const cleanedOutput =
     String(outputText || "")
       .trim()
@@ -514,15 +518,84 @@ function parseStudySegments(
           );
         }
 
-        return {
-          text: cleanText(
-            segment.text
-          ),
-          type: segment.type
-        };
+const cleanedSegment = {
+  text: cleanText(
+    segment.text
+  ),
+
+  type: segment.type
+};
+
+if (!isContextExpressionMode) {
+  return cleanedSegment;
+}
+
+const meanings =
+  Array.isArray(segment.meanings)
+    ? segment.meanings
+        .filter(
+          (meaning) =>
+            typeof meaning ===
+              "string" &&
+            meaning.trim() !== ""
+        )
+        .slice(0, 5)
+        .map(
+          (meaning) =>
+            cleanText(meaning)
+        )
+    : [];
+
+return {
+  ...cleanedSegment,
+
+  meanings,
+
+  pronunciation:
+    typeof segment.pronunciation ===
+      "string"
+      ? cleanText(
+          segment.pronunciation
+        )
+      : "",
+
+  expansion:
+    typeof segment.expansion ===
+      "string"
+      ? cleanText(
+          segment.expansion
+        )
+      : "",
+
+  note:
+    typeof segment.note ===
+      "string"
+      ? cleanText(
+          segment.note
+        )
+      : ""
+};
       }
     );
-
+if (
+  isContextExpressionMode &&
+  segments.some(
+    (segment) =>
+      segment.type !==
+        "punctuation" &&
+      (
+        !Array.isArray(
+          segment.meanings
+        ) ||
+        segment.meanings.length === 0 ||
+        !segment.pronunciation
+      )
+  )
+) {
+  throw new Error(
+    "Personal kelime analizi eksik anlam veya okunuş içeriyor."
+  );
+}
   return {
     segments
   };
@@ -829,8 +902,12 @@ async function generateStudyMeaning(
   openAI,
   selectedText,
   sentence,
-  segmentType
+  segmentType,
+  analysisMode
 ) {
+  const isContextExpressionMode =
+  analysisMode ===
+  "context-expression-v1";
   const openAIResponse =
     await openAI.responses.create({
       model: openAIModel,
@@ -917,8 +994,50 @@ async function generateStudyMeaning(
         "pronunciation alanına anlam,",
         "çeviri veya açıklama yazma.",
 
-        "text alanında seçilen İngilizce",
-        "metni değiştirmeden koru.",
+ ...(isContextExpressionMode
+  ? [
+      "text alanında yalnızca seçilen",
+      "kelimeyi vermek zorunda değilsin.",
+
+      "Seçilen kelime cümlede bir deyim,",
+      "phrasal verb, kalıplaşmış ifade,",
+      "verb pattern, collocation, edatlı",
+      "yapı veya doğal konuşma kalıbının",
+      "parçasıysa text alanında cümlede",
+      "geçen bütün ifadeyi göster.",
+
+      "Kullanıcı kalıbın hangi kelimesini",
+      "seçmiş olursa olsun aynı bütün",
+      "ifadeyi belirle.",
+
+      "Örneğin cut veya off seçilmişse",
+      "ve cümlede cut me off geçiyorsa",
+      "text alanı cut me off olmalıdır.",
+
+      "Give, up veya on seçilmişse ve",
+      "cümlede give up on yourself",
+      "geçiyorsa bütün yapıyı göster.",
+
+      "Look, forward veya to seçilmişse",
+      "look forward to yapısını bölme.",
+
+      "Seçim önceliği sırasıyla deyim,",
+      "phrasal verb, kalıplaşmış ifade,",
+      "verb pattern, collocation, anlamlı",
+      "clause grubu ve tek kelimedir.",
+
+      "En uzun ifadeyi otomatik seçme.",
+      "Cümlede özel ve bütüncül anlam",
+      "taşıyan en doğru ifadeyi seç.",
+
+      "Cümlede bulunmayan kelime veya",
+      "kalıp ekleme. text alanındaki ifade",
+      "tam cümlede gerçekten bulunmalıdır."
+    ]
+  : [
+      "text alanında seçilen İngilizce",
+      "metni değiştirmeden koru."
+    ]),
 
         "Yalnızca geçerli bir JSON",
         "nesnesi döndür.",
@@ -948,8 +1067,12 @@ async function generateStudyMeaning(
 }
 async function generateStudySegments(
   openAI,
-  sentence
+  sentence,
+  analysisMode
 ) {
+  const isContextExpressionMode =
+    analysisMode ===
+    "context-expression-v1";
   const openAIResponse =
     await openAI.responses.create({
       model: openAIModel,
@@ -997,6 +1120,40 @@ async function generateStudySegments(
         "ifadeyi tercih et fakat tüm",
         "cümleyi gereksiz yere tek",
         "segment yapma.",
+        ...(isContextExpressionMode
+  ? [
+      "Personal modunda kullanıcı",
+      "ifadenin hangi kelimesine",
+      "tıklarsa tıklasın aynı bütün",
+      "segment belirlenebilmelidir.",
+
+      "Bir kelime birden fazla yapının",
+      "parçası olabiliyorsa seçim",
+      "önceliği sırasıyla idiom,",
+      "phrasal-verb, fixed-expression,",
+      "verb-pattern, collocation,",
+      "natural-expression ve word",
+      "olmalıdır.",
+
+      "En uzun segmenti otomatik",
+      "olarak seçme. Bağlamda özel",
+      "ve bütüncül anlam taşıyan en",
+      "doğru yapıyı seç.",
+
+      "Ayrılabilen phrasal verblerde",
+      "arada nesne veya zamir varsa",
+      "onu yapının içinde tut.",
+
+      "Örneğin cut me off tek segment,",
+      "give up on yourself tek segment",
+      "ve look forward to tek segment",
+      "olmalıdır.",
+
+      "İfadenin parçası olmayan özne,",
+      "zarf veya komşu kelimeleri",
+      "gereksiz yere segmente katma."
+    ]
+  : []),
 "Zorunlu tamamlayıcısı olan",
 "konuşma kalıplarını eksik",
 "bırakma.",
@@ -1021,7 +1178,44 @@ async function generateStudySegments(
         "Her segment özgün cümledeki",
         "metni ve noktalamasını",
         "korumalıdır.",
+...(isContextExpressionMode
+  ? [
+      "Personal modunda punctuation",
+      "dışındaki her segment için",
+      "meanings, pronunciation,",
+      "expansion ve note alanlarını",
+      "da doldur.",
 
+      "meanings dizisinin ilk öğesi",
+      "segmentin bu cümledeki en doğal",
+      "Türkçe karşılığı olmalıdır.",
+
+      "Bağlamla ilgisiz anlamları",
+      "sıralama ve en fazla beş kısa",
+      "Türkçe anlam ver.",
+
+      "Phrasal verb, deyim, collocation,",
+      "verb pattern veya sabit ifade",
+      "ise kelimeleri ayrı ayrı değil,",
+      "bütün ifadenin anlamını ver.",
+
+      "pronunciation alanında İngilizce",
+      "kelime veya ifadenin Türkçe",
+      "harflerle yaklaşık okunuşunu ver.",
+
+      "Contraction değilse expansion",
+      "alanını boş bırak.",
+
+      "note alanında yalnızca kısa ve",
+      "öğretici bir bağlam veya kullanım",
+      "açıklaması ver. Gerekli değilse",
+      "boş bırak.",
+
+      "Punctuation segmentlerinde",
+      "meanings boş dizi; pronunciation,",
+      "expansion ve note boş metin olsun."
+    ]
+  : []),
         "Hiçbir kelimeyi veya",
         "noktalama işaretini silme,",
         "ekleme, düzeltme ya da",
@@ -1044,15 +1238,25 @@ async function generateStudySegments(
 
         "Şu biçimde yanıt ver:",
 
-        '{"segments":[{"text":"I","type":"word"},{"text":"need to","type":"verb-pattern"},{"text":"find out","type":"phrasal-verb"}]}'
+        ...(isContextExpressionMode
+  ? [
+      '{"segments":[{"text":"I","type":"word","meanings":["ben"],"pronunciation":"ay","expansion":"","note":""},{"text":"need to","type":"verb-pattern","meanings":["-mek zorunda olmak"],"pronunciation":"niid tu","expansion":"","note":"Gereklilik bildirir."},{"text":"find out","type":"phrasal-verb","meanings":["öğrenmek"],"pronunciation":"faynd aut","expansion":"","note":"Bütün yapı birlikte anlam taşır."}]}'
+    ]
+  : [
+      '{"segments":[{"text":"I","type":"word"},{"text":"need to","type":"verb-pattern"},{"text":"find out","type":"phrasal-verb"}]}'
+    ]),
       ].join("\n"),
 
-      max_output_tokens: 700
+     max_output_tokens:
+  isContextExpressionMode
+    ? 2200
+    : 700
     });
 
-  return parseStudySegments(
-    openAIResponse.output_text
-  );
+return parseStudySegments(
+  openAIResponse.output_text,
+  analysisMode
+);
 }
 app.get(
   "/health",
@@ -1229,7 +1433,8 @@ app.post(
 
     const segmentType =
       request.body?.segmentType;
-
+const analysisMode =
+  request.body?.analysisMode;
     if (
       typeof selectedText !==
         "string" ||
@@ -1260,7 +1465,9 @@ app.post(
 
     const cleanedSegmentType =
       cleanText(segmentType);
-
+const usesContextExpressionMode =
+  analysisMode ===
+  "context-expression-v1";
     if (
       cleanedSelectedText.length >
         200 ||
@@ -1293,49 +1500,86 @@ app.post(
       ) {
         try {
           const candidate =
-            await generateStudyMeaning(
-              openAI,
-              cleanedSelectedText,
-              cleanedSentence,
-              cleanedSegmentType
-            );
+      await generateStudyMeaning(
+  openAI,
+  cleanedSelectedText,
+  cleanedSentence,
+  cleanedSegmentType,
+  analysisMode
+);
 if (
   cleanedSegmentType ===
   "contraction"
 ) {
   candidate.note = "";
 }
-          const normalizedCandidateText =
-            cleanText(
-              candidate.text
-            )
-              .replace(
-                /^[\s"'“”‘’.,!?;:—–-]+|[\s"'“”‘’.,!?;:—–-]+$/g,
-                ""
-              )
-              .toLowerCase();
+const normalizeMeaningText = (
+  value
+) =>
+  cleanText(value)
+    .replace(
+      /^[\s"'“”‘’.,!?;:—–-]+|[\s"'“”‘’.,!?;:—–-]+$/g,
+      ""
+    )
+    .replace(/[’‘`]/g, "'")
+    .replace(
+      /[“”.,!?;:—–()[\]{}]/g,
+      " "
+    )
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 
-          const normalizedSelectedText =
-            cleanedSelectedText
-              .replace(
-                /^[\s"'“”‘’.,!?;:—–-]+|[\s"'“”‘’.,!?;:—–-]+$/g,
-                ""
-              )
-              .toLowerCase();
+const normalizedCandidateText =
+  normalizeMeaningText(
+    candidate.text
+  );
 
-          if (
-            normalizedCandidateText ===
-              normalizedSelectedText &&
-            candidate.meanings.length >
-              0
-          ) {
-            candidate.text =
-              cleanedSelectedText;
+const normalizedSelectedText =
+  normalizeMeaningText(
+    cleanedSelectedText
+  );
 
-            meaning = candidate;
+const normalizedSentence =
+  normalizeMeaningText(
+    cleanedSentence
+  );
 
-            break;
-          }
+const candidateExistsInSentence =
+  ` ${normalizedSentence} `.includes(
+    ` ${normalizedCandidateText} `
+  );
+
+const candidateContainsSelected =
+  ` ${normalizedCandidateText} `.includes(
+    ` ${normalizedSelectedText} `
+  );
+
+const candidateIsValid =
+  usesContextExpressionMode
+    ? (
+        candidateExistsInSentence &&
+        candidateContainsSelected
+      )
+    : (
+        normalizedCandidateText ===
+        normalizedSelectedText
+      );
+
+if (
+  normalizedCandidateText &&
+  candidateIsValid &&
+  candidate.meanings.length > 0
+) {
+  candidate.text =
+    usesContextExpressionMode
+      ? cleanText(candidate.text)
+      : cleanedSelectedText;
+
+  meaning = candidate;
+
+  break;
+}
 
           console.warn(
             `PauseSpeak kelime anlamı ` +
@@ -1537,7 +1781,8 @@ app.post(
   async (request, response) => {
     const text =
       request.body?.text;
-
+const analysisMode =
+  request.body?.analysisMode;
     if (
       typeof text !== "string" ||
       text.trim() === ""
@@ -1555,6 +1800,9 @@ app.post(
 
     const cleanedText =
       cleanText(text);
+      const usesContextExpressionMode =
+  analysisMode ===
+  "context-expression-v1";
 
     if (
       cleanedText.length > 1000
@@ -1582,11 +1830,12 @@ app.post(
         attempt += 1
       ) {
         try {
-          const candidate =
-            await generateStudySegments(
-              openAI,
-              cleanedText
-            );
+     const candidate =
+  await generateStudySegments(
+    openAI,
+    cleanedText,
+    analysisMode
+  );
 
           if (
             validateStudySegments(
