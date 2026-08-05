@@ -63,19 +63,36 @@ const isNextWordKey =
           ) % studyButtons.length;
       }
 
-      const selectedButton =
-        studyButtons[
-          remoteStudyButtonIndex
-        ];
+    const selectedButton =
+  studyButtons[
+    remoteStudyButtonIndex
+  ];
 
-      selectedButton.click();
+studyButtons.forEach((button) => {
+  button.style.outline = "none";
+  button.style.outlineOffset = "0";
+  button.style.borderRadius = "0";
+});
 
-      selectedButton.scrollIntoView({
-        block: "nearest",
-        inline: "nearest"
-      });
+selectedButton.click();
 
-      return;
+Object.assign(
+  selectedButton.style,
+  {
+    outline: "3px solid #facc15",
+    outlineOffset: "3px",
+    borderRadius: "4px",
+    backgroundColor:
+      "rgba(250, 204, 21, 0.22)"
+  }
+);
+
+selectedButton.scrollIntoView({
+  block: "nearest",
+  inline: "nearest"
+});
+
+return;
     }
 
     if (event.key === "Enter") {
@@ -936,7 +953,7 @@ function stopTranslationSpeech() {
     translationSpeechAudio = null;
   }
 
-  if (translationSpeechObjectUrl) {
+   if (translationSpeechObjectUrl) {
     URL.revokeObjectURL(
       translationSpeechObjectUrl
     );
@@ -1894,23 +1911,31 @@ void loadStudyMeaning(
   completedBox.textContent,
   studyType
 );
-        subtitleBox
-          .querySelectorAll(
-            "button[data-study-text]"
-          )
-          .forEach((button) => {
-            button.style.borderColor =
-              "rgba(255, 255, 255, 0.42)";
+      remoteStudyButtonIndex =
+  buttonIndex;
 
-            button.style.backgroundColor =
-              "rgba(20, 20, 24, 0.58)";
-          });
+studyButtons.forEach((button) => {
+  Object.assign(
+    button.style,
+    {
+      outline: "none",
+      outlineOffset: "0",
+      borderRadius: "0",
+      backgroundColor: "transparent"
+    }
+  );
+});
 
-        segmentButton.style.borderColor =
-          "#ffffff";
-
-        segmentButton.style.backgroundColor =
-          "rgba(255, 255, 255, 0.16)";
+Object.assign(
+  segmentButton.style,
+  {
+    outline: "3px solid #facc15",
+    outlineOffset: "3px",
+    borderRadius: "4px",
+    backgroundColor:
+      "rgba(250, 204, 21, 0.22)"
+  }
+);
       }
     );
 
@@ -1920,11 +1945,16 @@ void loadStudyMeaning(
   }
 }
 
+
 function renderChunkedSubtitle() {
   subtitleBox.replaceChildren();
 
-  remoteStudyButtonIndex = -1;
+  translationBox.style.display =
+    isChunkTranslationVisible
+      ? "none"
+      : "block";
 
+  remoteStudyButtonIndex = -1;
   Object.assign(
     subtitleBox.style,
     {
@@ -2297,20 +2327,28 @@ function closeStudyMeaningWithoutPlaying(
   event.stopPropagation();
   event.stopImmediatePropagation();
 
-  meaningBox.remove();
+meaningBox.remove();
 
-  subtitleBox
-    .querySelectorAll(
-      "button[data-study-text]"
-    )
-    .forEach((button) => {
-      button.style.color =
-        "#ffffff";
+remoteStudyButtonIndex = -1;
 
-      button.style.textDecoration =
-        "none";
-    });
-
+subtitleBox
+  .querySelectorAll(
+    "button[data-study-text]"
+  )
+  .forEach((button) => {
+    Object.assign(
+      button.style,
+      {
+        color: "#ffffff",
+        textDecoration: "none",
+        outline: "none",
+        outlineOffset: "0",
+        borderRadius: "0",
+        backgroundColor:
+          "transparent"
+      }
+    );
+  });
   panel.style.backgroundColor =
     "rgba(0, 0, 0, 0.38)";
 
@@ -4755,14 +4793,16 @@ panel.style.backgroundColor =
     getNetflixSubtitle()
   );
 
-    if (
-      newSubtitle ===
-      currentSubtitle
-    ) {
-      return;
-    }
+  if (
+  newSubtitle ===
+  currentSubtitle
+) {
+  return;
+}
 
-    if (isReplayStarting) {
+stopTranslationSpeech();
+
+if (isReplayStarting) {
       currentSubtitle =
         newSubtitle;
 
