@@ -12,8 +12,13 @@ const port =
   process.env.PAUSESPEAK_ACCESS_KEY || "";
 
 const openAIModel =
-  process.env.OPENAI_MODEL ||
+  process.env.OPENAI_LUNA_MODEL ||
+  "gpt-5.6-luna";
+
+const openAITerraModel =
+  process.env.OPENAI_TERRA_MODEL ||
   "gpt-5.6-terra";
+
 const openAITtsModel =
   "gpt-4o-mini-tts";
 
@@ -1282,8 +1287,16 @@ app.post(
     const text =
       request.body?.text;
 
-    const previousText =
+        const previousText =
       request.body?.previousText;
+
+    const improve =
+      request.body?.improve === true;
+
+    const selectedModel =
+      improve
+        ? openAITerraModel
+        : openAIModel;
 
     if (
       typeof text !== "string" ||
@@ -1318,7 +1331,7 @@ app.post(
 
       const openAIResponse =
         await openAI.responses.create({
-          model: openAIModel,
+           model: selectedModel,
 
           reasoning: {
             effort: "none"
@@ -1385,17 +1398,17 @@ app.post(
         );
       }
 
-      return response.json({
-        success: true,
+return response.json({
+  success: true,
 
-        translation,
+  translation,
 
-        provider: "openai",
+  provider: "openai",
 
-        model: openAIModel,
+  model: selectedModel,
 
-        cached: false
-      });
+  cached: false
+});
     } catch (error) {
       console.error(
         "PauseSpeak çeviri hatası:",
