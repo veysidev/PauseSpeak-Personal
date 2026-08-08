@@ -19,6 +19,10 @@ const openAITerraModel =
   process.env.OPENAI_TERRA_MODEL ||
   "gpt-5.6-terra";
 
+const openAIChunkModel =
+  process.env.OPENAI_CHUNK_MODEL ||
+  "gpt-5-nano";
+
 const openAITtsModel =
   "gpt-4o-mini-tts";
 
@@ -763,10 +767,10 @@ async function generateSmartChunkDecision(
 ) {
   const openAIResponse =
     await openAI.responses.create({
-      model: openAIModel,
+      model: openAIChunkModel,
 
       reasoning: {
-        effort: "none"
+     effort: "medium"
       },
 
       instructions: [
@@ -877,31 +881,58 @@ async function generateSmartChunkDecision(
         "birleştirildiğinde orijinal",
         "cümle aynen oluşmalıdır.",
 
-        "Yalnızca geçerli bir JSON",
-        "nesnesi döndür.",
+    "Yalnızca geçerli bir JSON",
+    "nesnesi döndür.",
 
-        "Açıklama, analiz, başlık,",
-        "Markdown veya kod bloğu",
-        "ekleme."
-      ].join(" "),
+    "Açıklama, analiz, başlık,",
+    "Markdown veya kod bloğu",
+    "ekleme."
+  ].join(" "),
 
-      input: [
-        `Cümle: ${sentence}`,
+  input: [
+    `Cümle: ${sentence}`,
 
-        "Yalnızca şu iki biçimden",
-        "birini döndür:",
+    "Yalnızca şu iki biçimden",
+    "birini döndür:",
 
-        '{"suitable":true,"chunks":["birinci parça","ikinci parça"]}',
+    '{"suitable":true,"chunks":["birinci parça","ikinci parça"]}',
 
-        '{"suitable":false,"chunks":[]}'
-      ].join("\n"),
+    '{"suitable":false,"chunks":[]}'
+  ].join("\n"),
 
-      max_output_tokens: 350
-    });
+  text: {
+    format: {
+      type: "json_schema",
+      name: "chunk_decision",
+      strict: true,
+      schema: {
+        type: "object",
+        properties: {
+          suitable: {
+            type: "boolean"
+          },
+          chunks: {
+            type: "array",
+            items: {
+              type: "string"
+            }
+          }
+        },
+        required: [
+          "suitable",
+          "chunks"
+        ],
+        additionalProperties: false
+      }
+    }
+  },
 
-  return parseChunkDecision(
-    openAIResponse.output_text
-  );
+  max_output_tokens: 4096
+});
+
+return parseChunkDecision(
+  openAIResponse.output_text
+);
 }
 async function generateStudyMeaning(
   openAI,
@@ -2032,18 +2063,18 @@ app.post(
       }
 
       return response.json({
-        success: true,
+    success: true,
 
-        suitable:
-          decision.suitable,
+    suitable:
+      decision.suitable,
 
-        chunks:
-          decision.chunks,
+    chunks:
+      decision.chunks,
 
-        provider: "openai",
+    provider: "openai",
 
-        model: openAIModel
-      });
+    model: openAIChunkModel
+  });
     } catch (error) {
       console.error(
         "PauseSpeak chunk hatası:",
