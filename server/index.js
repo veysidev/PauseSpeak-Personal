@@ -21,7 +21,7 @@ const openAITerraModel =
 
 const openAIChunkModel =
   process.env.OPENAI_CHUNK_MODEL ||
-  "gpt-5-nano";
+  "gpt-5.6-terra";
 
 const openAITtsModel =
   "gpt-4o-mini-tts";
@@ -768,10 +768,9 @@ async function generateSmartChunkDecision(
   const openAIResponse =
     await openAI.responses.create({
       model: openAIChunkModel,
-
-      reasoning: {
-     effort: "medium"
-      },
+reasoning: {
+  effort: "medium"
+},
 
       instructions: [
         "Sen İngilizce telaffuz ve",
@@ -792,40 +791,177 @@ async function generateSmartChunkDecision(
         "Doğal ve öğrenmeye değer",
         "bir ayrım yoksa zorla bölme.",
 
-        "Phrasal verbler, deyimler,",
-        "doğal konuşma kalıpları,",
-        "B1 ve üzeri gramer yapıları,",
-        "vurgu yapıları, şart",
-        "cümleleri, duygusal ifadeler,",
-        "clause yapıları, relative",
-        "clauses, nominal clauses,",
-        "reduced clauses, collocations,",
-        "verb patterns ve akademik",
-        "veya soyut yapılar öğrenmeye",
-        "değer kabul edilir.",
+   "Phrasal verbler, deyimler,",
+"doğal konuşma kalıpları,",
+"B1 ve üzeri gramer yapıları,",
+"vurgu yapıları, şart",
+"cümleleri, duygusal ifadeler,",
+"clause yapıları, relative",
+"clauses, nominal clauses,",
+"reduced clauses, collocations,",
+"verb patterns ve akademik",
+"veya soyut yapılar öğrenmeye",
+"değer kabul edilir.",
 
-        "Tek kelimelik basit cevapları,",
-        "basit özne ve yardımcı fiil",
-        "yapılarını, sıradan A1-A2",
-        "cümlelerini, tek başına",
-        "anlamsız bağlaçları ve",
-        "anlamsız mikro parçaları",
-        "zorla chunk yapma.",
-        "Uh, um, erm, hmm, mm, ah,",
-"yeah, yes, no, okay, maybe",
-"ve well gibi tereddüt veya",
+"Uzun cümlelerde amaç cümleyi",
+"olabildiğince çok parçaya",
+"bölmek değil, İngilizce öğrenen",
+"kişinin tekrar edip hatırlayacağı",
+"doğal anlam ve gramer",
+"birimlerini ortaya çıkarmaktır.",
+
+"Cümlede iki veya daha fazla",
+"doğal ve öğrenmeye değer birim",
+"varsa suitable true tercih et.",
+
+"Bir chunk'ın mutlaka bağımsız",
+"tam cümle olması gerekmez.",
+"Doğal subordinate clause,",
+"participial phrase, discourse",
+"phrase, prepositional phrase",
+"ve verb phrase de öğrenilebilir",
+"bir chunk olabilir.",
+
+"Uzun bir chunk içinde iki veya",
+"daha fazla açık öğrenme birimi",
+"bulunuyorsa bunları doğal anlam",
+"sınırlarından ayırmayı tercih et.",
+
+"Bağımsız clause'ları ve yeni",
+"bir düşünce başlatan açık",
+"subject-verb yapılarını ayrı",
+"chunk yapmayı tercih et.",
+
+'"and", "but", "so" gibi',
+"bağlaçlardan sonra yeni bir",
+"özne ve yüklemle yeni düşünce",
+"başlıyorsa doğal bir chunk",
+"sınırı olabilir.",
+
+'"when", "while", "because", "if",',
+'"although", "even though" ve',
+"benzeri subordinate clause'lar",
+"tek başına doğal bir öğrenme",
+"birimi oluşturuyorsa ayrı",
+"chunk yapmayı tercih et.",
+
+"Tamamlanmış doğal bir ifadeden",
+"sonra gelen zaman clause'unu,",
+"özellikle ardından yeni bir",
+"subject-verb yapısı başlıyorsa",
+"önceki ifadeye gereksiz yere",
+"birleştirme.",
+
+"Bu durumda önceki doğal ifade,",
+"zaman clause'u ve ardından",
+"başlayan yeni clause ayrı",
+"öğrenme birimleri olabilir.",
+
+"Cümle başındaki doğal",
+"participial veya yön-konum",
+"ifadesi kendi başına anlamlı",
+"bir öğrenme birimiyse ayrı",
+"chunk olabilir.",
+
+"Konuşma dilinde öznesi tekrar",
+"edilmeden art arda söylenen",
+"farklı eylem aşamalarını sırf",
+"tam clause değiller diye reddetme.",
+
+"Her biri doğal bir verb phrase",
+"oluşturuyorsa bu ardışık",
+"eylemleri ayrı chunk yapabilirsin.",
+
+"Phrasal verb, collocation,",
+"idiom, verb pattern ve birlikte",
+"öğrenilmesi gereken sabit",
+"ifadelerin ortasına chunk",
+"sınırı koyma.",
+
+'"coming and going", "have a hard',
+'time with", "succumb to" gibi',
+"birlikte anlam oluşturan",
+"yapıları kendi içinde bölme.",
+
+"Relative clause'u nitelediği",
+"isimden kopararak anlamı",
+"zayıflatacak şekilde bölme.",
+
+"Bir isim ve onu tamamlayan",
+"relative clause birlikte doğal",
+"bir öğrenme birimi oluşturuyorsa",
+"aynı chunk içinde tut.",
+
+'"It is/was + adjective + that"',
+"gibi gramer kalıplarında",
+'"that" yapının doğal bir',
+"parçasıysa önceki kalıpla",
+"birlikte tut.",
+
+"Cümle sonunda ana düşünceden",
+"doğal olarak ayrılabilen",
+"öğrenilebilir açıklama, yer,",
+"yön veya işlev ifadelerini",
+"ayrı chunk yapabilirsin.",
+
+'"with + noun phrase" ve',
+'"as + noun phrase" gibi',
+"yapıları önceki ana yapı",
+"tamamlanmışsa ve kendi başına",
+"doğal bir öğrenme birimiyse",
+"ayrı chunk yapmayı tercih et.",
+
+"Tek kelimelik filler veya",
 "basit tepki sözlerini tek",
 "başına chunk yapma.",
 
-'"Um... yeah," gibi yalnızca',
-"dolgu ve basit tepki",
-"sözcüklerinden oluşan bir",
-"parça kesinlikle üretme.",
+"Ancak birden fazla discourse",
+"marker birlikte doğal bir kısa",
+"konuşma birimi oluşturuyorsa",
+"bunu otomatik olarak reddetme.",
 
-"Bu tür sözcükleri anlamlı",
-"devamıyla birlikte tut.",
-"Anlamlı bir devamla doğal",
-"şekilde birleştirilemiyorsa",
+'"Um... yeah," gibi kısa bir',
+"discourse grubu ardından ayrı",
+"ve anlamlı bir yapı geliyorsa",
+"ilk grup ayrı chunk olabilir.",
+
+'"Um... yeah, I guess we should',
+'head back." gibi bir girişte',
+'"Um... yeah," ve',
+'"I guess we should head back."',
+"iki doğal chunk olabilir.",
+
+'"you know" önceki düşüncenin',
+"sonunda parenthetical discourse",
+"marker olarak kullanılmışsa",
+"önceki ifadeyle birlikte tut.",
+
+'"you know" sonrasında yeni açık',
+"bir subject-verb yapısı",
+"başlıyorsa chunk sınırını",
+'"you know" sonrasına koy.',
+
+"Ancak yalnızca bir veya iki",
+"basit kelimeden oluşan ve",
+"öğrenme değeri olmayan",
+"anlamsız micro chunk üretme.",
+
+"Kaynak altyazı konuşma diline",
+"özgü eksiltili veya düzensiz",
+"olduğu için tek başına",
+"suitable false döndürme.",
+
+"Kelime eklemeden, silmeden,",
+"düzeltmeden veya yeniden",
+"sıralamadan doğal öğrenme",
+"birimleri çıkarılabiliyorsa",
+"suitable true kullan.",
+
+"Yalnızca kaynak metin belirgin",
+"biçimde bozuksa ve mevcut",
+"kelimeleri aynen koruyarak",
+"güvenilir en az iki doğal",
+"chunk üretilemiyorsa",
 "suitable false döndür.",
 "Tek bir basit A1-A2 cümlesini",
 "sırf kısa olduğu için bölme.",
@@ -859,14 +995,32 @@ async function generateSmartChunkDecision(
         "Uygun değilse suitable false",
         "ve boş chunks dizisi döndür.",
 
-        "Fiil ile nesnesini bölme.",
-        "Phrasal verb bölme.",
-        "Deyim bölme.",
-        "Collocation bölme.",
-        "Verb pattern bölme.",
+      "Fiil ile nesnesini bölme.",
+"Phrasal verb bölme.",
+"Deyim bölme.",
+"Collocation bölme.",
+"Verb pattern bölme.",
 
-        "Edatlı yapıları anlamı",
-        "bozacak şekilde ayırma.",
+"Edatlı yapıları anlamı",
+"bozacak şekilde ayırma.",
+
+"Cümle sonunda ana yapıdan",
+"doğal olarak ayrılabilen ve",
+"tek başına öğrenilebilir bir",
+"açıklama veya işlev bildiren",
+'"as + noun phrase" yapıları',
+"ayrı bir chunk olabilir.",
+
+'"succumb to" gibi fiille',
+"birlikte anlam oluşturan",
+"edatlı yapıları ise bölme.",
+
+'Örneğin "all four had succumbed',
+'to stab wounds as a likely',
+'cause of death." ifadesini',
+'"all four had succumbed to stab wounds"',
+'ve "as a likely cause of death."',
+"olarak ayır.",
 
         "Zamir ile yüklemi doğal",
         "olmayan şekilde ayırma.",
@@ -1035,27 +1189,44 @@ async function generateStudyMeaning(
       "text alanında yalnızca seçilen",
       "kelimeyi vermek zorunda değilsin.",
 
-      "Seçilen kelime cümlede bir deyim,",
-      "phrasal verb, kalıplaşmış ifade,",
-      "verb pattern, collocation, edatlı",
-      "yapı veya doğal konuşma kalıbının",
-      "parçasıysa text alanında cümlede",
-      "geçen bütün ifadeyi göster.",
+   "Seçilen kelime cümlede bir deyim,",
+"phrasal verb, kalıplaşmış ifade,",
+"verb pattern, collocation, edatlı",
+"yapı veya doğal konuşma kalıbının",
+"parçasıysa text alanında cümlede",
+"geçen bütün ifadeyi göster.",
 
-      "Kullanıcı kalıbın hangi kelimesini",
-      "seçmiş olursa olsun aynı bütün",
-      "ifadeyi belirle.",
+"Böyle bir bütün ifade tespit",
+"edilmişse text alanında yalnızca",
+"seçilen tek kelimeyi döndürme.",
 
-      "Örneğin cut veya off seçilmişse",
-      "ve cümlede cut me off geçiyorsa",
-      "text alanı cut me off olmalıdır.",
+"Daha geniş doğal ifadeyi yalnızca",
+"note alanında açıklayıp text",
+"alanını tek kelime bırakma.",
 
-      "Give, up veya on seçilmişse ve",
-      "cümlede give up on yourself",
-      "geçiyorsa bütün yapıyı göster.",
+"Note alanında daha geniş bir",
+"kalıptan söz ediyorsan text alanı",
+"da o kalıbın cümlede geçen gerçek",
+"biçimi olmalıdır.",
 
-      "Look, forward veya to seçilmişse",
-      "look forward to yapısını bölme.",
+"Kullanıcı kalıbın hangi kelimesini",
+"seçmiş olursa olsun aynı bütün",
+"ifadeyi belirle.",
+
+'Örneğin "She probably didn\'t make',
+'a peep." cümlesinde peep seçilirse',
+'text alanı "make a peep" olmalıdır.',
+
+"Örneğin cut veya off seçilmişse",
+"ve cümlede cut me off geçiyorsa",
+"text alanı cut me off olmalıdır.",
+
+"Give, up veya on seçilmişse ve",
+"cümlede give up on yourself",
+"geçiyorsa bütün yapıyı göster.",
+
+"Look, forward veya to seçilmişse",
+"look forward to yapısını bölme.",
 
       "Seçim önceliği sırasıyla deyim,",
       "phrasal verb, kalıplaşmış ifade,",
@@ -1106,16 +1277,19 @@ async function generateStudySegments(
   sentence,
   analysisMode
 ) {
-  const isContextExpressionMode =
-    analysisMode ===
-    "context-expression-v1";
-  const openAIResponse =
-    await openAI.responses.create({
-      model: openAIModel,
+const isContextExpressionMode =
+  analysisMode ===
+  "context-expression-v1";
 
-      reasoning: {
-        effort: "none"
-      },
+const openAIResponse =
+  await openAI.responses.create({
+    model: isContextExpressionMode
+      ? openAITerraModel
+      : openAIModel,
+
+    reasoning: {
+      effort: "none"
+    },
 
       instructions: [
         "Sen İngilizce öğrenenler için",
@@ -1659,27 +1833,29 @@ if (
           });
       }
 
-      return response.json({
-        success: true,
+  return response.json({
+  success: true,
 
-        text: meaning.text,
+  text: meaning.text,
 
-        meanings:
-          meaning.meanings,
+  meanings:
+    meaning.meanings,
 
-              pronunciation:
-          meaning.pronunciation,
+  pronunciation:
+    meaning.pronunciation,
 
-        expansion:
-          meaning.expansion,
+  expansion:
+    meaning.expansion,
 
-        note:
-          meaning.note,
+  note:
+    meaning.note,
 
-        provider: "openai",
+  provider: "openai",
 
-        model: openAIModel
-      });
+  model: usesContextExpressionMode
+    ? openAITerraModel
+    : openAIModel
+});
     } catch (error) {
       console.error(
         "PauseSpeak kelime anlamı hatası:",
