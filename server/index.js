@@ -1492,8 +1492,17 @@ app.post(
     const text =
       request.body?.text;
 
-        const previousText =
+    const previousText =
       request.body?.previousText;
+
+    const fullText =
+      request.body?.fullText;
+
+    const translationMode =
+      request.body?.translationMode;
+
+    const isChunkTranslation =
+      translationMode === "chunk";
 
     const improve =
       request.body?.improve === true;
@@ -1526,9 +1535,20 @@ app.post(
         ? previousText.trim()
         : "";
 
+    const cleanedFullText =
+      isChunkTranslation &&
+      typeof fullText === "string" &&
+      fullText.trim() !== ""
+        ? fullText.trim()
+        : cleanedText;
+
     const contextText =
       cleanedPreviousText ||
-      "Önceki altyazı yok.";
+      (
+        isChunkTranslation
+          ? "Önceki parça yok."
+          : "Önceki altyazı yok."
+      );
 
     try {
       const openAI =
@@ -1547,8 +1567,29 @@ app.post(
             "İngilizce-Türkçe dizi ve",
             "film altyazı çevirmenisin.",
 
-            "Yalnızca mevcut İngilizce",
-            "cümleyi Türkçeye çevir.",
+            isChunkTranslation
+              ? "Yalnızca hedef İngilizce"
+              : "Yalnızca mevcut İngilizce",
+
+            isChunkTranslation
+              ? "parçayı Türkçeye çevir."
+              : "cümleyi Türkçeye çevir.",
+
+            isChunkTranslation
+              ? "Hedef parça tam bir cümle"
+              : "",
+
+            isChunkTranslation
+              ? "olmayabilir. Cümlenin tamamını"
+              : "",
+
+            isChunkTranslation
+              ? "anlam ve ton bağlamı olarak kullan;"
+              : "",
+
+            isChunkTranslation
+              ? "tam cümleyi yeniden çevirme."
+              : "",
 
             "Çeviri doğal, akıcı,",
             "güncel ve konuşma diline",
@@ -1571,8 +1612,13 @@ app.post(
             "çıkarma veya açıklama",
             "yapma.",
 
-            "Önceki altyazıyı yalnızca",
-            "bağlam olarak kullan;",
+            isChunkTranslation
+              ? "Önceki parçayı yalnızca"
+              : "Önceki altyazıyı yalnızca",
+
+            isChunkTranslation
+              ? "çeviri akışı için kullan;"
+              : "bağlam olarak kullan;",
 
             "onu yeniden çevirme.",
 
@@ -1580,14 +1626,34 @@ app.post(
             "çeviriyi ver.",
 
             "Başlık, tırnak, seçenek,",
-            "not veya ek bilgi ekleme."
-          ].join(" "),
+            "not veya ek bilgi ekleme.",
+
+            improve
+              ? "Çeviriyi özellikle doğallık,"
+              : "",
+
+            improve
+              ? "anlam doğruluğu ve bağlama"
+              : "",
+
+            improve
+              ? "uygunluk açısından yeniden değerlendir."
+              : ""
+          ].filter(Boolean).join(" "),
 
           input: [
-            `Önceki altyazı: ${contextText}`,
+            isChunkTranslation
+              ? `Önceki parça: ${contextText}`
+              : `Önceki altyazı: ${contextText}`,
 
-            `Mevcut cümle: ${cleanedText}`
-          ].join("\n"),
+            isChunkTranslation
+              ? `Cümlenin tamamı: ${cleanedFullText}`
+              : "",
+
+            isChunkTranslation
+              ? `Çevrilecek parça: ${cleanedText}`
+              : `Mevcut cümle: ${cleanedText}`
+          ].filter(Boolean).join("\n"),
 
           max_output_tokens: 150
         });

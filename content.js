@@ -170,6 +170,8 @@ const studyMeaningTimeoutMs = 20000;
     null;
 
   let translationRequestNumber = 0;
+  let translationAbortController = null;
+  let currentTranslationPreviousText = "";
   let translationSpeechRequestNumber = 0;
 let translationSpeechAbortController =
   null;
@@ -1129,15 +1131,32 @@ if (
     }
   }
 }
+function stopNormalTranslation() {
+  translationRequestNumber += 1;
+
+  if (translationAbortController) {
+    translationAbortController.abort();
+    translationAbortController = null;
+  }
+}
   async function translateSentence(
     text,
     previousText
   ) {
+    if (isChunkTranslationVisible) {
+      return;
+    }
+
+    stopNormalTranslation();
+
     const requestNumber =
-      ++translationRequestNumber;
+      translationRequestNumber;
 
     const controller =
       new AbortController();
+
+    translationAbortController =
+      controller;
 
     const timeoutId =
       setTimeout(() => {
@@ -1172,7 +1191,8 @@ if (
 
       if (
         requestNumber !==
-        translationRequestNumber
+          translationRequestNumber ||
+        isChunkTranslationVisible
       ) {
         return;
       }
@@ -1191,13 +1211,15 @@ if (
 
       translationBox.textContent =
         data.translation;
-        void speakTranslation(
-  data.translation
-);
+
+      void speakTranslation(
+        data.translation
+      );
     } catch (error) {
       if (
         requestNumber !==
-        translationRequestNumber
+          translationRequestNumber ||
+        isChunkTranslationVisible
       ) {
         return;
       }
@@ -1224,6 +1246,14 @@ if (
       );
     } finally {
       clearTimeout(timeoutId);
+
+      if (
+        translationAbortController ===
+        controller
+      ) {
+        translationAbortController =
+          null;
+      }
     }
   }
 async function improveCurrentTranslation() {
@@ -1242,8 +1272,21 @@ async function improveCurrentTranslation() {
 
   const previousText =
     cleanText(
-      previousCompletedSentence
+      currentTranslationPreviousText
     );
+
+  const isImprovingChunks =
+    isChunkTranslationVisible;
+
+  const chunks =
+    [...currentSubtitleChunks];
+
+  if (
+    isImprovingChunks &&
+    chunks.length === 0
+  ) {
+    return;
+  }
 
   improveTranslationButton.disabled =
     true;
@@ -1257,12 +1300,78 @@ async function improveCurrentTranslation() {
   const controller =
     new AbortController();
 
+  let requestNumber = null;
+
+  if (isImprovingChunks) {
+    if (
+      subtitleTranslationAbortController
+    ) {
+      subtitleTranslationAbortController
+        .abort();
+    }
+
+    requestNumber =
+      ++subtitleTranslationRequestNumber;
+
+    subtitleTranslationAbortController =
+      controller;
+  } else {
+    stopNormalTranslation();
+
+    requestNumber =
+      translationRequestNumber;
+
+    translationAbortController =
+      controller;
+  }
+
   const timeoutId =
     setTimeout(() => {
       controller.abort();
     }, translationTimeoutMs);
 
   try {
+    if (isImprovingChunks) {
+      let previousChunkText = "";
+
+      for (
+        let index = 0;
+        index < chunks.length;
+        index += 1
+      ) {
+        const translation =
+          await requestSubtitleChunkTranslation(
+            chunks[index],
+            previousChunkText,
+            text,
+            controller.signal,
+            true
+          );
+
+        if (
+          requestNumber !==
+            subtitleTranslationRequestNumber ||
+          !isChunkTranslationVisible ||
+          cleanText(
+            completedBox.textContent
+          ) !== text
+        ) {
+          return;
+        }
+
+        currentSubtitleChunkTranslations[
+          index
+        ] = translation;
+
+        previousChunkText =
+          chunks[index];
+
+        renderChunkedSubtitle();
+      }
+
+      return;
+    }
+
     const response =
       await fetch(
         translationApiUrl,
@@ -1301,6 +1410,9 @@ async function improveCurrentTranslation() {
     }
 
     if (
+      requestNumber !==
+        translationRequestNumber ||
+      isChunkTranslationVisible ||
       cleanText(
         completedBox.textContent
       ) !== text
@@ -1311,12 +1423,35 @@ async function improveCurrentTranslation() {
     translationBox.textContent =
       data.translation;
   } catch (error) {
-    console.error(
-      "PauseSpeak çeviri iyileştirme hatası:",
-      error
-    );
+    if (
+      error.name !==
+        "AbortError"
+    ) {
+      console.error(
+        "PauseSpeak çeviri iyileştirme hatası:",
+        error
+      );
+    }
   } finally {
     clearTimeout(timeoutId);
+
+    if (
+      isImprovingChunks &&
+      subtitleTranslationAbortController ===
+        controller
+    ) {
+      subtitleTranslationAbortController =
+        null;
+    }
+
+    if (
+      !isImprovingChunks &&
+      translationAbortController ===
+        controller
+    ) {
+      translationAbortController =
+        null;
+    }
 
     improveTranslationButton.textContent =
       previousButtonText;
@@ -3022,12 +3157,15 @@ async function requestSubtitleChunks(
 async function requestSubtitleChunkTranslation(
   text,
   previousText,
-  signal
+  fullText,
+  signal,
+  improve = false
 ) {
   const cacheKey =
     JSON.stringify([
       cleanText(text).toLowerCase(),
-      cleanText(previousText).toLowerCase()
+      cleanText(previousText).toLowerCase(),
+      cleanText(fullText).toLowerCase()
     ]);
 
   if (
@@ -3046,6 +3184,7 @@ async function requestSubtitleChunkTranslation(
       );
 
   if (
+    !improve &&
     typeof cachedTranslation ===
       "string" &&
     cachedTranslation !== ""
@@ -3066,7 +3205,10 @@ async function requestSubtitleChunkTranslation(
 
         body: JSON.stringify({
           text,
-          previousText
+          previousText,
+          fullText,
+          translationMode: "chunk",
+          improve
         }),
 
         signal
@@ -3175,6 +3317,7 @@ async function loadSubtitleChunkTranslations(
         await requestSubtitleChunkTranslation(
           chunks[index],
           previousText,
+          sentence,
           controller.signal
         );
 
@@ -3227,6 +3370,18 @@ async function loadSubtitleChunkTranslations(
 async function loadStudySegments(
   sentence
 ) {
+  subtitleTranslationRequestNumber += 1;
+
+  if (
+    subtitleTranslationAbortController
+  ) {
+    subtitleTranslationAbortController
+      .abort();
+
+    subtitleTranslationAbortController =
+      null;
+  }
+
   if (subtitleChunkAbortController) {
     subtitleChunkAbortController.abort();
 
@@ -4696,6 +4851,11 @@ chunkPracticeButton.addEventListener(
         ? "Parça Çevirisi: Açık"
         : "Parça Çevirisi: Kapalı";
 
+    if (isChunkTranslationVisible) {
+      stopNormalTranslation();
+      stopTranslationSpeech();
+    }
+
     if (
       completedStartTimeMs === null ||
       completedBox.textContent ===
@@ -4721,6 +4881,11 @@ chunkPracticeButton.addEventListener(
       }
 
       renderChunkedSubtitle();
+
+      void translateSentence(
+        completedBox.textContent,
+        currentTranslationPreviousText
+      );
 
       return;
     }
@@ -4793,20 +4958,29 @@ if (
   isReplayPlaybackActive =
     false;
 
-  void speakTranslation(
-    translationBox.textContent
-  );
+  if (!isChunkTranslationVisible) {
+    void speakTranslation(
+      translationBox.textContent
+    );
+  }
 } else {
       const previousText =
         previousCompletedSentence;
 
+      currentTranslationPreviousText =
+        previousText;
+
       previousCompletedSentence =
         fullSentence;
 
-      void translateSentence(
-        fullSentence,
-        previousText
-      );
+      if (isChunkTranslationVisible) {
+        stopNormalTranslation();
+      } else {
+        void translateSentence(
+          fullSentence,
+          previousText
+        );
+      }
     }
 
     const currentTime =
@@ -5222,14 +5396,21 @@ previousSentenceButton.addEventListener(
 
     resetPronunciationPractice();
 
+    currentTranslationPreviousText =
+      "";
+
     void loadStudySegments(
       completedBox.textContent
     );
 
-    void translateSentence(
-      completedBox.textContent,
-      ""
-    );
+    if (isChunkTranslationVisible) {
+      stopNormalTranslation();
+    } else {
+      void translateSentence(
+        completedBox.textContent,
+        currentTranslationPreviousText
+      );
+    }
 
     replayButton.click();
   }
