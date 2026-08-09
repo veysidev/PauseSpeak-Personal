@@ -408,6 +408,18 @@ chunkPracticeButton.disabled = true;
   usageTitle.textContent =
     "Günlük Kullanım";
 
+  const usageHeaderActions =
+    document.createElement("div");
+
+  const usageCounterButton =
+    document.createElement("button");
+
+  usageCounterButton.type = "button";
+  usageCounterButton.textContent =
+    "Yeni Sayaç Başlat";
+  usageCounterButton.title =
+    "Günlük toplamları silmeden yeni karşılaştırma sayacı başlat";
+
   const usageCloseButton =
     document.createElement("button");
 
@@ -422,8 +434,16 @@ chunkPracticeButton.disabled = true;
     usageTitle
   );
 
-  usageHeader.appendChild(
+  usageHeaderActions.appendChild(
+    usageCounterButton
+  );
+
+  usageHeaderActions.appendChild(
     usageCloseButton
+  );
+
+  usageHeader.appendChild(
+    usageHeaderActions
   );
 
   usagePanel.appendChild(
@@ -546,6 +566,32 @@ Object.assign(
   {
     fontSize: "22px",
     fontWeight: "700"
+  }
+);
+
+Object.assign(
+  usageHeaderActions.style,
+  {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px"
+  }
+);
+
+Object.assign(
+  usageCounterButton.style,
+  {
+    minHeight: "36px",
+    padding: "7px 12px",
+    border:
+      "1px solid rgba(96, 165, 250, 0.65)",
+    borderRadius: "10px",
+    backgroundColor:
+      "rgba(30, 64, 175, 0.38)",
+    color: "#bfdbfe",
+    fontSize: "13px",
+    fontWeight: "700",
+    cursor: "pointer"
   }
 );
 
@@ -1116,26 +1162,12 @@ function saveUsageStore(store) {
   }
 }
 
-function updateUsageRecord(
+function addUsageRecord(
+  operations,
   operation,
   model,
   updates
 ) {
-  const store = readUsageStore();
-  const date = getLocalUsageDate();
-
-  if (!store.days[date]) {
-    store.days[date] = {
-      operations: {}
-    };
-  }
-
-  const operations =
-    store.days[date].operations || {};
-
-  store.days[date].operations =
-    operations;
-
   const current =
     operations[operation] || {
       model: model || "-",
@@ -1169,6 +1201,58 @@ function updateUsageRecord(
   });
 
   operations[operation] = current;
+}
+
+function updateUsageRecord(
+  operation,
+  model,
+  updates
+) {
+  const store = readUsageStore();
+  const date = getLocalUsageDate();
+
+  if (!store.days[date]) {
+    store.days[date] = {
+      operations: {}
+    };
+  }
+
+  const operations =
+    store.days[date].operations || {};
+
+  store.days[date].operations =
+    operations;
+
+  addUsageRecord(
+    operations,
+    operation,
+    model,
+    updates
+  );
+
+  if (
+    store.activeCounter &&
+    typeof store.activeCounter ===
+      "object"
+  ) {
+    const counterOperations =
+      store.activeCounter.operations &&
+      typeof store.activeCounter
+        .operations === "object"
+        ? store.activeCounter.operations
+        : {};
+
+    store.activeCounter.operations =
+      counterOperations;
+
+    addUsageRecord(
+      counterOperations,
+      operation,
+      model,
+      updates
+    );
+  }
+
   saveUsageStore(store);
 
   if (
@@ -1298,6 +1382,27 @@ function formatUsageCost(value) {
     .replace(".", ",");
 }
 
+function startNewUsageCounter() {
+  const confirmed = window.confirm(
+    "Yeni karşılaştırma sayacı 0'dan başlasın mı? Bugünkü ve önceki günlerdeki toplamlar silinmeyecek."
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  const store = readUsageStore();
+
+  store.activeCounter = {
+    startedAt:
+      new Date().toISOString(),
+    operations: {}
+  };
+
+  saveUsageStore(store);
+  renderUsagePanel();
+}
+
 function createUsageCell(
   tagName,
   textValue,
@@ -1349,7 +1454,7 @@ function appendUsageTable(
   [
     "İşlem",
     "Model",
-    "İstek",
+    "İstek ↓",
     "Kullanım",
     "Tahmini"
   ].forEach((label, index) => {
@@ -1431,26 +1536,63 @@ function appendUsageTable(
   usageContent.appendChild(wrapper);
 }
 
+function getSortedUsageRecords(
+  operations
+) {
+  return Object.entries(
+    operations || {}
+  )
+    .filter(
+      ([, record]) =>
+        Number(record?.requests) > 0
+    )
+    .sort(
+      (
+        [firstOperation, firstRecord],
+        [secondOperation, secondRecord]
+      ) => {
+        const requestDifference =
+          (
+            Number(
+              secondRecord.requests
+            ) || 0
+          ) -
+          (
+            Number(
+              firstRecord.requests
+            ) || 0
+          );
+
+        if (requestDifference !== 0) {
+          return requestDifference;
+        }
+
+        const firstLabel =
+          usageOperationLabels[
+            firstOperation
+          ] || firstOperation;
+        const secondLabel =
+          usageOperationLabels[
+            secondOperation
+          ] || secondOperation;
+
+        return firstLabel.localeCompare(
+          secondLabel,
+          "tr"
+        );
+      }
+    );
+}
+
 function renderUsagePanel() {
   const store = readUsageStore();
   const today = getLocalUsageDate();
   const operations =
     store.days[today]?.operations || {};
   const records =
-    Object.entries(operations)
-      .filter(
-        ([, record]) =>
-          Number(record?.requests) > 0
-      )
-      .sort(([firstOperation, firstRecord], [secondOperation, secondRecord]) =>
-        (Number(secondRecord.requests) || 0) -
-        (Number(firstRecord.requests) || 0) ||
-        (usageOperationLabels[firstOperation] || firstOperation)
-          .localeCompare(
-            usageOperationLabels[secondOperation] || secondOperation,
-            "tr"
-          )
-      );
+    getSortedUsageRecords(
+      operations
+    );
 
   usageContent.replaceChildren();
 
@@ -1484,6 +1626,121 @@ function renderUsagePanel() {
     empty.style.color = "#d1d5db";
 
     usageContent.appendChild(empty);
+  }
+
+  const counterTitle =
+    document.createElement("div");
+
+  counterTitle.textContent =
+    "Yeni sayaçtan beri";
+
+  Object.assign(
+    counterTitle.style,
+    {
+      marginTop: "22px",
+      marginBottom: "8px",
+      color: "#93c5fd",
+      fontSize: "16px",
+      fontWeight: "700"
+    }
+  );
+
+  usageContent.appendChild(
+    counterTitle
+  );
+
+  const activeCounter =
+    store.activeCounter;
+
+  if (
+    activeCounter &&
+    typeof activeCounter === "object"
+  ) {
+    const counterRecords =
+      getSortedUsageRecords(
+        activeCounter.operations || {}
+      );
+    const counterRequests =
+      counterRecords.reduce(
+        (total, [, record]) =>
+          total +
+          (Number(record.requests) || 0),
+        0
+      );
+    const counterCost =
+      counterRecords.reduce(
+        (total, [, record]) =>
+          total +
+          (
+            Number(
+              record.estimatedUsd
+            ) || 0
+          ),
+        0
+      );
+    const startedAt =
+      new Date(activeCounter.startedAt);
+    const startedAtText =
+      Number.isNaN(startedAt.getTime())
+        ? "Başlangıç zamanı bilinmiyor"
+        : `Başlangıç: ${startedAt
+            .toLocaleString("tr-TR")}`;
+    const counterSummary =
+      document.createElement("div");
+
+    counterSummary.textContent =
+      `${startedAtText} · ` +
+      `${formatUsageNumber(
+        counterRequests
+      )} istek · ` +
+      formatUsageCost(counterCost);
+
+    Object.assign(
+      counterSummary.style,
+      {
+        marginBottom: "10px",
+        color: "#d1d5db",
+        fontSize: "13px"
+      }
+    );
+
+    usageContent.appendChild(
+      counterSummary
+    );
+
+    if (counterRecords.length > 0) {
+      appendUsageTable(
+        counterRecords
+      );
+    } else {
+      const counterEmpty =
+        document.createElement("div");
+
+      counterEmpty.textContent =
+        "Sayaç başladı. Bu andan sonraki API kullanımları burada görünecek.";
+      counterEmpty.style.padding =
+        "10px 0";
+      counterEmpty.style.color =
+        "#d1d5db";
+
+      usageContent.appendChild(
+        counterEmpty
+      );
+    }
+  } else {
+    const counterEmpty =
+      document.createElement("div");
+
+    counterEmpty.textContent =
+      "Karşılaştırma için Yeni Sayaç Başlat düğmesine bas. Günlük ve haftalık toplamlar korunur.";
+    counterEmpty.style.padding =
+      "10px 0";
+    counterEmpty.style.color =
+      "#d1d5db";
+
+    usageContent.appendChild(
+      counterEmpty
+    );
   }
 
   const weekTitle =
@@ -1586,7 +1843,7 @@ function renderUsagePanel() {
     document.createElement("div");
 
   note.textContent =
-    "Tahmini maliyet model fiyatları ve ses süresiyle hesaplanır. Kesin fatura tutarı için OpenAI Usage ekranını kullan.";
+    "Yeni sayaç yalnızca PauseSpeak içindeki karşılaştırma başlangıcını değiştirir; OpenAI kullanımını sıfırlamaz. Tahmini maliyet model fiyatları ve ses süresiyle hesaplanır. Kesin fatura tutarı için OpenAI Usage ekranını kullan.";
 
   Object.assign(
     note.style,
@@ -6514,6 +6771,16 @@ usageCloseButton.addEventListener(
   () => {
     usageOverlay.style.display =
       "none";
+  }
+);
+
+usageCounterButton.addEventListener(
+  "click",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    startNewUsageCounter();
   }
 );
 
