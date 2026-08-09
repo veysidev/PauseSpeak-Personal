@@ -375,6 +375,15 @@ chunkPracticeButton.disabled = true;
   moreButton.textContent =
     "☰ Daha Fazla";
 
+  const usageButton =
+    document.createElement("button");
+
+  usageButton.type = "button";
+  usageButton.textContent =
+    "Günlük Kullanım";
+  usageButton.title =
+    "Bugünkü API kullanımını göster";
+
   const topControlsRow =
     document.createElement("div");
 
@@ -383,6 +392,51 @@ chunkPracticeButton.disabled = true;
 
   moreMenu.style.display =
     "none";
+
+  const usageOverlay =
+    document.createElement("div");
+
+  const usagePanel =
+    document.createElement("div");
+
+  const usageHeader =
+    document.createElement("div");
+
+  const usageTitle =
+    document.createElement("div");
+
+  usageTitle.textContent =
+    "Günlük Kullanım";
+
+  const usageCloseButton =
+    document.createElement("button");
+
+  usageCloseButton.type = "button";
+  usageCloseButton.textContent = "×";
+  usageCloseButton.title = "Kapat";
+
+  const usageContent =
+    document.createElement("div");
+
+  usageHeader.appendChild(
+    usageTitle
+  );
+
+  usageHeader.appendChild(
+    usageCloseButton
+  );
+
+  usagePanel.appendChild(
+    usageHeader
+  );
+
+  usagePanel.appendChild(
+    usageContent
+  );
+
+  usageOverlay.appendChild(
+    usagePanel
+  );
 
   const controlsPanel =
     document.createElement("div");
@@ -438,6 +492,76 @@ Object.assign(
     borderRadius: "16px",
     boxShadow:
       "0 14px 30px rgba(0, 0, 0, 0.40)"
+  }
+);
+
+Object.assign(
+  usageOverlay.style,
+  {
+    position: "fixed",
+    inset: "0",
+    zIndex: "2147483647",
+    display: "none",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "20px",
+    backgroundColor:
+      "rgba(0, 0, 0, 0.72)",
+    boxSizing: "border-box"
+  }
+);
+
+Object.assign(
+  usagePanel.style,
+  {
+    width: "min(760px, 100%)",
+    maxHeight: "85vh",
+    overflow: "auto",
+    padding: "18px",
+    backgroundColor: "#111827",
+    color: "#f9fafb",
+    border:
+      "1px solid rgba(255, 255, 255, 0.22)",
+    borderRadius: "18px",
+    boxShadow:
+      "0 20px 60px rgba(0, 0, 0, 0.55)",
+    fontFamily: "Arial, sans-serif",
+    boxSizing: "border-box"
+  }
+);
+
+Object.assign(
+  usageHeader.style,
+  {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "12px",
+    marginBottom: "16px"
+  }
+);
+
+Object.assign(
+  usageTitle.style,
+  {
+    fontSize: "22px",
+    fontWeight: "700"
+  }
+);
+
+Object.assign(
+  usageCloseButton.style,
+  {
+    width: "36px",
+    height: "36px",
+    padding: "0",
+    border:
+      "1px solid rgba(255, 255, 255, 0.25)",
+    borderRadius: "50%",
+    backgroundColor: "#374151",
+    color: "#ffffff",
+    fontSize: "24px",
+    cursor: "pointer"
   }
 );
 Object.assign(panel.style, {
@@ -650,6 +774,7 @@ Object.assign(chunkBox.style, {
   turkishTranslationSpeechToggleButton,
   automaticPauseToggleButton,
   chunkPracticeButton,
+  usageButton,
   pauseButton,
   playButton
 ].forEach((button, index) => {
@@ -773,6 +898,20 @@ Object.assign(
     paddingLeft: "50px"
   }
 );
+const usageButtonIconSvg =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0%200%2024%2024' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4%2020V10'/%3E%3Cpath d='M10%2020V4'/%3E%3Cpath d='M16%2020v-7'/%3E%3Cpath d='M22%2020V7'/%3E%3C/svg%3E\")";
+
+Object.assign(
+  usageButton.style,
+  {
+    backgroundImage:
+      usageButtonIconSvg,
+    backgroundRepeat: "no-repeat",
+    backgroundPosition: "16px center",
+    backgroundSize: "20px 20px",
+    paddingLeft: "50px"
+  }
+);
 const replayButtonIconSvg =
   "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0%200%2024%2024' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20%2011a8%208%200%201%201-2.34-5.66'/%3E%3Cpath d='M20%204v7h-7'/%3E%3C/svg%3E\")";
 
@@ -852,6 +991,7 @@ moreButton.textContent =
   turkishTranslationSpeechToggleButton,
   automaticPauseToggleButton,
   chunkPracticeButton,
+  usageButton,
   pauseButton,
   playButton
 ].forEach((button) => {
@@ -868,6 +1008,603 @@ moreButton.textContent =
     }
   );
 });
+
+const usageStorageKey =
+  "pausespeak-daily-usage-v1";
+
+const usageOperationLabels = {
+  normal_translation:
+    "Normal çeviri",
+  chunk_split:
+    "Parça belirleme",
+  chunk_translation:
+    "Parça çevirisi",
+  improve_translation:
+    "Çeviri iyileştirme",
+  improve_chunk:
+    "Parça iyileştirme",
+  study_meaning:
+    "Kelime / ifade anlamı",
+  tts_english:
+    "İngilizce ses",
+  tts_turkish:
+    "Türkçe ses"
+};
+
+const usageModelPrices = {
+  "gpt-5.6-luna": {
+    input: 0.2,
+    cachedInput: 0.02,
+    output: 1.2
+  },
+  "gpt-5.6-terra": {
+    input: 2,
+    cachedInput: 0.2,
+    output: 12
+  }
+};
+
+function getLocalUsageDate(
+  date = new Date()
+) {
+  const year = date.getFullYear();
+  const month = String(
+    date.getMonth() + 1
+  ).padStart(2, "0");
+  const day = String(
+    date.getDate()
+  ).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function readUsageStore() {
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(
+        usageStorageKey
+      ) || "null"
+    );
+
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      parsed.days &&
+      typeof parsed.days === "object"
+    ) {
+      return parsed;
+    }
+  } catch (error) {
+    console.warn(
+      "PauseSpeak kullanım kaydı okunamadı:",
+      error
+    );
+  }
+
+  return {
+    version: 1,
+    days: {}
+  };
+}
+
+function saveUsageStore(store) {
+  try {
+    const retainedDays =
+      Object.keys(store.days)
+        .sort()
+        .slice(-90);
+
+    store.days =
+      Object.fromEntries(
+        retainedDays.map(
+          (date) => [
+            date,
+            store.days[date]
+          ]
+        )
+      );
+
+    window.localStorage.setItem(
+      usageStorageKey,
+      JSON.stringify(store)
+    );
+  } catch (error) {
+    console.warn(
+      "PauseSpeak kullanım kaydı yazılamadı:",
+      error
+    );
+  }
+}
+
+function updateUsageRecord(
+  operation,
+  model,
+  updates
+) {
+  const store = readUsageStore();
+  const date = getLocalUsageDate();
+
+  if (!store.days[date]) {
+    store.days[date] = {
+      operations: {}
+    };
+  }
+
+  const operations =
+    store.days[date].operations || {};
+
+  store.days[date].operations =
+    operations;
+
+  const current =
+    operations[operation] || {
+      model: model || "-",
+      requests: 0,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      ttsCharacters: 0,
+      ttsSeconds: 0,
+      estimatedUsd: 0
+    };
+
+  if (model) {
+    current.model = model;
+  }
+
+  [
+    "requests",
+    "inputTokens",
+    "cachedInputTokens",
+    "outputTokens",
+    "reasoningTokens",
+    "ttsCharacters",
+    "ttsSeconds",
+    "estimatedUsd"
+  ].forEach((key) => {
+    current[key] =
+      (Number(current[key]) || 0) +
+      (Number(updates?.[key]) || 0);
+  });
+
+  operations[operation] = current;
+  saveUsageStore(store);
+
+  if (
+    usageOverlay.style.display ===
+    "flex"
+  ) {
+    renderUsagePanel();
+  }
+}
+
+function recordTextUsage(
+  operation,
+  model,
+  usage
+) {
+  const requests =
+    Number(usage?.requests) || 0;
+
+  if (requests <= 0) {
+    return;
+  }
+
+  const inputTokens =
+    Number(usage?.inputTokens) || 0;
+  const cachedInputTokens =
+    Math.min(
+      inputTokens,
+      Number(
+        usage?.cachedInputTokens
+      ) || 0
+    );
+  const outputTokens =
+    Number(usage?.outputTokens) || 0;
+  const prices =
+    usageModelPrices[model];
+
+  let estimatedUsd = 0;
+
+  if (prices) {
+    estimatedUsd = (
+      (
+        inputTokens -
+        cachedInputTokens
+      ) * prices.input +
+      cachedInputTokens *
+        prices.cachedInput +
+      outputTokens * prices.output
+    ) / 1000000;
+  }
+
+  updateUsageRecord(
+    operation,
+    model,
+    {
+      requests,
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
+      reasoningTokens:
+        Number(
+          usage?.reasoningTokens
+        ) || 0,
+      estimatedUsd
+    }
+  );
+}
+
+function recordTtsRequest(
+  operation,
+  text
+) {
+  const characters =
+    String(text || "").length;
+
+  updateUsageRecord(
+    operation,
+    "gpt-4o-mini-tts",
+    {
+      requests: 1,
+      ttsCharacters: characters,
+      estimatedUsd:
+        (
+          characters / 4 * 0.6
+        ) / 1000000
+    }
+  );
+}
+
+function recordTtsDuration(
+  operation,
+  seconds
+) {
+  if (
+    !Number.isFinite(seconds) ||
+    seconds <= 0
+  ) {
+    return;
+  }
+
+  updateUsageRecord(
+    operation,
+    "gpt-4o-mini-tts",
+    {
+      ttsSeconds: seconds,
+      estimatedUsd:
+        seconds * 0.0144 / 60
+    }
+  );
+}
+
+function formatUsageNumber(value) {
+  return new Intl.NumberFormat(
+    "tr-TR"
+  ).format(
+    Math.round(Number(value) || 0)
+  );
+}
+
+function formatUsageCost(value) {
+  const cost = Number(value) || 0;
+
+  if (cost > 0 && cost < 0.0001) {
+    return "< $0,0001";
+  }
+
+  return `$${cost.toFixed(4)}`
+    .replace(".", ",");
+}
+
+function createUsageCell(
+  tagName,
+  textValue,
+  align = "left"
+) {
+  const cell =
+    document.createElement(tagName);
+
+  cell.textContent = textValue;
+
+  Object.assign(
+    cell.style,
+    {
+      padding: "9px 8px",
+      borderBottom:
+        "1px solid rgba(255, 255, 255, 0.10)",
+      textAlign: align,
+      verticalAlign: "top",
+      whiteSpace: "nowrap"
+    }
+  );
+
+  return cell;
+}
+
+function appendUsageTable(
+  records
+) {
+  const wrapper =
+    document.createElement("div");
+
+  wrapper.style.overflowX = "auto";
+
+  const table =
+    document.createElement("table");
+
+  Object.assign(
+    table.style,
+    {
+      width: "100%",
+      borderCollapse: "collapse",
+      fontSize: "13px"
+    }
+  );
+
+  const headerRow =
+    document.createElement("tr");
+
+  [
+    "İşlem",
+    "Model",
+    "İstek",
+    "Kullanım",
+    "Tahmini"
+  ].forEach((label, index) => {
+    headerRow.appendChild(
+      createUsageCell(
+        "th",
+        label,
+        index >= 2 ? "right" : "left"
+      )
+    );
+  });
+
+  table.appendChild(headerRow);
+
+  records.forEach(
+    ([operation, record]) => {
+      const row =
+        document.createElement("tr");
+      const isTts =
+        operation.startsWith("tts_");
+      const usageText = isTts
+        ? `${formatUsageNumber(
+            record.ttsCharacters
+          )} karakter / ${(
+            Number(record.ttsSeconds) ||
+            0
+          ).toFixed(1)} sn`
+        : `${formatUsageNumber(
+            record.inputTokens
+          )} giriş / ${formatUsageNumber(
+            record.outputTokens
+          )} çıkış`;
+
+      row.appendChild(
+        createUsageCell(
+          "td",
+          usageOperationLabels[
+            operation
+          ] || operation
+        )
+      );
+      row.appendChild(
+        createUsageCell(
+          "td",
+          record.model || "-"
+        )
+      );
+      row.appendChild(
+        createUsageCell(
+          "td",
+          formatUsageNumber(
+            record.requests
+          ),
+          "right"
+        )
+      );
+      row.appendChild(
+        createUsageCell(
+          "td",
+          usageText,
+          "right"
+        )
+      );
+      row.appendChild(
+        createUsageCell(
+          "td",
+          formatUsageCost(
+            record.estimatedUsd
+          ),
+          "right"
+        )
+      );
+
+      table.appendChild(row);
+    }
+  );
+
+  wrapper.appendChild(table);
+  usageContent.appendChild(wrapper);
+}
+
+function renderUsagePanel() {
+  const store = readUsageStore();
+  const today = getLocalUsageDate();
+  const operations =
+    store.days[today]?.operations || {};
+  const records =
+    Object.entries(operations)
+      .filter(
+        ([, record]) =>
+          Number(record?.requests) > 0
+      )
+      .sort(([firstOperation, firstRecord], [secondOperation, secondRecord]) =>
+        (Number(secondRecord.requests) || 0) -
+        (Number(firstRecord.requests) || 0) ||
+        (usageOperationLabels[firstOperation] || firstOperation)
+          .localeCompare(
+            usageOperationLabels[secondOperation] || secondOperation,
+            "tr"
+          )
+      );
+
+  usageContent.replaceChildren();
+
+  const todayTitle =
+    document.createElement("div");
+
+  todayTitle.textContent =
+    `Bugün · ${today}`;
+
+  Object.assign(
+    todayTitle.style,
+    {
+      marginBottom: "10px",
+      color: "#93c5fd",
+      fontSize: "16px",
+      fontWeight: "700"
+    }
+  );
+
+  usageContent.appendChild(todayTitle);
+
+  if (records.length > 0) {
+    appendUsageTable(records);
+  } else {
+    const empty =
+      document.createElement("div");
+
+    empty.textContent =
+      "Bugün henüz kaydedilmiş API kullanımı yok.";
+    empty.style.padding = "16px 0";
+    empty.style.color = "#d1d5db";
+
+    usageContent.appendChild(empty);
+  }
+
+  const weekTitle =
+    document.createElement("div");
+
+  weekTitle.textContent =
+    "Son 7 gün";
+
+  Object.assign(
+    weekTitle.style,
+    {
+      marginTop: "22px",
+      marginBottom: "8px",
+      color: "#93c5fd",
+      fontSize: "16px",
+      fontWeight: "700"
+    }
+  );
+
+  usageContent.appendChild(weekTitle);
+
+  const weekList =
+    document.createElement("div");
+
+  for (
+    let offset = 0;
+    offset < 7;
+    offset += 1
+  ) {
+    const date = new Date();
+    date.setDate(
+      date.getDate() - offset
+    );
+
+    const dateKey =
+      getLocalUsageDate(date);
+    const dayOperations =
+      store.days[dateKey]
+        ?.operations || {};
+    const dayRecords =
+      Object.values(dayOperations);
+    const requests =
+      dayRecords.reduce(
+        (total, record) =>
+          total +
+          (Number(record.requests) || 0),
+        0
+      );
+    const estimatedUsd =
+      dayRecords.reduce(
+        (total, record) =>
+          total +
+          (
+            Number(
+              record.estimatedUsd
+            ) || 0
+          ),
+        0
+      );
+
+    const row =
+      document.createElement("div");
+
+    Object.assign(
+      row.style,
+      {
+        display: "grid",
+        gridTemplateColumns:
+          "1fr auto auto",
+        gap: "16px",
+        padding: "8px 0",
+        borderBottom:
+          "1px solid rgba(255, 255, 255, 0.08)",
+        fontSize: "13px"
+      }
+    );
+
+    [
+      dateKey,
+      `${formatUsageNumber(
+        requests
+      )} istek`,
+      formatUsageCost(
+        estimatedUsd
+      )
+    ].forEach((textValue) => {
+      const item =
+        document.createElement("div");
+
+      item.textContent = textValue;
+      row.appendChild(item);
+    });
+
+    weekList.appendChild(row);
+  }
+
+  usageContent.appendChild(weekList);
+
+  const note =
+    document.createElement("div");
+
+  note.textContent =
+    "Tahmini maliyet model fiyatları ve ses süresiyle hesaplanır. Kesin fatura tutarı için OpenAI Usage ekranını kullan.";
+
+  Object.assign(
+    note.style,
+    {
+      marginTop: "16px",
+      padding: "12px",
+      borderRadius: "10px",
+      backgroundColor:
+        "rgba(59, 130, 246, 0.12)",
+      color: "#bfdbfe",
+      fontSize: "12px",
+      lineHeight: "1.45"
+    }
+  );
+
+  usageContent.appendChild(note);
+}
+
   function getNetflixVideo() {
     return document.querySelector("video");
   }
@@ -1052,6 +1789,15 @@ if (
       }
     );
 
+    if (response.ok) {
+      recordTtsRequest(
+        language === "en"
+          ? "tts_english"
+          : "tts_turkish",
+        text.trim()
+      );
+    }
+
 if (
   requestNumber !==
     translationSpeechRequestNumber ||
@@ -1088,9 +1834,28 @@ if (
         audioBlob
       );
 
-    translationSpeechAudio =
+    const createdAudio =
       new Audio(
         translationSpeechObjectUrl
+      );
+
+    translationSpeechAudio =
+      createdAudio;
+
+    createdAudio
+      .addEventListener(
+        "loadedmetadata",
+        () => {
+          recordTtsDuration(
+            language === "en"
+              ? "tts_english"
+              : "tts_turkish",
+            createdAudio.duration
+          );
+        },
+        {
+          once: true
+        }
       );
 
     translationSpeechAudio.playbackRate =
@@ -1186,8 +1951,21 @@ function stopNormalTranslation() {
         }
       );
 
-      const data =
+    const data =
         await response.json();
+
+      if (
+        response.ok &&
+        data?.success &&
+        typeof data.translation ===
+          "string"
+      ) {
+        recordTextUsage(
+          "normal_translation",
+          data.model,
+          data.usage
+        );
+      }
 
       if (
         requestNumber !==
@@ -1396,6 +2174,19 @@ async function improveCurrentTranslation() {
 
     const data =
       await response.json();
+
+    if (
+      response.ok &&
+      data?.success &&
+      typeof data.translation ===
+        "string"
+    ) {
+      recordTextUsage(
+        "improve_translation",
+        data.model,
+        data.usage
+      );
+    }
 
     if (
       !response.ok ||
@@ -2730,6 +3521,20 @@ async function requestStudyMeaning(
       await response.json();
 
     if (
+      response.ok &&
+      data?.success === true &&
+      typeof data.text ===
+        "string" &&
+      Array.isArray(data.meanings)
+    ) {
+      recordTextUsage(
+        "study_meaning",
+        data.model,
+        data.usage
+      );
+    }
+
+    if (
       requestNumber !==
       studyMeaningRequestNumber
     ) {
@@ -3084,6 +3889,18 @@ async function requestSubtitleChunks(
       await response.json();
 
     if (
+      response.ok &&
+      data?.success &&
+      Array.isArray(data.chunks)
+    ) {
+      recordTextUsage(
+        "chunk_split",
+        data.model,
+        data.usage
+      );
+    }
+
+    if (
       requestNumber !==
       subtitleChunkRequestNumber
     ) {
@@ -3229,6 +4046,14 @@ async function requestSubtitleChunkTranslation(
         "Parça çevirisi alınamadı."
     );
   }
+
+  recordTextUsage(
+    improve
+      ? "improve_chunk"
+      : "chunk_translation",
+    data.model,
+    data.usage
+  );
 
   const translation =
     cleanText(
@@ -5642,6 +6467,7 @@ topControlsRow.appendChild(
   turkishTranslationSpeechToggleButton,
   automaticPauseToggleButton,
   chunkPracticeButton,
+  usageButton,
   pauseButton,
   playButton
 ].forEach((button) => {
@@ -5665,6 +6491,39 @@ improveTranslationButton.addEventListener(
   "click",
   () => {
     void improveCurrentTranslation();
+  }
+);
+
+usageButton.addEventListener(
+  "click",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    renderUsagePanel();
+    usageOverlay.style.display =
+      "flex";
+    moreMenu.style.display =
+      "none";
+  },
+  true
+);
+
+usageCloseButton.addEventListener(
+  "click",
+  () => {
+    usageOverlay.style.display =
+      "none";
+  }
+);
+
+usageOverlay.addEventListener(
+  "click",
+  (event) => {
+    if (event.target === usageOverlay) {
+      usageOverlay.style.display =
+        "none";
+    }
   }
 );
 subtitleCloseButton.addEventListener(
@@ -5712,6 +6571,9 @@ document.documentElement.appendChild(
 );
 document.documentElement.appendChild(
   controlsPanel
+);
+document.documentElement.appendChild(
+  usageOverlay
 );
 
 const controlsToggleButton =
@@ -5855,6 +6717,10 @@ targetContainer.appendChild(
   targetContainer.appendChild(
     controlsToggleButton
   );
+
+  targetContainer.appendChild(
+    usageOverlay
+  );
 }
 
 document.addEventListener(
@@ -5882,6 +6748,8 @@ const runPauseSpeakUpdate = () => {
     controlsPanel.style.display =
       "none";
     controlsToggleButton.style.display =
+      "none";
+    usageOverlay.style.display =
       "none";
 
     lastVideoFound = null;

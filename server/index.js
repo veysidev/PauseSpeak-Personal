@@ -176,6 +176,55 @@ function cleanText(text) {
     .trim();
 }
 
+function normalizeOpenAIUsage(usage) {
+  return {
+    requests: 1,
+    inputTokens:
+      Number(usage?.input_tokens) || 0,
+    cachedInputTokens:
+      Number(
+        usage?.input_tokens_details
+          ?.cached_tokens
+      ) || 0,
+    outputTokens:
+      Number(usage?.output_tokens) || 0,
+    reasoningTokens:
+      Number(
+        usage?.output_tokens_details
+          ?.reasoning_tokens
+      ) || 0
+  };
+}
+
+function emptyOpenAIUsage() {
+  return {
+    requests: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0
+  };
+}
+
+function mergeOpenAIUsage(
+  total,
+  usage
+) {
+  const merged = {
+    ...emptyOpenAIUsage()
+  };
+
+  Object.keys(merged).forEach(
+    (key) => {
+      merged[key] =
+        (Number(total?.[key]) || 0) +
+        (Number(usage?.[key]) || 0);
+    }
+  );
+
+  return merged;
+}
+
 function removeSubtitleDescriptions(
   text
 ) {
@@ -1084,9 +1133,14 @@ reasoning: {
   max_output_tokens: 4096
 });
 
-return parseChunkDecision(
-  openAIResponse.output_text
-);
+return {
+  decision: parseChunkDecision(
+    openAIResponse.output_text
+  ),
+  usage: normalizeOpenAIUsage(
+    openAIResponse.usage
+  )
+};
 }
 async function generateStudyMeaning(
   openAI,
@@ -1100,7 +1154,9 @@ async function generateStudyMeaning(
   "context-expression-v1";
   const openAIResponse =
     await openAI.responses.create({
-      model: openAIModel,
+      model: isContextExpressionMode
+        ? openAITerraModel
+        : openAIModel,
 
       reasoning: {
         effort: "none"
@@ -1268,9 +1324,14 @@ async function generateStudyMeaning(
       max_output_tokens: 300
     });
 
-  return parseStudyMeaning(
-    openAIResponse.output_text
-  );
+  return {
+    meaning: parseStudyMeaning(
+      openAIResponse.output_text
+    ),
+    usage: normalizeOpenAIUsage(
+      openAIResponse.usage
+    )
+  };
 }
 async function generateStudySegments(
   openAI,
@@ -1678,7 +1739,11 @@ return response.json({
 
   model: selectedModel,
 
-  cached: false
+  cached: false,
+
+  usage: normalizeOpenAIUsage(
+    openAIResponse.usage
+  )
 });
     } catch (error) {
       console.error(
@@ -1776,6 +1841,8 @@ const usesContextExpressionMode =
         await getOpenAIClient();
 
       let meaning = null;
+      let usage =
+        emptyOpenAIUsage();
 
       for (
         let attempt = 1;
@@ -1783,7 +1850,7 @@ const usesContextExpressionMode =
         attempt += 1
       ) {
         try {
-          const candidate =
+          const generated =
       await generateStudyMeaning(
   openAI,
   cleanedSelectedText,
@@ -1791,6 +1858,12 @@ const usesContextExpressionMode =
   cleanedSegmentType,
   analysisMode
 );
+usage = mergeOpenAIUsage(
+  usage,
+  generated.usage
+);
+const candidate =
+  generated.meaning;
 if (
   cleanedSegmentType ===
   "contraction"
@@ -1920,7 +1993,9 @@ if (
 
   model: usesContextExpressionMode
     ? openAITerraModel
-    : openAIModel
+    : openAIModel,
+
+  usage
 });
     } catch (error) {
       console.error(
@@ -2248,17 +2323,27 @@ app.post(
         await getOpenAIClient();
 
       let decision = null;
+      let usage =
+        emptyOpenAIUsage();
 
       for (
         let attempt = 1;
         attempt <= 2;
         attempt += 1
       ) {
-        const candidateDecision =
+        const generatedDecision =
           await generateSmartChunkDecision(
             openAI,
             cleanedText
           );
+
+        usage = mergeOpenAIUsage(
+          usage,
+          generatedDecision.usage
+        );
+
+        const candidateDecision =
+          generatedDecision.decision;
 
         const suitableDecisionIsValid =
           candidateDecision.suitable ===
@@ -2315,7 +2400,9 @@ app.post(
 
     provider: "openai",
 
-    model: openAIChunkModel
+    model: openAIChunkModel,
+
+    usage
   });
     } catch (error) {
       console.error(
