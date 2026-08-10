@@ -139,7 +139,6 @@ const studySegmentsTimeoutMs = 20000;
 const studyMeaningApiUrl =
   "https://pausespeak.onrender.com/study-meaning";
 
-
 const studyMeaningTimeoutMs = 20000;
   const pronunciationSuccessThreshold = 0.78;
 
@@ -190,6 +189,13 @@ let currentStudyTokenMappings = [];
 
 const studyMeaningCache =
   new Map();
+const capturedSubtitleTracks = new Map();
+let activeSubtitleTrackId = "";
+let activeTranscriptCueIndex = -1;
+let activeTranscriptSeekRequestId = "";
+let visibleSubtitleCueStartMs = null;
+let visibleSubtitleCueText = "";
+const visibleSubtitleCues = [];
 let subtitleChunkRequestNumber = 0;
 let subtitleChunkAbortController = null;
 
@@ -384,6 +390,15 @@ chunkPracticeButton.disabled = true;
   usageButton.title =
     "Bugünkü API kullanımını göster";
 
+  const transcriptButton =
+    document.createElement("button");
+
+  transcriptButton.type = "button";
+  transcriptButton.textContent =
+    "Altyazılar";
+  transcriptButton.title =
+    "Bölümün zaman kodlu altyazılarını göster";
+
   const topControlsRow =
     document.createElement("div");
 
@@ -430,6 +445,46 @@ chunkPracticeButton.disabled = true;
   const usageContent =
     document.createElement("div");
 
+  const transcriptOverlay =
+    document.createElement("div");
+
+  const transcriptPanel =
+    document.createElement("div");
+
+  const transcriptHeader =
+    document.createElement("div");
+
+  const transcriptTitle =
+    document.createElement("div");
+
+  transcriptTitle.textContent =
+    "Altyazılar";
+
+  const transcriptCloseButton =
+    document.createElement("button");
+
+  transcriptCloseButton.type = "button";
+  transcriptCloseButton.textContent = "×";
+  transcriptCloseButton.title = "Kapat";
+
+  const transcriptSearchInput =
+    document.createElement("input");
+
+  transcriptSearchInput.type = "search";
+  transcriptSearchInput.placeholder =
+    "Altyazılarda ara…";
+  transcriptSearchInput.autocomplete =
+    "off";
+
+  const transcriptStatus =
+    document.createElement("div");
+
+  transcriptStatus.textContent =
+    "Netflix altyazı verisi bekleniyor…";
+
+  const transcriptList =
+    document.createElement("div");
+
   usageHeader.appendChild(
     usageTitle
   );
@@ -456,6 +511,22 @@ chunkPracticeButton.disabled = true;
 
   usageOverlay.appendChild(
     usagePanel
+  );
+
+  transcriptHeader.append(
+    transcriptTitle,
+    transcriptCloseButton
+  );
+
+  transcriptPanel.append(
+    transcriptHeader,
+    transcriptSearchInput,
+    transcriptStatus,
+    transcriptList
+  );
+
+  transcriptOverlay.appendChild(
+    transcriptPanel
   );
 
   const controlsPanel =
@@ -610,6 +681,120 @@ Object.assign(
     cursor: "pointer"
   }
 );
+
+Object.assign(
+  transcriptOverlay.style,
+  {
+    position: "fixed",
+    inset: "0",
+    zIndex: "2147483647",
+    display: "none",
+    alignItems: "stretch",
+    justifyContent: "flex-end",
+    padding: "16px",
+    backgroundColor:
+      "rgba(0, 0, 0, 0.42)",
+    boxSizing: "border-box"
+  }
+);
+
+Object.assign(
+  transcriptPanel.style,
+  {
+    width:
+      "min(460px, 100%)",
+    height: "100%",
+    display: "flex",
+    flexDirection: "column",
+    padding: "14px",
+    backgroundColor:
+      "rgba(8, 10, 12, 0.97)",
+    color: "#f9fafb",
+    border:
+      "1px solid rgba(255, 255, 255, 0.22)",
+    borderRadius: "16px",
+    boxShadow:
+      "0 20px 60px rgba(0, 0, 0, 0.65)",
+    fontFamily: "Arial, sans-serif",
+    boxSizing: "border-box",
+    overflow: "hidden"
+  }
+);
+
+Object.assign(
+  transcriptHeader.style,
+  {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "12px",
+    marginBottom: "10px"
+  }
+);
+
+Object.assign(
+  transcriptTitle.style,
+  {
+    fontSize: "22px",
+    fontWeight: "700"
+  }
+);
+
+Object.assign(
+  transcriptCloseButton.style,
+  {
+    width: "36px",
+    height: "36px",
+    padding: "0",
+    border:
+      "1px solid rgba(255, 255, 255, 0.25)",
+    borderRadius: "50%",
+    backgroundColor: "#374151",
+    color: "#ffffff",
+    fontSize: "24px",
+    cursor: "pointer"
+  }
+);
+
+Object.assign(
+  transcriptSearchInput.style,
+  {
+    width: "100%",
+    minHeight: "40px",
+    padding: "9px 12px",
+    border:
+      "1px solid rgba(255, 255, 255, 0.24)",
+    borderRadius: "10px",
+    outline: "none",
+    backgroundColor: "#1f2937",
+    color: "#ffffff",
+    fontSize: "15px",
+    boxSizing: "border-box"
+  }
+);
+
+Object.assign(
+  transcriptStatus.style,
+  {
+    padding: "9px 2px",
+    color: "#93c5fd",
+    fontSize: "12px",
+    lineHeight: "1.35"
+  }
+);
+
+Object.assign(
+  transcriptList.style,
+  {
+    flex: "1",
+    minHeight: "0",
+    overflowY: "auto",
+    overscrollBehavior: "contain",
+    borderTop:
+      "1px solid rgba(255, 255, 255, 0.14)"
+  }
+);
+
 Object.assign(panel.style, {
   position: "fixed",
  left: "0",
@@ -820,6 +1005,7 @@ Object.assign(chunkBox.style, {
   turkishTranslationSpeechToggleButton,
   automaticPauseToggleButton,
   chunkPracticeButton,
+  transcriptButton,
   usageButton,
   pauseButton,
   playButton
@@ -958,6 +1144,21 @@ Object.assign(
     paddingLeft: "50px"
   }
 );
+
+const transcriptButtonIconSvg =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0%200%2024%2024' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2'/%3E%3Cpath d='M7%2010h4M7%2014h3M14%2010h3M13%2014h4'/%3E%3C/svg%3E\")";
+
+Object.assign(
+  transcriptButton.style,
+  {
+    backgroundImage:
+      transcriptButtonIconSvg,
+    backgroundRepeat: "no-repeat",
+    backgroundPosition: "16px center",
+    backgroundSize: "20px 20px",
+    paddingLeft: "50px"
+  }
+);
 const replayButtonIconSvg =
   "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0%200%2024%2024' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20%2011a8%208%200%201%201-2.34-5.66'/%3E%3Cpath d='M20%204v7h-7'/%3E%3C/svg%3E\")";
 
@@ -1037,6 +1238,7 @@ moreButton.textContent =
   turkishTranslationSpeechToggleButton,
   automaticPauseToggleButton,
   chunkPracticeButton,
+  transcriptButton,
   usageButton,
   pauseButton,
   playButton
@@ -1861,6 +2063,655 @@ function renderUsagePanel() {
 
   usageContent.appendChild(note);
 }
+
+function normalizeTranscriptText(value) {
+  return String(value || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeIncomingSubtitleTrack(
+  track
+) {
+  if (
+    !track ||
+    typeof track.trackId !== "string" ||
+    !Array.isArray(track.cues)
+  ) {
+    return null;
+  }
+
+  const cues = track.cues
+    .map((cue) => ({
+      startTimeMs: Math.round(
+        Number(cue?.startTimeMs)
+      ),
+      endTimeMs: Math.round(
+        Number(cue?.endTimeMs)
+      ),
+      text: normalizeTranscriptText(
+        cue?.text
+      )
+    }))
+    .filter(
+      (cue) =>
+        Number.isFinite(
+          cue.startTimeMs
+        ) &&
+        Number.isFinite(
+          cue.endTimeMs
+        ) &&
+        cue.startTimeMs >= 0 &&
+        cue.endTimeMs >
+          cue.startTimeMs &&
+        cue.text
+    )
+    .sort(
+      (first, second) =>
+        first.startTimeMs -
+          second.startTimeMs ||
+        first.endTimeMs -
+          second.endTimeMs
+    )
+    .slice(0, 10000);
+
+  if (cues.length < 2) {
+    return null;
+  }
+
+  return {
+    trackId: track.trackId,
+    language:
+      normalizeTranscriptText(
+        track.language
+      ),
+    format:
+      normalizeTranscriptText(
+        track.format
+      ),
+    cues
+  };
+}
+
+function findTranscriptCueIndex(
+  cues,
+  timeMs
+) {
+  if (
+    !Array.isArray(cues) ||
+    cues.length === 0 ||
+    !Number.isFinite(timeMs)
+  ) {
+    return -1;
+  }
+
+  let low = 0;
+  let high = cues.length - 1;
+  let candidate = -1;
+
+  while (low <= high) {
+    const middle = Math.floor(
+      (low + high) / 2
+    );
+
+    if (
+      cues[middle].startTimeMs <=
+      timeMs + 250
+    ) {
+      candidate = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  if (
+    candidate >= 0 &&
+    timeMs <=
+      cues[candidate].endTimeMs +
+        600
+  ) {
+    return candidate;
+  }
+
+  return -1;
+}
+
+function getActiveSubtitleTrack() {
+  return activeSubtitleTrackId
+    ? capturedSubtitleTracks.get(
+        activeSubtitleTrackId
+      ) || null
+    : null;
+}
+
+function chooseBestSubtitleTrack(
+  visibleText = currentSubtitle
+) {
+  if (capturedSubtitleTracks.size === 0) {
+    activeSubtitleTrackId = "";
+    return null;
+  }
+
+  const video = getNetflixVideo();
+  const timeMs = video
+    ? Number(video.currentTime) * 1000
+    : 0;
+  const normalizedVisible =
+    normalizeSpeechText(
+      visibleText
+    );
+  let bestTrack = null;
+  let bestScore = -Infinity;
+
+  for (const track of
+    capturedSubtitleTracks.values()) {
+    let score = Math.min(
+      track.cues.length / 1000,
+      3
+    );
+
+    if (
+      /^(?:en|eng)(?:[-_]|$)/i.test(
+        track.language
+      ) ||
+      /english/i.test(track.language)
+    ) {
+      score += 5;
+    }
+
+    const cueIndex =
+      findTranscriptCueIndex(
+        track.cues,
+        timeMs
+      );
+
+    if (
+      cueIndex >= 0 &&
+      normalizedVisible
+    ) {
+      const cueText = normalizeSpeechText(
+        track.cues[cueIndex].text
+      );
+
+      if (
+        cueText === normalizedVisible
+      ) {
+        score += 20;
+      } else if (
+        cueText.includes(
+          normalizedVisible
+        ) ||
+        normalizedVisible.includes(
+          cueText
+        )
+      ) {
+        score += 12;
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestTrack = track;
+    }
+  }
+
+  if (bestTrack) {
+    activeSubtitleTrackId =
+      bestTrack.trackId;
+  }
+
+  return bestTrack;
+}
+
+function getTranscriptCues() {
+  const track =
+    getActiveSubtitleTrack() ||
+    chooseBestSubtitleTrack();
+
+  if (track) {
+    return {
+      source: "netflix_track",
+      track,
+      cues: track.cues
+    };
+  }
+
+  return {
+    source: "visible_fallback",
+    track: null,
+    cues: visibleSubtitleCues
+  };
+}
+
+function formatTranscriptTime(
+  timeMs
+) {
+  const totalSeconds = Math.max(
+    0,
+    Math.floor(Number(timeMs) / 1000)
+  );
+  const hours = Math.floor(
+    totalSeconds / 3600
+  );
+  const minutes = Math.floor(
+    (totalSeconds % 3600) / 60
+  );
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return [
+      hours,
+      String(minutes).padStart(2, "0"),
+      String(seconds).padStart(2, "0")
+    ].join(":");
+  }
+
+  return `${minutes}:${String(
+    seconds
+  ).padStart(2, "0")}`;
+}
+
+function styleTranscriptRow(
+  row,
+  isActive
+) {
+  Object.assign(row.style, {
+    width: "100%",
+    display: "grid",
+    gridTemplateColumns: "56px 1fr",
+    gap: "8px",
+    alignItems: "start",
+    padding: "11px 8px",
+    border: "none",
+    borderBottom:
+      "1px solid rgba(255, 255, 255, 0.12)",
+    borderRadius: "0",
+    outline: "none",
+    backgroundColor: isActive
+      ? "rgba(147, 51, 234, 0.48)"
+      : "rgba(31, 41, 55, 0.72)",
+    color: "#ffffff",
+    fontFamily: "Arial, sans-serif",
+    textAlign: "left",
+    cursor: "pointer",
+    boxSizing: "border-box"
+  });
+}
+
+function seekToTranscriptCue(cue) {
+  if (!cue) {
+    return;
+  }
+
+  activeTranscriptSeekRequestId =
+    `subtitle-${Date.now()}-${Math.random()}`;
+
+  transcriptStatus.textContent =
+    "Seçilen altyazıya gidiliyor…";
+
+  window.postMessage(
+    {
+      source: "PAUSESPEAK_EXTENSION",
+      type: "PAUSESPEAK_SEEK_REQUEST",
+      requestId:
+        activeTranscriptSeekRequestId,
+      targetTimeMs: Math.max(
+        0,
+        cue.startTimeMs - 150
+      )
+    },
+    "*"
+  );
+}
+
+function renderTranscriptPanel() {
+  const transcriptData =
+    getTranscriptCues();
+  const cues = transcriptData.cues;
+  const query =
+    normalizeTranscriptText(
+      transcriptSearchInput.value
+    ).toLocaleLowerCase("en-US");
+  const video = getNetflixVideo();
+  const currentTimeMs = video
+    ? Number(video.currentTime) * 1000
+    : 0;
+
+  activeTranscriptCueIndex =
+    findTranscriptCueIndex(
+      cues,
+      currentTimeMs
+    );
+
+  transcriptList.replaceChildren();
+
+  if (cues.length === 0) {
+    transcriptStatus.textContent =
+      "Altyazı verisi bekleniyor. Netflix’te altyazıyı açıp videoyu birkaç saniye oynat.";
+
+    const empty = document.createElement(
+      "div"
+    );
+
+    empty.textContent =
+      "Henüz listelenecek altyazı bulunamadı.";
+
+    Object.assign(empty.style, {
+      padding: "20px 8px",
+      color: "#cbd5e1",
+      fontSize: "14px"
+    });
+
+    transcriptList.appendChild(empty);
+    return;
+  }
+
+  const indexedCues = cues
+    .map((cue, index) => ({
+      cue,
+      index
+    }))
+    .filter(({ cue }) =>
+      !query ||
+      cue.text
+        .toLocaleLowerCase("en-US")
+        .includes(query)
+    );
+
+  if (
+    transcriptData.source ===
+    "netflix_track"
+  ) {
+    const languageLabel =
+      transcriptData.track.language
+        ? ` · ${transcriptData.track.language}`
+        : "";
+
+    transcriptStatus.textContent =
+      `${cues.length} satır önceden yüklendi${languageLabel} · OpenAI kullanılmıyor`;
+  } else {
+    transcriptStatus.textContent =
+      `${cues.length} geçmiş satır yakalandı · Tam altyazı akışı bekleniyor`;
+  }
+
+  if (query) {
+    transcriptStatus.textContent +=
+      ` · ${indexedCues.length} sonuç`;
+  }
+
+  for (const { cue, index } of
+    indexedCues) {
+    const row = document.createElement(
+      "button"
+    );
+
+    row.type = "button";
+    row.dataset.transcriptCueIndex =
+      String(index);
+
+    styleTranscriptRow(
+      row,
+      index === activeTranscriptCueIndex
+    );
+
+    const time = document.createElement(
+      "span"
+    );
+
+    time.textContent = formatTranscriptTime(
+      cue.startTimeMs
+    );
+
+    Object.assign(time.style, {
+      color: "#c084fc",
+      fontSize: "12px",
+      fontWeight: "700",
+      lineHeight: "1.45"
+    });
+
+    const text = document.createElement(
+      "span"
+    );
+
+    text.textContent = cue.text;
+
+    Object.assign(text.style, {
+      fontSize: "16px",
+      fontWeight: "600",
+      lineHeight: "1.45"
+    });
+
+    row.append(time, text);
+
+    row.addEventListener(
+      "click",
+      (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        seekToTranscriptCue(cue);
+      }
+    );
+
+    transcriptList.appendChild(row);
+  }
+
+  if (
+    !query &&
+    activeTranscriptCueIndex >= 0
+  ) {
+    window.setTimeout(() => {
+      transcriptList
+        .querySelector(
+          `[data-transcript-cue-index="${activeTranscriptCueIndex}"]`
+        )
+        ?.scrollIntoView({
+          block: "center"
+        });
+    }, 0);
+  }
+}
+
+function updateTranscriptActiveCue() {
+  if (
+    transcriptOverlay.style.display ===
+    "none"
+  ) {
+    return;
+  }
+
+  const cues = getTranscriptCues().cues;
+  const video = getNetflixVideo();
+
+  if (!video || cues.length === 0) {
+    return;
+  }
+
+  const nextIndex = findTranscriptCueIndex(
+    cues,
+    Number(video.currentTime) * 1000
+  );
+
+  if (
+    nextIndex === activeTranscriptCueIndex
+  ) {
+    return;
+  }
+
+  const previousRow = transcriptList.querySelector(
+    `[data-transcript-cue-index="${activeTranscriptCueIndex}"]`
+  );
+  const nextRow = transcriptList.querySelector(
+    `[data-transcript-cue-index="${nextIndex}"]`
+  );
+
+  if (previousRow) {
+    styleTranscriptRow(
+      previousRow,
+      false
+    );
+  }
+
+  if (nextRow) {
+    styleTranscriptRow(nextRow, true);
+
+    if (!transcriptSearchInput.value) {
+      nextRow.scrollIntoView({
+        block: "center",
+        behavior: "smooth"
+      });
+    }
+  }
+
+  activeTranscriptCueIndex = nextIndex;
+}
+
+function captureVisibleSubtitleCue(
+  subtitleText,
+  video
+) {
+  const text = normalizeTranscriptText(
+    subtitleText
+  );
+  const currentTimeMs = video
+    ? Math.max(
+        0,
+        Number(video.currentTime) * 1000
+      )
+    : 0;
+
+  if (text === visibleSubtitleCueText) {
+    return;
+  }
+
+  if (
+    visibleSubtitleCueText &&
+    visibleSubtitleCueStartMs !== null
+  ) {
+    const previousCue =
+      visibleSubtitleCues[
+        visibleSubtitleCues.length - 1
+      ];
+
+    if (previousCue) {
+      previousCue.endTimeMs = Math.max(
+        previousCue.startTimeMs + 400,
+        currentTimeMs
+      );
+    }
+  }
+
+  visibleSubtitleCueText = text;
+
+  if (!text) {
+    visibleSubtitleCueStartMs = null;
+    return;
+  }
+
+  visibleSubtitleCueStartMs = Math.max(
+    0,
+    currentTimeMs - 180
+  );
+
+  visibleSubtitleCues.push({
+    startTimeMs: visibleSubtitleCueStartMs,
+    endTimeMs:
+      visibleSubtitleCueStartMs + 5000,
+    text
+  });
+
+  if (visibleSubtitleCues.length > 3000) {
+    visibleSubtitleCues.shift();
+  }
+
+  chooseBestSubtitleTrack(text);
+
+  if (
+    transcriptOverlay.style.display !==
+    "none" &&
+    !getActiveSubtitleTrack()
+  ) {
+    renderTranscriptPanel();
+  }
+}
+
+function receiveSubtitleTrack(track) {
+  const normalizedTrack =
+    normalizeIncomingSubtitleTrack(track);
+
+  if (!normalizedTrack) {
+    return;
+  }
+
+  const previousTrack =
+    capturedSubtitleTracks.get(
+      normalizedTrack.trackId
+    );
+
+  if (
+    previousTrack &&
+    previousTrack.cues.length >=
+      normalizedTrack.cues.length
+  ) {
+    return;
+  }
+
+  capturedSubtitleTracks.set(
+    normalizedTrack.trackId,
+    normalizedTrack
+  );
+
+  chooseBestSubtitleTrack();
+
+  if (
+    transcriptOverlay.style.display !==
+    "none"
+  ) {
+    renderTranscriptPanel();
+  }
+}
+
+window.addEventListener(
+  "message",
+  (event) => {
+    if (event.source !== window) {
+      return;
+    }
+
+    const data = event.data;
+
+    if (
+      !data ||
+      data.source !== "PAUSESPEAK_PAGE"
+    ) {
+      return;
+    }
+
+    if (
+      data.type ===
+      "PAUSESPEAK_SUBTITLE_TRACK"
+    ) {
+      receiveSubtitleTrack(data.track);
+      return;
+    }
+
+    if (
+      data.type ===
+        "PAUSESPEAK_SEEK_RESPONSE" &&
+      data.requestId ===
+        activeTranscriptSeekRequestId
+    ) {
+      transcriptStatus.textContent =
+        data.success
+          ? "Seçilen altyazı oynatılıyor."
+          : data.message ||
+            "Altyazıya gidilemedi.";
+
+      activeTranscriptSeekRequestId = "";
+    }
+  }
+);
 
   function getNetflixVideo() {
     return document.querySelector("video");
@@ -3369,6 +4220,7 @@ function renderChunkedSubtitle() {
     }
   );
 }
+
 async function loadStudyMeaning(
   selectedText,
   sentence,
@@ -6285,6 +7137,11 @@ panel.style.backgroundColor =
     getNetflixSubtitle()
   );
 
+  captureVisibleSubtitleCue(
+    newSubtitle,
+    video
+  );
+
   if (
   newSubtitle ===
   currentSubtitle
@@ -6724,6 +7581,7 @@ topControlsRow.appendChild(
   turkishTranslationSpeechToggleButton,
   automaticPauseToggleButton,
   chunkPracticeButton,
+  transcriptButton,
   usageButton,
   pauseButton,
   playButton
@@ -6748,6 +7606,54 @@ improveTranslationButton.addEventListener(
   "click",
   () => {
     void improveCurrentTranslation();
+  }
+);
+
+transcriptButton.addEventListener(
+  "click",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    renderTranscriptPanel();
+    transcriptOverlay.style.display =
+      "flex";
+    moreMenu.style.display = "none";
+
+    window.postMessage(
+      {
+        source: "PAUSESPEAK_EXTENSION",
+        type:
+          "PAUSESPEAK_SUBTITLE_TRACKS_REQUEST"
+      },
+      "*"
+    );
+  },
+  true
+);
+
+transcriptCloseButton.addEventListener(
+  "click",
+  () => {
+    transcriptOverlay.style.display =
+      "none";
+  }
+);
+
+transcriptSearchInput.addEventListener(
+  "input",
+  () => {
+    renderTranscriptPanel();
+  }
+);
+
+transcriptOverlay.addEventListener(
+  "click",
+  (event) => {
+    if (event.target === transcriptOverlay) {
+      transcriptOverlay.style.display =
+        "none";
+    }
   }
 );
 
@@ -6841,6 +7747,9 @@ document.documentElement.appendChild(
 );
 document.documentElement.appendChild(
   usageOverlay
+);
+document.documentElement.appendChild(
+  transcriptOverlay
 );
 
 const controlsToggleButton =
@@ -6988,6 +7897,10 @@ targetContainer.appendChild(
   targetContainer.appendChild(
     usageOverlay
   );
+
+  targetContainer.appendChild(
+    transcriptOverlay
+  );
 }
 
 document.addEventListener(
@@ -7018,6 +7931,8 @@ const runPauseSpeakUpdate = () => {
       "none";
     usageOverlay.style.display =
       "none";
+    transcriptOverlay.style.display =
+      "none";
 
     lastVideoFound = null;
     return;
@@ -7025,7 +7940,17 @@ const runPauseSpeakUpdate = () => {
 
   updateVideoStatus();
   updateSubtitle();
+  updateTranscriptActiveCue();
 };
+
+window.postMessage(
+  {
+    source: "PAUSESPEAK_EXTENSION",
+    type:
+      "PAUSESPEAK_SUBTITLE_TRACKS_REQUEST"
+  },
+  "*"
+);
 
 runPauseSpeakUpdate();
 

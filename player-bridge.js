@@ -5,6 +5,10 @@
 
   window.__PAUSESPEAK_PLAYER_BRIDGE_LOADED__ = true;
 
+  const capturedSubtitleTracks = new Map();
+  const inspectedSubtitleResponses = new Set();
+  const maximumSubtitleBytes = 5 * 1024 * 1024;
+
   function getNetflixPlayer() {
     const playerApp =
       window.netflix?.appContext?.state?.playerApp;
@@ -28,27 +32,659 @@
       ?.getVideoPlayerBySessionId?.(sessionId);
   }
 
+  function postPageMessage(type, payload = {}) {
+    window.postMessage(
+      {
+        source: "PAUSESPEAK_PAGE",
+        type,
+        ...payload
+      },
+      "*"
+    );
+  }
+
   function sendResponse(
+    type,
     requestId,
     success,
     message
   ) {
-    window.postMessage(
-      {
-        source: "PAUSESPEAK_PAGE",
-        type: "PAUSESPEAK_REPLAY_RESPONSE",
-        requestId,
-        success,
-        message
-      },
-      "*"
-    );
+    postPageMessage(type, {
+      requestId,
+      success,
+      message
+    });
   }
 
   function wait(milliseconds) {
     return new Promise((resolve) => {
       setTimeout(resolve, milliseconds);
     });
+  }
+
+  function cleanSubtitleText(value) {
+    const container = document.createElement("div");
+
+    container.innerHTML = String(value || "")
+      .replace(/<br\s*\/?>/gi, " ")
+      .replace(/<[^>]+>/g, " ");
+
+    return String(container.textContent || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function parseClockTime(value, timing = {}) {
+    const text = String(value || "").trim();
+
+    if (!text) {
+      return null;
+    }
+
+    const clockMatch = text.match(
+      /^(\d+):(\d{2}):(\d{2})(?:[.,](\d+))?$/
+    );
+
+    if (clockMatch) {
+      const fraction = clockMatch[4]
+        ? Number(`0.${clockMatch[4]}`)
+        : 0;
+
+      return Math.round(
+        (
+          Number(clockMatch[1]) * 3600 +
+          Number(clockMatch[2]) * 60 +
+          Number(clockMatch[3]) +
+          fraction
+        ) * 1000
+      );
+    }
+
+    const frameMatch = text.match(
+      /^(\d+):(\d{2}):(\d{2}):(\d{2})$/
+    );
+
+    if (frameMatch) {
+      const frameRate =
+        Number(timing.frameRate) || 30;
+
+      return Math.round(
+        (
+          Number(frameMatch[1]) * 3600 +
+          Number(frameMatch[2]) * 60 +
+          Number(frameMatch[3]) +
+          Number(frameMatch[4]) / frameRate
+        ) * 1000
+      );
+    }
+
+    const offsetMatch = text.match(
+      /^(-?\d+(?:\.\d+)?)(h|m|s|ms|f|t)$/
+    );
+
+    if (!offsetMatch) {
+      return null;
+    }
+
+    const amount = Number(offsetMatch[1]);
+    const unit = offsetMatch[2];
+
+    if (!Number.isFinite(amount)) {
+      return null;
+    }
+
+    if (unit === "h") {
+      return Math.round(amount * 3600000);
+    }
+
+    if (unit === "m") {
+      return Math.round(amount * 60000);
+    }
+
+    if (unit === "s") {
+      return Math.round(amount * 1000);
+    }
+
+    if (unit === "ms") {
+      return Math.round(amount);
+    }
+
+    if (unit === "f") {
+      return Math.round(
+        amount /
+          (Number(timing.frameRate) || 30) *
+          1000
+      );
+    }
+
+    return Math.round(
+      amount /
+        (Number(timing.tickRate) || 1) *
+        1000
+    );
+  }
+
+  function normalizeCues(cues) {
+    const normalized = [];
+
+    for (const cue of cues) {
+      const startTimeMs = Number(
+        cue?.startTimeMs
+      );
+      const endTimeMs = Number(
+        cue?.endTimeMs
+      );
+      const text = cleanSubtitleText(
+        cue?.text
+      );
+
+      if (
+        !Number.isFinite(startTimeMs) ||
+        !Number.isFinite(endTimeMs) ||
+        startTimeMs < 0 ||
+        endTimeMs <= startTimeMs ||
+        !text
+      ) {
+        continue;
+      }
+
+      const previous =
+        normalized[normalized.length - 1];
+
+      if (
+        previous &&
+        previous.text === text &&
+        Math.abs(
+          previous.startTimeMs - startTimeMs
+        ) < 100 &&
+        Math.abs(
+          previous.endTimeMs - endTimeMs
+        ) < 100
+      ) {
+        continue;
+      }
+
+      normalized.push({
+        startTimeMs: Math.round(startTimeMs),
+        endTimeMs: Math.round(endTimeMs),
+        text: text.slice(0, 700)
+      });
+    }
+
+    return normalized
+      .sort(
+        (first, second) =>
+          first.startTimeMs -
+            second.startTimeMs ||
+          first.endTimeMs -
+            second.endTimeMs
+      )
+      .slice(0, 10000);
+  }
+
+  function parseWebVtt(text) {
+    if (
+      !/^\s*WEBVTT\b/i.test(text) &&
+      !/-->/.test(text)
+    ) {
+      return null;
+    }
+
+    const lines = String(text || "")
+      .replace(/^\uFEFF/, "")
+      .split(/\r?\n/);
+    const cues = [];
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const timingLine = lines[index].match(
+        /((?:\d+:)?\d{2}:\d{2}[.,]\d+)\s+-->\s+((?:\d+:)?\d{2}:\d{2}[.,]\d+)/
+      );
+
+      if (!timingLine) {
+        continue;
+      }
+
+      const normalizeVttTime = (value) => {
+        const pieces = value.replace(",", ".").split(":");
+
+        if (pieces.length === 2) {
+          return `00:${value.replace(",", ".")}`;
+        }
+
+        return value.replace(",", ".");
+      };
+
+      const startTimeMs = parseClockTime(
+        normalizeVttTime(timingLine[1])
+      );
+      const endTimeMs = parseClockTime(
+        normalizeVttTime(timingLine[2])
+      );
+      const textLines = [];
+
+      index += 1;
+
+      while (
+        index < lines.length &&
+        lines[index].trim() !== ""
+      ) {
+        textLines.push(lines[index]);
+        index += 1;
+      }
+
+      cues.push({
+        startTimeMs,
+        endTimeMs,
+        text: textLines.join(" ")
+      });
+    }
+
+    const normalizedCues = normalizeCues(cues);
+
+    return normalizedCues.length > 1
+      ? {
+          language: "",
+          format: "webvtt",
+          cues: normalizedCues
+        }
+      : null;
+  }
+
+  function parseTtml(text) {
+    if (!/<(?:\w+:)?tt\b/i.test(text)) {
+      return null;
+    }
+
+    const parser = new DOMParser();
+    const documentNode = parser.parseFromString(
+      text,
+      "application/xml"
+    );
+
+    if (
+      documentNode.querySelector("parsererror")
+    ) {
+      return null;
+    }
+
+    const root = documentNode.documentElement;
+    const timing = {
+      frameRate:
+        root.getAttribute("ttp:frameRate") ||
+        root.getAttribute("frameRate"),
+      tickRate:
+        root.getAttribute("ttp:tickRate") ||
+        root.getAttribute("tickRate")
+    };
+    const language =
+      root.getAttribute("xml:lang") ||
+      root.getAttribute("lang") ||
+      "";
+    const paragraphs = [
+      ...documentNode.getElementsByTagNameNS(
+        "*",
+        "p"
+      )
+    ];
+    const cues = [];
+
+    for (const paragraph of paragraphs) {
+      const begin = parseClockTime(
+        paragraph.getAttribute("begin"),
+        timing
+      );
+      let end = parseClockTime(
+        paragraph.getAttribute("end"),
+        timing
+      );
+
+      if (end === null) {
+        const duration = parseClockTime(
+          paragraph.getAttribute("dur"),
+          timing
+        );
+
+        if (
+          begin !== null &&
+          duration !== null
+        ) {
+          end = begin + duration;
+        }
+      }
+
+      cues.push({
+        startTimeMs: begin,
+        endTimeMs: end,
+        text: paragraph.textContent
+      });
+    }
+
+    const normalizedCues = normalizeCues(cues);
+
+    return normalizedCues.length > 1
+      ? {
+          language,
+          format: "ttml",
+          cues: normalizedCues
+        }
+      : null;
+  }
+
+  function parseSubtitleDocument(text) {
+    const source = String(text || "").trim();
+
+    if (!source || source.length > maximumSubtitleBytes) {
+      return null;
+    }
+
+    return parseWebVtt(source) || parseTtml(source);
+  }
+
+  function createTrackId(url, parsedTrack) {
+    const source = [
+      String(url || "").replace(/[?#].*$/, ""),
+      parsedTrack.language,
+      parsedTrack.cues[0]?.startTimeMs,
+      parsedTrack.cues.at(-1)?.endTimeMs
+    ].join("|");
+    let hash = 2166136261;
+
+    for (let index = 0; index < source.length; index += 1) {
+      hash ^= source.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+
+    return `track-${(hash >>> 0).toString(16)}`;
+  }
+
+  function publishSubtitleTrack(url, parsedTrack) {
+    const trackId = createTrackId(
+      url,
+      parsedTrack
+    );
+    const previousTrack =
+      capturedSubtitleTracks.get(trackId);
+
+    if (
+      previousTrack &&
+      previousTrack.cues.length >=
+        parsedTrack.cues.length
+    ) {
+      return;
+    }
+
+    const track = {
+      trackId,
+      language: parsedTrack.language,
+      format: parsedTrack.format,
+      cues: parsedTrack.cues
+    };
+
+    capturedSubtitleTracks.set(
+      trackId,
+      track
+    );
+
+    postPageMessage(
+      "PAUSESPEAK_SUBTITLE_TRACK",
+      { track }
+    );
+  }
+
+  function looksLikeSubtitleResponse(
+    url,
+    contentType,
+    contentLength
+  ) {
+    if (
+      Number.isFinite(contentLength) &&
+      contentLength > maximumSubtitleBytes
+    ) {
+      return false;
+    }
+
+    const normalizedType = String(
+      contentType || ""
+    ).toLowerCase();
+    const normalizedUrl = String(
+      url || ""
+    ).toLowerCase();
+
+    if (
+      /(?:video|audio|image)\//.test(
+        normalizedType
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      /(?:vtt|ttml|xml|dfxp|text\/plain)/.test(
+        normalizedType
+      )
+    ) {
+      return true;
+    }
+
+    return /(?:timedtext|subtitle|caption|\.vtt(?:[?#]|$)|\.ttml(?:[?#]|$)|\.dfxp(?:[?#]|$))/.test(
+      normalizedUrl
+    );
+  }
+
+  async function inspectSubtitleText(
+    url,
+    contentType,
+    contentLength,
+    readText
+  ) {
+    if (
+      !looksLikeSubtitleResponse(
+        url,
+        contentType,
+        contentLength
+      )
+    ) {
+      return;
+    }
+
+    const inspectionKey = [
+      url,
+      contentLength,
+      contentType
+    ].join("|");
+
+    if (inspectedSubtitleResponses.has(inspectionKey)) {
+      return;
+    }
+
+    inspectedSubtitleResponses.add(inspectionKey);
+
+    if (inspectedSubtitleResponses.size > 300) {
+      const firstKey =
+        inspectedSubtitleResponses
+          .values()
+          .next()
+          .value;
+
+      inspectedSubtitleResponses.delete(firstKey);
+    }
+
+    try {
+      const text = await readText();
+      const parsedTrack =
+        parseSubtitleDocument(text);
+
+      if (parsedTrack) {
+        publishSubtitleTrack(
+          url,
+          parsedTrack
+        );
+      }
+    } catch (error) {
+      console.debug(
+        "PauseSpeak altyazı yanıtı okunamadı:",
+        error
+      );
+    }
+  }
+
+  function installFetchObserver() {
+    if (
+      typeof window.fetch !== "function" ||
+      window.fetch.__pauseSpeakObserved
+    ) {
+      return;
+    }
+
+    const originalFetch = window.fetch;
+
+    const observedFetch = async function (...args) {
+      const response = await Reflect.apply(
+        originalFetch,
+        this,
+        args
+      );
+
+      try {
+        const clone = response.clone();
+        const requestUrl =
+          response.url ||
+          (typeof args[0] === "string"
+            ? args[0]
+            : args[0]?.url) ||
+          "";
+        const contentType =
+          clone.headers.get("content-type") || "";
+        const contentLength = Number(
+          clone.headers.get("content-length")
+        );
+
+        void inspectSubtitleText(
+          requestUrl,
+          contentType,
+          contentLength,
+          () => clone.text()
+        );
+      } catch (error) {
+        console.debug(
+          "PauseSpeak fetch altyazı gözlemi başarısız:",
+          error
+        );
+      }
+
+      return response;
+    };
+
+    Object.defineProperty(
+      observedFetch,
+      "__pauseSpeakObserved",
+      {
+        value: true
+      }
+    );
+
+    window.fetch = observedFetch;
+  }
+
+  function installXhrObserver() {
+    const prototype =
+      window.XMLHttpRequest?.prototype;
+
+    if (
+      !prototype ||
+      prototype.open.__pauseSpeakObserved
+    ) {
+      return;
+    }
+
+    const originalOpen = prototype.open;
+
+    const observedOpen = function (
+      method,
+      url,
+      ...rest
+    ) {
+      this.__pauseSpeakUrl = String(
+        url || ""
+      );
+
+      this.addEventListener(
+        "load",
+        () => {
+          try {
+            const contentType =
+              this.getResponseHeader(
+                "content-type"
+              ) || "";
+            const contentLength = Number(
+              this.getResponseHeader(
+                "content-length"
+              )
+            );
+
+            void inspectSubtitleText(
+              this.responseURL ||
+                this.__pauseSpeakUrl,
+              contentType,
+              contentLength,
+              async () => {
+                if (
+                  !this.responseType ||
+                  this.responseType === "text"
+                ) {
+                  return this.responseText;
+                }
+
+                if (
+                  this.responseType === "document" &&
+                  this.responseXML
+                ) {
+                  return new XMLSerializer()
+                    .serializeToString(
+                      this.responseXML
+                    );
+                }
+
+                if (
+                  this.responseType === "arraybuffer" &&
+                  this.response instanceof ArrayBuffer &&
+                  this.response.byteLength <=
+                    maximumSubtitleBytes
+                ) {
+                  return new TextDecoder().decode(
+                    this.response
+                  );
+                }
+
+                return "";
+              }
+            );
+          } catch (error) {
+            console.debug(
+              "PauseSpeak XHR altyazı gözlemi başarısız:",
+              error
+            );
+          }
+        },
+        { once: true }
+      );
+
+      return Reflect.apply(
+        originalOpen,
+        this,
+        [method, url, ...rest]
+      );
+    };
+
+    Object.defineProperty(
+      observedOpen,
+      "__pauseSpeakObserved",
+      {
+        value: true
+      }
+    );
+
+    prototype.open = observedOpen;
   }
 
   async function waitForSeek(
@@ -83,7 +719,8 @@
     }
   }
 
-  async function replaySentence(
+  async function seekAndPlay(
+    responseType,
     requestId,
     targetTimeMs
   ) {
@@ -95,6 +732,7 @@
         typeof player.seek !== "function"
       ) {
         sendResponse(
+          responseType,
           requestId,
           false,
           "Netflix oynatıcı kontrolü bulunamadı."
@@ -115,8 +753,7 @@
       if (typeof player.play === "function") {
         await Promise.resolve(player.play());
       } else {
-        const video =
-          document.querySelector("video");
+        const video = document.querySelector("video");
 
         if (!video) {
           throw new Error(
@@ -128,23 +765,28 @@
       }
 
       sendResponse(
+        responseType,
         requestId,
         true,
-        "Cümle tekrar oynatılıyor."
+        "Seçilen altyazı oynatılıyor."
       );
     } catch (error) {
       console.error(
-        "PauseSpeak tekrar oynatma hatası:",
+        "PauseSpeak zaman atlama hatası:",
         error
       );
 
       sendResponse(
+        responseType,
         requestId,
         false,
-        "Netflix tekrar oynatma işlemini reddetti."
+        "Netflix zaman atlama işlemini reddetti."
       );
     }
   }
+
+  installFetchObserver();
+  installXhrObserver();
 
   window.addEventListener("message", (event) => {
     if (event.source !== window) {
@@ -155,10 +797,38 @@
 
     if (
       !data ||
-      data.source !== "PAUSESPEAK_EXTENSION" ||
-      data.type !==
-        "PAUSESPEAK_REPLAY_REQUEST"
+      data.source !== "PAUSESPEAK_EXTENSION"
     ) {
+      return;
+    }
+
+    if (
+      data.type ===
+      "PAUSESPEAK_SUBTITLE_TRACKS_REQUEST"
+    ) {
+      for (const track of
+        capturedSubtitleTracks.values()) {
+        postPageMessage(
+          "PAUSESPEAK_SUBTITLE_TRACK",
+          { track }
+        );
+      }
+
+      return;
+    }
+
+    const requestSettings = {
+      PAUSESPEAK_REPLAY_REQUEST: {
+        responseType:
+          "PAUSESPEAK_REPLAY_RESPONSE"
+      },
+      PAUSESPEAK_SEEK_REQUEST: {
+        responseType:
+          "PAUSESPEAK_SEEK_RESPONSE"
+      }
+    }[data.type];
+
+    if (!requestSettings) {
       return;
     }
 
@@ -171,14 +841,16 @@
       targetTimeMs < 0
     ) {
       sendResponse(
+        requestSettings.responseType,
         data.requestId,
         false,
-        "Geçersiz cümle başlangıç zamanı."
+        "Geçersiz altyazı başlangıç zamanı."
       );
       return;
     }
 
-    replaySentence(
+    void seekAndPlay(
+      requestSettings.responseType,
       data.requestId,
       Math.round(targetTimeMs)
     );
