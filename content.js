@@ -140,6 +140,18 @@ const studyMeaningApiUrl =
   "https://pausespeak.onrender.com/study-meaning";
 
 const studyMeaningTimeoutMs = 20000;
+
+const usageSummaryApiUrl =
+  "https://pausespeak.onrender.com/usage/summary";
+
+const usageImportApiUrl =
+  "https://pausespeak.onrender.com/usage/import";
+
+const usageCounterApiUrl =
+  "https://pausespeak.onrender.com/usage/counter/start";
+
+const usageTtsDurationApiUrl =
+  "https://pausespeak.onrender.com/usage/tts-duration";
   const pronunciationSuccessThreshold = 0.78;
 
   const SpeechRecognitionClass =
@@ -1260,6 +1272,22 @@ moreButton.textContent =
 const usageStorageKey =
   "pausespeak-daily-usage-v1";
 
+const usageSyncCodeStorageKey =
+  "pausespeakUsageSyncCodeV1";
+
+const usageDeviceIdStorageKey =
+  "pausespeakUsageDeviceIdV1";
+
+const usageMigrationStorageKey =
+  "pausespeak-usage-sync-migrations-v1";
+
+let usageSyncCode = "";
+let usageDeviceId = "";
+let synchronizedUsageStore = null;
+let usageSyncState = "local";
+let usageSyncError = "";
+let usageRefreshRequestId = 0;
+
 const usageOperationLabels = {
   normal_translation:
     "Normal çeviri",
@@ -1305,6 +1333,347 @@ function getLocalUsageDate(
 
   return `${year}-${month}-${day}`;
 }
+
+function normalizeUsageSyncCode(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+
+  return (
+    normalized.length >= 16 &&
+    normalized.length <= 96 &&
+    /^[A-Z0-9-]+$/.test(normalized)
+  )
+    ? normalized
+    : "";
+}
+
+function getExtensionStorage(keys) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(
+      keys,
+      (result) => resolve(result || {})
+    );
+  });
+}
+
+function setExtensionStorage(values) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set(
+      values,
+      () => resolve()
+    );
+  });
+}
+
+function createUsageDeviceId() {
+  if (typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+
+  return [...bytes]
+    .map((value) =>
+      value.toString(16).padStart(2, "0")
+    )
+    .join("");
+}
+
+function getUsageSyncHeaders(
+  includeJson = true
+) {
+  const headers = {};
+
+  if (includeJson) {
+    headers["Content-Type"] =
+      "application/json";
+  }
+
+  if (usageSyncCode) {
+    headers["X-PauseSpeak-Sync-Code"] =
+      usageSyncCode;
+    headers["X-PauseSpeak-Local-Date"] =
+      getLocalUsageDate();
+  }
+
+  return headers;
+}
+
+async function getUsageSyncFingerprint() {
+  const data = new TextEncoder().encode(
+    usageSyncCode
+  );
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    data
+  );
+
+  return [...new Uint8Array(digest)]
+    .map((value) =>
+      value.toString(16).padStart(2, "0")
+    )
+    .join("");
+}
+
+function readUsageMigrationFingerprints() {
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(
+        usageMigrationStorageKey
+      ) || "[]"
+    );
+
+    return Array.isArray(parsed)
+      ? parsed.filter(
+          (value) =>
+            typeof value === "string"
+        )
+      : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveUsageMigrationFingerprint(
+  fingerprint
+) {
+  try {
+    const fingerprints = [
+      ...new Set([
+        ...readUsageMigrationFingerprints(),
+        fingerprint
+      ])
+    ].slice(-10);
+
+    window.localStorage.setItem(
+      usageMigrationStorageKey,
+      JSON.stringify(fingerprints)
+    );
+  } catch (error) {
+    console.warn(
+      "PauseSpeak aktarım kaydı yazılamadı:",
+      error
+    );
+  }
+}
+
+async function importLocalUsageOnce() {
+  if (!usageSyncCode || !usageDeviceId) {
+    return;
+  }
+
+  const fingerprint =
+    await getUsageSyncFingerprint();
+
+  if (
+    readUsageMigrationFingerprints()
+      .includes(fingerprint)
+  ) {
+    return;
+  }
+
+  const response = await fetch(
+    usageImportApiUrl,
+    {
+      method: "POST",
+      headers: getUsageSyncHeaders(),
+      body: JSON.stringify({
+        deviceId: usageDeviceId,
+        days: readUsageStore().days
+      })
+    }
+  );
+
+  if (!response.ok) {
+    const data = await response
+      .json()
+      .catch(() => ({}));
+
+    throw new Error(
+      data.error ||
+      "Yerel kullanım aktarılamadı."
+    );
+  }
+
+  saveUsageMigrationFingerprint(
+    fingerprint
+  );
+}
+
+async function fetchSynchronizedUsageStore() {
+  const response = await fetch(
+    `${usageSummaryApiUrl}?today=` +
+      encodeURIComponent(
+        getLocalUsageDate()
+      ),
+    {
+      headers: getUsageSyncHeaders(false)
+    }
+  );
+
+  const data = await response
+    .json()
+    .catch(() => ({}));
+
+  if (
+    !response.ok ||
+    !data.store ||
+    typeof data.store !== "object"
+  ) {
+    throw new Error(
+      data.error ||
+      "Ortak sayaç okunamadı."
+    );
+  }
+
+  return data.store;
+}
+
+async function refreshUsagePanel() {
+  const requestId =
+    ++usageRefreshRequestId;
+
+  synchronizedUsageStore = null;
+  usageSyncError = "";
+  usageSyncState = usageSyncCode
+    ? "loading"
+    : "local";
+  renderUsagePanel();
+
+  if (!usageSyncCode) {
+    return;
+  }
+
+  try {
+    await importLocalUsageOnce();
+
+    const store =
+      await fetchSynchronizedUsageStore();
+
+    if (requestId !== usageRefreshRequestId) {
+      return;
+    }
+
+    synchronizedUsageStore = store;
+    usageSyncState = "synced";
+    renderUsagePanel();
+  } catch (error) {
+    if (requestId !== usageRefreshRequestId) {
+      return;
+    }
+
+    synchronizedUsageStore = null;
+    usageSyncState = "error";
+    usageSyncError =
+      error?.message ||
+      "Ortak sayaç okunamadı.";
+    renderUsagePanel();
+  }
+}
+
+async function syncTtsDuration(
+  eventId,
+  seconds
+) {
+  if (
+    !usageSyncCode ||
+    !eventId ||
+    !Number.isFinite(seconds) ||
+    seconds <= 0
+  ) {
+    return;
+  }
+
+  try {
+    await fetch(
+      usageTtsDurationApiUrl,
+      {
+        method: "POST",
+        headers: getUsageSyncHeaders(),
+        body: JSON.stringify({
+          eventId,
+          seconds
+        })
+      }
+    );
+  } catch (error) {
+    console.warn(
+      "PauseSpeak ses süresi eşitlenemedi:",
+      error
+    );
+  }
+}
+
+async function initializeUsageSync() {
+  const stored = await getExtensionStorage([
+    usageSyncCodeStorageKey,
+    usageDeviceIdStorageKey
+  ]);
+
+  usageSyncCode = normalizeUsageSyncCode(
+    stored[usageSyncCodeStorageKey]
+  );
+  usageDeviceId = String(
+    stored[usageDeviceIdStorageKey] || ""
+  );
+
+  if (!usageDeviceId) {
+    usageDeviceId = createUsageDeviceId();
+
+    await setExtensionStorage({
+      [usageDeviceIdStorageKey]:
+        usageDeviceId
+    });
+  }
+
+  if (usageSyncCode) {
+    if (
+      usageOverlay.style.display ===
+      "flex"
+    ) {
+      void refreshUsagePanel();
+    } else {
+      void importLocalUsageOnce().catch(
+        () => {}
+      );
+    }
+  }
+}
+
+chrome.storage.onChanged.addListener(
+  (changes, areaName) => {
+    if (
+      areaName !== "local" ||
+      !changes[usageSyncCodeStorageKey]
+    ) {
+      return;
+    }
+
+    usageSyncCode = normalizeUsageSyncCode(
+      changes[usageSyncCodeStorageKey]
+        .newValue
+    );
+    synchronizedUsageStore = null;
+    usageSyncState = usageSyncCode
+      ? "loading"
+      : "local";
+
+    if (
+      usageOverlay.style.display ===
+      "flex"
+    ) {
+      void refreshUsagePanel();
+    } else if (usageSyncCode) {
+      void importLocalUsageOnce().catch(
+        () => {}
+      );
+    }
+  }
+);
+
+void initializeUsageSync();
 
 function readUsageStore() {
   try {
@@ -1457,11 +1826,17 @@ function updateUsageRecord(
 
   saveUsageStore(store);
 
+  synchronizedUsageStore = null;
+
   if (
     usageOverlay.style.display ===
     "flex"
   ) {
-    renderUsagePanel();
+    if (usageSyncCode) {
+      void refreshUsagePanel();
+    } else {
+      renderUsagePanel();
+    }
   }
 }
 
@@ -1545,7 +1920,8 @@ function recordTtsRequest(
 
 function recordTtsDuration(
   operation,
-  seconds
+  seconds,
+  synchronizedEventId = ""
 ) {
   if (
     !Number.isFinite(seconds) ||
@@ -1562,6 +1938,11 @@ function recordTtsDuration(
       estimatedUsd:
         seconds * 0.0144 / 60
     }
+  );
+
+  void syncTtsDuration(
+    synchronizedEventId,
+    seconds
   );
 }
 
@@ -1584,12 +1965,56 @@ function formatUsageCost(value) {
     .replace(".", ",");
 }
 
-function startNewUsageCounter() {
+async function startNewUsageCounter() {
   const confirmed = window.confirm(
     "Yeni karşılaştırma sayacı 0'dan başlasın mı? Bugünkü ve önceki günlerdeki toplamlar silinmeyecek."
   );
 
   if (!confirmed) {
+    return;
+  }
+
+  if (usageSyncCode) {
+    usageCounterButton.disabled = true;
+
+    try {
+      const response = await fetch(
+        usageCounterApiUrl,
+        {
+          method: "POST",
+          headers: getUsageSyncHeaders(),
+          body: "{}"
+        }
+      );
+      const data = await response
+        .json()
+        .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+          "Ortak sayaç başlatılamadı."
+        );
+      }
+
+      const store = readUsageStore();
+
+      store.activeCounter = {
+        startedAt: data.startedAt,
+        operations: {}
+      };
+
+      saveUsageStore(store);
+      await refreshUsagePanel();
+    } catch (error) {
+      window.alert(
+        error?.message ||
+        "Ortak sayaç başlatılamadı."
+      );
+    } finally {
+      usageCounterButton.disabled = false;
+    }
+
     return;
   }
 
@@ -1787,7 +2212,9 @@ function getSortedUsageRecords(
 }
 
 function renderUsagePanel() {
-  const store = readUsageStore();
+  const store =
+    synchronizedUsageStore ||
+    readUsageStore();
   const today = getLocalUsageDate();
   const operations =
     store.days[today]?.operations || {};
@@ -1797,6 +2224,52 @@ function renderUsagePanel() {
     );
 
   usageContent.replaceChildren();
+
+  const syncStatus =
+    document.createElement("div");
+
+  if (!usageSyncCode) {
+    syncStatus.textContent =
+      "Bu cihazın yerel kaydı gösteriliyor. Ortak sayaç için uzantı penceresinde bir senkronizasyon kodu oluştur.";
+  } else if (
+    usageSyncState === "loading"
+  ) {
+    syncStatus.textContent =
+      "Bilgisayar ve tablet kullanımı eşitleniyor...";
+  } else if (
+    usageSyncState === "synced"
+  ) {
+    syncStatus.textContent =
+      "Ortak sayaç güncel · Bilgisayar ve tablet birlikte";
+  } else {
+    syncStatus.textContent =
+      `Ortak sayaca ulaşılamadı; bu cihazın yerel kaydı gösteriliyor. ${usageSyncError}`;
+  }
+
+  Object.assign(
+    syncStatus.style,
+    {
+      marginBottom: "14px",
+      padding: "10px 12px",
+      borderRadius: "9px",
+      backgroundColor:
+        usageSyncState === "synced"
+          ? "rgba(34, 197, 94, 0.14)"
+          : usageSyncState === "error"
+            ? "rgba(239, 68, 68, 0.14)"
+            : "rgba(59, 130, 246, 0.12)",
+      color:
+        usageSyncState === "synced"
+          ? "#bbf7d0"
+          : usageSyncState === "error"
+            ? "#fecaca"
+            : "#bfdbfe",
+      fontSize: "12px",
+      lineHeight: "1.45"
+    }
+  );
+
+  usageContent.appendChild(syncStatus);
 
   const todayTitle =
     document.createElement("div");
@@ -2883,10 +3356,8 @@ if (
       {
         method: "POST",
 
-        headers: {
-          "Content-Type":
-            "application/json"
-        },
+        headers:
+          getUsageSyncHeaders(),
 
        body: JSON.stringify({
   text: text.trim(),
@@ -2905,6 +3376,13 @@ if (
         text.trim()
       );
     }
+
+    const synchronizedTtsEventId =
+      response.ok
+        ? response.headers.get(
+            "x-pausespeak-usage-event"
+          ) || ""
+        : "";
 
 if (
   requestNumber !==
@@ -2958,7 +3436,8 @@ if (
             language === "en"
               ? "tts_english"
               : "tts_turkish",
-            createdAudio.duration
+            createdAudio.duration,
+            synchronizedTtsEventId
           );
         },
         {
@@ -3045,10 +3524,8 @@ function stopNormalTranslation() {
         {
           method: "POST",
 
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
+          headers:
+            getUsageSyncHeaders(),
 
           body: JSON.stringify({
             text,
@@ -3264,10 +3741,8 @@ async function improveCurrentTranslation() {
         {
           method: "POST",
 
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
+          headers:
+            getUsageSyncHeaders(),
 
           body: JSON.stringify({
             text,
@@ -4608,10 +5083,8 @@ async function requestStudyMeaning(
         {
           method: "POST",
 
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
+          headers:
+            getUsageSyncHeaders(),
 
   body: JSON.stringify({
   selectedText,
@@ -4736,10 +5209,8 @@ async function requestStudySegments(
       {
         method: "POST",
 
-        headers: {
-          "Content-Type":
-            "application/json"
-        },
+        headers:
+          getUsageSyncHeaders(),
 
    body: JSON.stringify({
   text: sentence,
@@ -4980,10 +5451,8 @@ async function requestSubtitleChunks(
         {
           method: "POST",
 
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
+          headers:
+            getUsageSyncHeaders(),
 
           body: JSON.stringify({
             text: sentence
@@ -5124,10 +5593,8 @@ async function requestSubtitleChunkTranslation(
       {
         method: "POST",
 
-        headers: {
-          "Content-Type":
-            "application/json"
-        },
+        headers:
+          getUsageSyncHeaders(),
 
         body: JSON.stringify({
           text,
@@ -5424,10 +5891,8 @@ async function loadStudySegments(
         {
           method: "POST",
 
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
+          headers:
+            getUsageSyncHeaders(),
 
           body: JSON.stringify({
             text: sentence
@@ -7663,7 +8128,7 @@ usageButton.addEventListener(
     event.preventDefault();
     event.stopPropagation();
 
-    renderUsagePanel();
+    void refreshUsagePanel();
     usageOverlay.style.display =
       "flex";
     moreMenu.style.display =
@@ -7686,8 +8151,21 @@ usageCounterButton.addEventListener(
     event.preventDefault();
     event.stopPropagation();
 
-    startNewUsageCounter();
+    void startNewUsageCounter();
   }
+);
+
+window.setInterval(
+  () => {
+    if (
+      usageSyncCode &&
+      usageOverlay.style.display ===
+        "flex"
+    ) {
+      void refreshUsagePanel();
+    }
+  },
+  30000
 );
 
 usageOverlay.addEventListener(

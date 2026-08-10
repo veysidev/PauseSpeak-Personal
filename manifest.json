@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
 "name": "PauseSpeak Personal",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "Video izlerken konuşma pratiği yapmaya yardımcı olan uzantı.",
   "action": {
     "default_popup": "popup.html",
@@ -12,6 +12,9 @@
   "http://127.0.0.1:3000/*",
   "https://pausespeak.onrender.com/*"
 ],
+  "permissions": [
+    "storage"
+  ],
   "content_scripts": [
     {
       "matches": [

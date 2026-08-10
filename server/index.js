@@ -1,6 +1,12 @@
 const express = require("express");
 const cors = require("cors");
 const { rateLimit } = require("express-rate-limit");
+const {
+  UsageStore,
+  hashSyncCode,
+  normalizeDate,
+  normalizeSyncCode
+} = require("./usage-store");
 require("dotenv").config();
 
 const app = express();
@@ -30,11 +36,24 @@ const openAITtsVoice =
   "marin";
 let openAIClientPromise = null;
 
-app.use(cors());
+const usageStore = new UsageStore({
+  databaseUrl:
+    process.env.DATABASE_URL || "",
+  useSsl:
+    process.env.DATABASE_SSL !== "false"
+});
+
+app.use(
+  cors({
+    exposedHeaders: [
+      "X-PauseSpeak-Usage-Event"
+    ]
+  })
+);
 
 app.use(
   express.json({
-    limit: "20kb"
+    limit: "256kb"
   })
 );
 const apiLimiter = rateLimit({
@@ -223,6 +242,166 @@ function mergeOpenAIUsage(
   );
 
   return merged;
+}
+
+const usageModelPrices = {
+  "gpt-5.6-luna": {
+    input: 0.2,
+    cachedInput: 0.02,
+    output: 1.2
+  },
+  "gpt-5.6-terra": {
+    input: 2,
+    cachedInput: 0.2,
+    output: 12
+  }
+};
+
+function estimateTextUsageCost(
+  model,
+  usage
+) {
+  const prices = usageModelPrices[model];
+
+  if (!prices) {
+    return 0;
+  }
+
+  const inputTokens =
+    Number(usage?.inputTokens) || 0;
+  const cachedInputTokens = Math.min(
+    inputTokens,
+    Number(usage?.cachedInputTokens) || 0
+  );
+  const outputTokens =
+    Number(usage?.outputTokens) || 0;
+
+  return (
+    (
+      inputTokens - cachedInputTokens
+    ) * prices.input +
+    cachedInputTokens *
+      prices.cachedInput +
+    outputTokens * prices.output
+  ) / 1000000;
+}
+
+function getUsageAccountHash(request) {
+  return hashSyncCode(
+    request.get(
+      "x-pausespeak-sync-code"
+    )
+  );
+}
+
+function getUsageLocalDate(request) {
+  return normalizeDate(
+    request.get(
+      "x-pausespeak-local-date"
+    )
+  ) || new Date()
+    .toISOString()
+    .slice(0, 10);
+}
+
+function getTranslationUsageOperation(
+  translationMode,
+  improve
+) {
+  if (translationMode === "chunk") {
+    return improve
+      ? "improve_chunk"
+      : "chunk_translation";
+  }
+
+  return improve
+    ? "improve_translation"
+    : "normal_translation";
+}
+
+async function recordSynchronizedUsage(
+  request,
+  {
+    operation,
+    model,
+    usage,
+    ttsCharacters = 0
+  }
+) {
+  const accountHash =
+    getUsageAccountHash(request);
+
+  if (
+    !accountHash ||
+    !usageStore.isConfigured()
+  ) {
+    return "";
+  }
+
+  const normalizedUsage = {
+    ...usage,
+    ttsCharacters,
+    estimatedUsd:
+      operation.startsWith("tts_")
+        ? (
+            ttsCharacters / 4 * 0.6
+          ) / 1000000
+        : estimateTextUsageCost(
+            model,
+            usage
+          )
+  };
+
+  try {
+    return await usageStore.recordEvent(
+      accountHash,
+      {
+        localDate:
+          getUsageLocalDate(request),
+        operation,
+        model,
+        usage: normalizedUsage
+      }
+    );
+  } catch (error) {
+    console.error(
+      "PauseSpeak ortak sayaç yazma hatası:",
+      error?.message
+    );
+
+    return "";
+  }
+}
+
+function requireUsageAccount(
+  request,
+  response
+) {
+  const syncCode = normalizeSyncCode(
+    request.get(
+      "x-pausespeak-sync-code"
+    )
+  );
+
+  if (!syncCode) {
+    response.status(401).json({
+      success: false,
+      error:
+        "Geçerli bir senkronizasyon kodu gönderilmedi."
+    });
+    return "";
+  }
+
+  if (!usageStore.isConfigured()) {
+    response.status(503).json({
+      success: false,
+      error:
+        "Ortak sayaç veritabanı henüz yapılandırılmadı."
+    });
+    return "";
+  }
+
+  return hashSyncCode(syncCode);
 }
 
 function removeSubtitleDescriptions(
@@ -1542,8 +1721,187 @@ app.get(
 
       apiKeyConfigured: Boolean(
         process.env.OPENAI_API_KEY
-      )
+      ),
+
+      usageDatabaseConfigured:
+        usageStore.isConfigured()
     });
+  }
+);
+
+app.get(
+  "/usage/summary",
+  async (request, response) => {
+    const accountHash =
+      requireUsageAccount(
+        request,
+        response
+      );
+
+    if (!accountHash) {
+      return;
+    }
+
+    const today = normalizeDate(
+      request.query?.today
+    );
+
+    if (!today) {
+      return response.status(400).json({
+        success: false,
+        error:
+          "Geçerli bir yerel tarih gönderilmedi."
+      });
+    }
+
+    try {
+      const store =
+        await usageStore.getSummary(
+          accountHash,
+          today
+        );
+
+      return response.json({
+        success: true,
+        store
+      });
+    } catch (error) {
+      console.error(
+        "PauseSpeak ortak sayaç okuma hatası:",
+        error?.message
+      );
+
+      return response.status(503).json({
+        success: false,
+        error:
+          "Ortak sayaç şu anda okunamadı."
+      });
+    }
+  }
+);
+
+app.post(
+  "/usage/import",
+  async (request, response) => {
+    const accountHash =
+      requireUsageAccount(
+        request,
+        response
+      );
+
+    if (!accountHash) {
+      return;
+    }
+
+    try {
+      const imported =
+        await usageStore.importLegacy(
+          accountHash,
+          request.body?.deviceId,
+          request.body?.days
+        );
+
+      return response.json({
+        success: true,
+        imported
+      });
+    } catch (error) {
+      console.error(
+        "PauseSpeak geçmiş kullanım aktarım hatası:",
+        error?.message
+      );
+
+      return response.status(400).json({
+        success: false,
+        error:
+          "Geçmiş kullanım sunucuya aktarılamadı."
+      });
+    }
+  }
+);
+
+app.post(
+  "/usage/counter/start",
+  async (request, response) => {
+    const accountHash =
+      requireUsageAccount(
+        request,
+        response
+      );
+
+    if (!accountHash) {
+      return;
+    }
+
+    try {
+      const startedAt =
+        await usageStore.startCounter(
+          accountHash
+        );
+
+      return response.json({
+        success: true,
+        startedAt
+      });
+    } catch (error) {
+      console.error(
+        "PauseSpeak ortak sayaç başlatma hatası:",
+        error?.message
+      );
+
+      return response.status(503).json({
+        success: false,
+        error:
+          "Ortak sayaç şu anda başlatılamadı."
+      });
+    }
+  }
+);
+
+app.post(
+  "/usage/tts-duration",
+  async (request, response) => {
+    const accountHash =
+      requireUsageAccount(
+        request,
+        response
+      );
+
+    if (!accountHash) {
+      return;
+    }
+
+    try {
+      const updated =
+        await usageStore.updateTtsDuration(
+          accountHash,
+          request.body?.eventId,
+          request.body?.seconds
+        );
+
+      if (!updated) {
+        return response.status(404).json({
+          success: false,
+          error:
+            "Ses kullanım kaydı bulunamadı."
+        });
+      }
+
+      return response.json({
+        success: true
+      });
+    } catch (error) {
+      console.error(
+        "PauseSpeak ses süresi sayaç hatası:",
+        error?.message
+      );
+
+      return response.status(503).json({
+        success: false,
+        error:
+          "Ses süresi ortak sayaca eklenemedi."
+      });
+    }
   }
 );
 
@@ -1730,6 +2088,23 @@ app.post(
         );
       }
 
+      const usage = normalizeOpenAIUsage(
+        openAIResponse.usage
+      );
+
+      await recordSynchronizedUsage(
+        request,
+        {
+          operation:
+            getTranslationUsageOperation(
+              translationMode,
+              improve
+            ),
+          model: selectedModel,
+          usage
+        }
+      );
+
 return response.json({
   success: true,
 
@@ -1741,9 +2116,7 @@ return response.json({
 
   cached: false,
 
-  usage: normalizeOpenAIUsage(
-    openAIResponse.usage
-  )
+  usage
 });
     } catch (error) {
       console.error(
@@ -1972,6 +2345,20 @@ if (
           });
       }
 
+  const usageModel =
+    usesContextExpressionMode
+      ? openAITerraModel
+      : openAIModel;
+
+  await recordSynchronizedUsage(
+    request,
+    {
+      operation: "study_meaning",
+      model: usageModel,
+      usage
+    }
+  );
+
   return response.json({
   success: true,
 
@@ -1991,9 +2378,7 @@ if (
 
   provider: "openai",
 
-  model: usesContextExpressionMode
-    ? openAITerraModel
-    : openAIModel,
+  model: usageModel,
 
   usage
 });
@@ -2099,6 +2484,23 @@ app.post(
           await speech.arrayBuffer()
         );
 
+      const usageEventId =
+        await recordSynchronizedUsage(
+          request,
+          {
+            operation:
+              language === "en"
+                ? "tts_english"
+                : "tts_turkish",
+            model: openAITtsModel,
+            usage: {
+              requests: 1
+            },
+            ttsCharacters:
+              cleanedText.length
+          }
+        );
+
       response.set({
         "Content-Type": "audio/mpeg",
 
@@ -2107,6 +2509,13 @@ app.post(
 
         "Cache-Control": "no-store"
       });
+
+      if (usageEventId) {
+        response.set(
+          "X-PauseSpeak-Usage-Event",
+          usageEventId
+        );
+      }
 
       return response.send(
         audioBuffer
@@ -2388,6 +2797,15 @@ app.post(
               "chunk kararı alınamadı."
           });
       }
+
+      await recordSynchronizedUsage(
+        request,
+        {
+          operation: "chunk_split",
+          model: openAIChunkModel,
+          usage
+        }
+      );
 
       return response.json({
     success: true,

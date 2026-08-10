@@ -7,28 +7,75 @@
 
   <style>
     body {
-      width: 280px;
+      width: 320px;
+      margin: 0;
       padding: 20px;
       font-family: Arial, sans-serif;
-      text-align: center;
+      color: #e5e7eb;
+      background: #111827;
     }
 
     h1 {
       margin-top: 0;
+      margin-bottom: 8px;
       font-size: 24px;
+    }
+
+    p {
+      margin: 0 0 16px;
+      color: #cbd5e1;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 7px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    input {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #475569;
+      border-radius: 8px;
+      color: #f8fafc;
+      background: #0f172a;
+      font-family: Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 10px;
     }
 
     button {
       width: 100%;
-      padding: 12px;
-      border: none;
+      padding: 10px;
+      border: 1px solid #3b82f6;
       border-radius: 8px;
       cursor: pointer;
-      font-size: 16px;
+      color: #eff6ff;
+      background: #1d4ed8;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    button.secondary {
+      border-color: #64748b;
+      background: #334155;
     }
 
     #status {
-      margin-top: 15px;
+      min-height: 18px;
+      margin: 12px 0 0;
+      color: #bfdbfe;
+      font-size: 12px;
     }
   </style>
 </head>
@@ -36,9 +83,49 @@
 <body>
   <h1>PauseSpeak</h1>
 
-  <p>İlk uzantımız çalışıyor.</p>
+  <p>
+    Bilgisayar ve tablette aynı kodu kaydet.
+    Günlük kullanım iki cihazda ortak görünür.
+  </p>
 
-  <button id="testButton">Test et</button>
+  <label for="syncCode">
+    Sayaç senkronizasyon kodu
+  </label>
+
+  <input
+    id="syncCode"
+    type="text"
+    autocomplete="off"
+    spellcheck="false"
+    placeholder="Kod oluştur veya diğer cihazdan yapıştır"
+  />
+
+  <div class="actions">
+    <button id="saveButton">
+      Kaydet
+    </button>
+
+    <button
+      id="copyButton"
+      class="secondary"
+    >
+      Kopyala
+    </button>
+
+    <button
+      id="generateButton"
+      class="secondary"
+    >
+      Yeni Kod Oluştur
+    </button>
+
+    <button
+      id="clearButton"
+      class="secondary"
+    >
+      Yerel Moda Dön
+    </button>
+  </div>
 
   <p id="status"></p>
 
