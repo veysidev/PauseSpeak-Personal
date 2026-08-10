@@ -8,6 +8,18 @@ window.addEventListener(
       return;
     }
 
+    if (
+      event.target instanceof HTMLElement &&
+      (
+        event.target.matches(
+          "input, textarea, select, button"
+        ) ||
+        event.target.isContentEditable
+      )
+    ) {
+      return;
+    }
+
   const isPreviousWordKey =
   event.key === "ArrowDown";
 
@@ -18,7 +30,7 @@ const isNextWordKey =
       event.preventDefault();
       event.stopPropagation();
 
-      previousSentenceButton.click();
+      seekBackwardButton.click();
 
       return;
     }
@@ -27,7 +39,7 @@ const isNextWordKey =
       event.preventDefault();
       event.stopPropagation();
 
-      replayButton.click();
+      seekForwardButton.click();
 
       return;
     }
@@ -201,6 +213,8 @@ let currentStudyTokenMappings = [];
 
 const studyMeaningCache =
   new Map();
+const translatedCueCache =
+  new Map();
 const capturedSubtitleTracks = new Map();
 let activeSubtitleTrackId = "";
 let activeTranscriptCueIndex = -1;
@@ -269,7 +283,11 @@ improveTranslationButton.textContent =
   "✦ Çeviriyi İyileştir";
 
 improveTranslationButton.title =
-  "Mevcut çeviriyi Terra ile iyileştir";
+  "";
+improveTranslationButton.setAttribute(
+  "aria-label",
+  "Çeviriyi iyileştir"
+);
 
 improveTranslationButton.disabled =
   true;
@@ -491,6 +509,9 @@ chunkPracticeButton.disabled = true;
   const transcriptStatus =
     document.createElement("div");
 
+  transcriptStatus.id =
+    "pausespeak-transcript-status";
+
   transcriptStatus.textContent =
     "Netflix altyazı verisi bekleniyor…";
 
@@ -546,6 +567,379 @@ chunkPracticeButton.disabled = true;
 
   controlsPanel.id =
     "pausespeak-controls-panel";
+
+  panel.classList.add(
+    "ps-subtitle-card"
+  );
+  subtitleBox.id =
+    "pausespeak-subtitle-english";
+  translationBox.id =
+    "pausespeak-subtitle-turkish";
+  improveTranslationButton.id =
+    "pausespeak-improve-button";
+  subtitleCloseButton.id =
+    "pausespeak-subtitle-close";
+  subtitleOpenButton.id =
+    "pausespeak-subtitle-open";
+  transcriptOverlay.id =
+    "pausespeak-transcript-overlay";
+  transcriptPanel.id =
+    "pausespeak-transcript-panel";
+  transcriptList.id =
+    "pausespeak-transcript-list";
+  usageOverlay.id =
+    "pausespeak-usage-overlay";
+
+  function getPauseSpeakIcon(name) {
+    const icons = {
+      close:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+      sliders:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M7 14v6"/></svg>',
+      panel:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h7M7 17h4"/></svg>',
+      more:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.5" fill="currentColor" stroke="none"/></svg>',
+      previous:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 5L8.5 12l7 7"/></svg>',
+      next:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5l7 7-7 7"/></svg>',
+      replay:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 1-2.4-5.7M20 4v7h-7"/></svg>',
+      rewind:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7H4V3M4.7 7.2A9 9 0 1 1 3 12"/><text x="12" y="15" text-anchor="middle" fill="currentColor" stroke="none" font-size="7" font-weight="700">10</text></svg>',
+      forward:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 7h4V3M19.3 7.2A9 9 0 1 0 21 12"/><text x="12" y="15" text-anchor="middle" fill="currentColor" stroke="none" font-size="7" font-weight="700">10</text></svg>',
+      pause:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>',
+      play:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z"/></svg>',
+      subtitles:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10h4M7 14h3M14 10h3M13 14h4"/></svg>',
+      audio:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5L6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7M18 6a9 9 0 0 1 0 12"/></svg>',
+      parts:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v4H4zM14 15h6v4h-6z"/></svg>',
+      export:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M8 7l4-4 4 4M5 11v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8"/></svg>',
+      chevron:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>',
+      chevronDown:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9l7 7 7-7"/></svg>',
+      chevronUp:
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15l7-7 7 7"/></svg>'
+    };
+
+    return icons[name] || "";
+  }
+
+  function setPauseSpeakButton(
+    button,
+    icon,
+    label
+  ) {
+    button.replaceChildren();
+    button.insertAdjacentHTML(
+      "afterbegin",
+      getPauseSpeakIcon(icon)
+    );
+
+    if (label) {
+      const labelElement =
+        document.createElement("span");
+
+      labelElement.textContent = label;
+      button.appendChild(labelElement);
+    }
+  }
+
+  const topBar =
+    document.createElement("div");
+  topBar.className = "ps-topbar";
+
+  const topLeft =
+    document.createElement("div");
+  topLeft.className = "ps-top-left";
+
+  const interfaceCloseButton =
+    document.createElement("button");
+  interfaceCloseButton.type = "button";
+  interfaceCloseButton.className =
+    "ps-icon-button";
+  interfaceCloseButton.title =
+    "PauseSpeak arayüzünü gizle";
+  interfaceCloseButton.setAttribute(
+    "aria-label",
+    interfaceCloseButton.title
+  );
+
+  const mediaCopy =
+    document.createElement("div");
+  mediaCopy.className = "ps-media-copy";
+
+  const mediaTitle =
+    document.createElement("div");
+  mediaTitle.className = "ps-media-title";
+  mediaTitle.textContent = "PauseSpeak";
+
+  const mediaSubtitle =
+    document.createElement("div");
+  mediaSubtitle.className =
+    "ps-media-subtitle";
+  mediaSubtitle.textContent =
+    "Video hazırlanıyor…";
+
+  const topActions =
+    document.createElement("div");
+  topActions.className = "ps-top-actions";
+
+  const settingsButton =
+    document.createElement("button");
+  settingsButton.type = "button";
+  settingsButton.className =
+    "ps-icon-button ps-settings-button";
+  settingsButton.title =
+    "PauseSpeak ayarları";
+
+  const speedButton =
+    document.createElement("button");
+  speedButton.type = "button";
+  speedButton.className =
+    "ps-top-button ps-speed-button";
+  speedButton.textContent = "1.0x";
+  speedButton.title =
+    "Oynatma hızını değiştir";
+
+  const panelVisibilityButton =
+    document.createElement("button");
+  panelVisibilityButton.type = "button";
+  panelVisibilityButton.className =
+    "ps-icon-button ps-panel-button";
+  panelVisibilityButton.title =
+    "Çeviri kartını göster veya gizle";
+
+  const nextSentenceButton =
+    document.createElement("button");
+  nextSentenceButton.type = "button";
+  nextSentenceButton.className =
+    "ps-side-nav ps-next";
+  nextSentenceButton.title =
+    "Sonraki altyazıya git";
+
+  const playerShell =
+    document.createElement("div");
+  playerShell.className =
+    "ps-player-shell";
+
+  const playerShellToggleButton =
+    document.createElement("button");
+  playerShellToggleButton.type =
+    "button";
+  playerShellToggleButton.className =
+    "ps-player-shell-toggle";
+  playerShellToggleButton.title =
+    "Oynatıcı çubuğunu küçült";
+  playerShellToggleButton.setAttribute(
+    "aria-label",
+    playerShellToggleButton.title
+  );
+
+  const progressRow =
+    document.createElement("div");
+  progressRow.className =
+    "ps-progress-row";
+
+  const currentTimeLabel =
+    document.createElement("span");
+  currentTimeLabel.className = "ps-time";
+  currentTimeLabel.textContent = "0:00";
+
+  const progressRange =
+    document.createElement("input");
+  progressRange.type = "range";
+  progressRange.className = "ps-progress";
+  progressRange.min = "0";
+  progressRange.max = "1000";
+  progressRange.step = "1";
+  progressRange.value = "0";
+  progressRange.setAttribute(
+    "aria-label",
+    "Video konumu"
+  );
+
+  const durationLabel =
+    document.createElement("span");
+  durationLabel.className = "ps-time";
+  durationLabel.textContent = "0:00";
+
+  const commandRow =
+    document.createElement("div");
+  commandRow.className =
+    "ps-command-row";
+
+  const seekBackwardButton =
+    document.createElement("button");
+  seekBackwardButton.type = "button";
+  seekBackwardButton.className =
+    "ps-command-button";
+  seekBackwardButton.title =
+    "10 saniye geri git";
+
+  const playPauseButton =
+    document.createElement("button");
+  playPauseButton.type = "button";
+  playPauseButton.className =
+    "ps-command-button ps-play-pause";
+  playPauseButton.title =
+    "Oynat veya duraklat";
+  playPauseButton.setAttribute(
+    "aria-label",
+    playPauseButton.title
+  );
+
+  const seekForwardButton =
+    document.createElement("button");
+  seekForwardButton.type = "button";
+  seekForwardButton.className =
+    "ps-command-button";
+  seekForwardButton.title =
+    "10 saniye ileri git";
+
+  const audioSubtitleButton =
+    document.createElement("button");
+  audioSubtitleButton.type = "button";
+  audioSubtitleButton.className =
+    "ps-command-button";
+  audioSubtitleButton.title =
+    "Ses ve altyazı seçenekleri";
+
+  const settingsMenu =
+    document.createElement("div");
+  settingsMenu.className =
+    "ps-popup-menu ps-popup-top";
+
+  const audioMenu =
+    document.createElement("div");
+  audioMenu.className =
+    "ps-popup-menu ps-popup-bottom";
+
+  moreMenu.className =
+    "ps-popup-menu ps-popup-top";
+
+  const subtitleVisibilityButton =
+    document.createElement("button");
+  subtitleVisibilityButton.type =
+    "button";
+  subtitleVisibilityButton.textContent =
+    "Çeviri kartını gizle";
+
+  const helpButton =
+    document.createElement("button");
+  helpButton.type = "button";
+  helpButton.textContent =
+    "Klavye kısayolları";
+
+  const fontScaleSetting =
+    document.createElement("div");
+  fontScaleSetting.className =
+    "ps-setting-row";
+
+  const fontScaleLabel =
+    document.createElement("div");
+  fontScaleLabel.className =
+    "ps-setting-label";
+  fontScaleLabel.innerHTML =
+    "<span>Altyazı boyutu</span><strong>100%</strong>";
+
+  const fontScaleRange =
+    document.createElement("input");
+  fontScaleRange.type = "range";
+  fontScaleRange.min = "80";
+  fontScaleRange.max = "140";
+  fontScaleRange.step = "5";
+  fontScaleRange.value = "100";
+
+  const opacitySetting =
+    document.createElement("div");
+  opacitySetting.className =
+    "ps-setting-row";
+
+  const opacityLabel =
+    document.createElement("div");
+  opacityLabel.className =
+    "ps-setting-label";
+  opacityLabel.innerHTML =
+    "<span>Kart koyuluğu</span><strong>88%</strong>";
+
+  const opacityRange =
+    document.createElement("input");
+  opacityRange.type = "range";
+  opacityRange.min = "45";
+  opacityRange.max = "98";
+  opacityRange.step = "1";
+  opacityRange.value = "88";
+
+  const transcriptHeaderActions =
+    document.createElement("div");
+  transcriptHeaderActions.className =
+    "ps-transcript-header-actions";
+
+  const exportButton =
+    document.createElement("button");
+  exportButton.type = "button";
+  exportButton.className =
+    "ps-transcript-action";
+  exportButton.title =
+    "Altyazıları dışa aktar";
+
+  const exportMenu =
+    document.createElement("div");
+  exportMenu.className =
+    "ps-export-menu";
+
+  const exportFormats =
+    document.createElement("div");
+  exportFormats.className =
+    "ps-export-formats";
+
+  const exportFormatsLabel =
+    document.createElement("div");
+  exportFormatsLabel.className =
+    "ps-export-section-label";
+  exportFormatsLabel.textContent =
+    "Dosya biçimi";
+
+  const exportLanguages =
+    document.createElement("div");
+  exportLanguages.className =
+    "ps-export-languages";
+
+  const exportLanguagesLabel =
+    document.createElement("div");
+  exportLanguagesLabel.className =
+    "ps-export-section-label";
+  exportLanguagesLabel.textContent =
+    "İndirme dili";
+
+  const transcriptSettingsButton =
+    document.createElement("button");
+  transcriptSettingsButton.type =
+    "button";
+  transcriptSettingsButton.className =
+    "ps-transcript-footer-button";
+  transcriptSettingsButton.innerHTML =
+    `<span>Altyazı ayarları</span>${getPauseSpeakIcon("chevron")}`;
+
+  let selectedExportFormat = "srt";
+  let isInterfaceHidden = false;
+  let isPlayerShellCollapsed = false;
+  let controlsHideTimeout = null;
+  const playbackRates = [
+    0.75,
+    1,
+    1.25,
+    1.5
+  ];
 
 Object.assign(
   controlsPanel.style,
@@ -2786,6 +3180,232 @@ function formatTranscriptTime(
   ).padStart(2, "0")}`;
 }
 
+function formatExportTime(
+  timeMs,
+  format
+) {
+  const safeTimeMs = Math.max(
+    0,
+    Math.round(Number(timeMs) || 0)
+  );
+  const hours = Math.floor(
+    safeTimeMs / 3600000
+  );
+  const minutes = Math.floor(
+    (safeTimeMs % 3600000) / 60000
+  );
+  const seconds = Math.floor(
+    (safeTimeMs % 60000) / 1000
+  );
+  const milliseconds =
+    safeTimeMs % 1000;
+  const separator =
+    format === "srt" ? "," : ".";
+
+  return [
+    String(hours).padStart(2, "0"),
+    String(minutes).padStart(2, "0"),
+    String(seconds).padStart(2, "0")
+  ].join(":") +
+    separator +
+    String(milliseconds).padStart(3, "0");
+}
+
+function getCachedCueTranslation(text) {
+  return translatedCueCache.get(
+    normalizeTranscriptText(text)
+      .toLocaleLowerCase("en-US")
+  ) || "";
+}
+
+function cleanSubtitleExportText(
+  text,
+  forceCleanup = false
+) {
+  const value = String(text || "");
+
+  if (!forceCleanup) {
+    return value;
+  }
+
+  return value
+    .replace(/\[[^\]]+\]\s*:?[ \t]*/g, "")
+    .replace(/(^|\n)\s*[-–—]+\s*/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function createSubtitleExport(
+  format,
+  language
+) {
+  const cues = getTranscriptCues().cues;
+  const rows = cues
+    .map((cue) => ({
+      ...cue,
+      translation:
+        getCachedCueTranslation(
+          cue.text
+        )
+    }))
+    .filter((cue) =>
+      language !== "tr" ||
+      cue.translation
+    );
+
+  if (rows.length === 0) {
+    return "";
+  }
+
+  const getCueText = (cue) => {
+    const forceCleanup =
+      format === "plain-txt";
+
+    if (language === "tr") {
+      return cleanSubtitleExportText(
+        cue.translation,
+        forceCleanup
+      );
+    }
+
+    if (language === "bilingual") {
+      return cue.translation
+        ? `${cleanSubtitleExportText(
+            cue.text,
+            forceCleanup
+          )}\n${cleanSubtitleExportText(
+            cue.translation,
+            forceCleanup
+          )}`
+        : cleanSubtitleExportText(
+            cue.text,
+            forceCleanup
+          );
+    }
+
+    return cleanSubtitleExportText(
+      cue.text,
+      forceCleanup
+    );
+  };
+
+  if (format === "plain-txt") {
+    return rows
+      .map(getCueText)
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  if (format === "timed-txt") {
+    return rows
+      .map((cue) =>
+        `${formatTranscriptTime(
+          cue.startTimeMs
+        )}  ${getCueText(cue)}`
+      )
+      .join("\n\n");
+  }
+
+  const blocks = rows.map(
+    (cue, index) => {
+      const timing =
+        `${formatExportTime(
+          cue.startTimeMs,
+          format
+        )} --> ${formatExportTime(
+          cue.endTimeMs,
+          format
+        )}`;
+      const indexLine =
+        format === "srt"
+          ? `${index + 1}\n`
+          : "";
+
+      return `${indexLine}${timing}\n${getCueText(
+        cue
+      )}`;
+    }
+  );
+
+  return (
+    format === "vtt"
+      ? `WEBVTT\n\n${blocks.join(
+          "\n\n"
+        )}`
+      : blocks.join("\n\n")
+  );
+}
+
+function downloadSubtitleExport(
+  format,
+  language
+) {
+  const contents = createSubtitleExport(
+    format,
+    language
+  );
+
+  if (!contents) {
+    transcriptStatus.textContent =
+      language === "tr"
+        ? "Henüz dışa aktarılabilecek Türkçe çeviri yok. Önce birkaç satırı oynat."
+        : "Dışa aktarılabilecek altyazı bulunamadı.";
+    return;
+  }
+
+  const blob = new Blob(
+    [contents],
+    {
+      type:
+        format === "vtt"
+          ? "text/vtt;charset=utf-8"
+          : "text/plain;charset=utf-8"
+    }
+  );
+  const objectUrl =
+    URL.createObjectURL(blob);
+  const link =
+    document.createElement("a");
+  const safeTitle = String(
+    document.title || "PauseSpeak"
+  )
+    .replace(/\s*[-|]\s*Netflix.*$/i, "")
+    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
+    .replace(/^-+|-+$/g, "") ||
+    "PauseSpeak";
+
+  const fileExtension =
+    format.endsWith("-txt")
+      ? "txt"
+      : format;
+  const formatSuffix =
+    format === "plain-txt"
+      ? "-sadece-altyazi"
+      : format === "timed-txt"
+        ? "-zamanli"
+        : "";
+
+  link.href = objectUrl;
+  link.download =
+    `${safeTitle}-${language}${formatSuffix}.${fileExtension}`;
+  link.style.display = "none";
+  document.documentElement.appendChild(
+    link
+  );
+  link.click();
+  link.remove();
+
+  window.setTimeout(() => {
+    URL.revokeObjectURL(objectUrl);
+  }, 1000);
+
+  transcriptStatus.textContent =
+    `${fileExtension.toUpperCase()} dosyası indirildi.`;
+  exportMenu.classList.remove(
+    "ps-open"
+  );
+}
+
 function styleTranscriptRow(
   row,
   isActive
@@ -2803,8 +3423,8 @@ function styleTranscriptRow(
     borderRadius: "0",
     outline: "none",
     backgroundColor: isActive
-      ? "rgba(147, 51, 234, 0.48)"
-      : "rgba(31, 41, 55, 0.72)",
+      ? "rgba(38, 112, 204, 0.55)"
+      : "rgba(31, 35, 42, 0.72)",
     color: "#ffffff",
     fontFamily: "Arial, sans-serif",
     textAlign: "left",
@@ -2818,11 +3438,32 @@ function seekToTranscriptCue(cue) {
     return;
   }
 
+  requestNetflixSeek(
+    Math.max(
+      0,
+      cue.startTimeMs - 150
+    ),
+    "Seçilen altyazıya gidiliyor…"
+  );
+}
+
+function requestNetflixSeek(
+  targetTimeMs,
+  pendingMessage = "Video konumu değiştiriliyor…"
+) {
+  const normalizedTargetTimeMs =
+    Math.max(
+      0,
+      Math.round(
+        Number(targetTimeMs) || 0
+      )
+    );
+
   activeTranscriptSeekRequestId =
     `subtitle-${Date.now()}-${Math.random()}`;
 
   transcriptStatus.textContent =
-    "Seçilen altyazıya gidiliyor…";
+    pendingMessage;
 
   window.postMessage(
     {
@@ -2830,10 +3471,8 @@ function seekToTranscriptCue(cue) {
       type: "PAUSESPEAK_SEEK_REQUEST",
       requestId:
         activeTranscriptSeekRequestId,
-      targetTimeMs: Math.max(
-        0,
-        cue.startTimeMs - 150
-      )
+      targetTimeMs:
+        normalizedTargetTimeMs
     },
     "*"
   );
@@ -2938,7 +3577,7 @@ function renderTranscriptPanel() {
     );
 
     Object.assign(time.style, {
-      color: "#c084fc",
+      color: "#57a8ff",
       fontSize: "12px",
       fontWeight: "700",
       lineHeight: "1.45"
@@ -3575,6 +4214,18 @@ function stopNormalTranslation() {
       translationBox.textContent =
         data.translation;
 
+      translatedCueCache.set(
+        normalizeTranscriptText(text)
+          .toLocaleLowerCase("en-US"),
+        data.translation
+      );
+
+      if (translatedCueCache.size > 1500) {
+        translatedCueCache.delete(
+          translatedCueCache.keys().next().value
+        );
+      }
+
       void speakTranslation(
         data.translation
       );
@@ -3659,6 +4310,9 @@ async function improveCurrentTranslation() {
 
   improveTranslationButton.textContent =
     "✦ İyileştiriliyor...";
+  improveTranslationButton.classList.add(
+    "ps-loading"
+  );
 
   const controller =
     new AbortController();
@@ -3796,6 +4450,12 @@ async function improveCurrentTranslation() {
 
     translationBox.textContent =
       data.translation;
+
+    translatedCueCache.set(
+      normalizeTranscriptText(text)
+        .toLocaleLowerCase("en-US"),
+      data.translation
+    );
   } catch (error) {
     if (
       error.name !==
@@ -3829,6 +4489,9 @@ async function improveCurrentTranslation() {
 
     improveTranslationButton.textContent =
       previousButtonText;
+    improveTranslationButton.classList.remove(
+      "ps-loading"
+    );
 
     improveTranslationButton.disabled =
       completedStartTimeMs === null;
@@ -4630,7 +5293,8 @@ function renderChunkedSubtitle() {
       Object.assign(
         chunkRow.style,
         {
-          width: "100%"
+          width: "100%",
+          textAlign: "center"
         }
       );
 
@@ -4645,6 +5309,8 @@ function renderChunkedSubtitle() {
           display: "flex",
           flexWrap: "wrap",
           alignItems: "center",
+          justifyContent: "center",
+          textAlign: "center",
           gap: "4px"
         }
       );
@@ -6113,7 +6779,7 @@ function scheduleAutomaticSpeechStart(
     const sentence =
       completedBox.textContent;
 
-   
+
 
     if (isChunkRequestPending) {
       return true;
@@ -7124,30 +7790,54 @@ speakButton.textContent =
       startSpeechRecognition();
     }
   );
-  moreButton.addEventListener(
-  "click",
-  () => {
-    const isMenuOpen =
-      moreMenu.style.display !==
-      "none";
 
-    moreMenu.style.display =
-      isMenuOpen
-        ? "none"
-        : "flex";
+  function closePauseSpeakMenus(
+    exceptMenu = null
+  ) {
+    [
+      settingsMenu,
+      audioMenu,
+      moreMenu
+    ].forEach((menu) => {
+      if (menu === exceptMenu) {
+        return;
+      }
 
-    moreMenu.style.flexDirection =
-      "column";
-
-    moreMenu.style.gap =
-      "6px";
-
-    moreMenu.style.padding =
-      isMenuOpen
-        ? "0"
-        : "10px";
+      menu.classList.remove(
+        "ps-open"
+      );
+      menu.style.display = "none";
+    });
   }
-);
+
+  function togglePauseSpeakMenu(menu) {
+    const shouldOpen =
+      !menu.classList.contains(
+        "ps-open"
+      );
+
+    closePauseSpeakMenus(
+      shouldOpen ? menu : null
+    );
+    menu.classList.toggle(
+      "ps-open",
+      shouldOpen
+    );
+    menu.style.display =
+      shouldOpen ? "flex" : "none";
+    showInterfaceControls();
+  }
+
+  moreButton.addEventListener(
+    "click",
+    (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      togglePauseSpeakMenu(
+        moreMenu
+      );
+    }
+  );
 
 pronunciationToggleButton.addEventListener(
   "click",
@@ -7160,7 +7850,7 @@ pronunciationToggleButton.addEventListener(
   automaticPauseToggleButton.textContent =
     "Otomatik Durdurma: Açık";
 
- 
+
 }
 
     pronunciationToggleButton.textContent =
@@ -7168,7 +7858,7 @@ pronunciationToggleButton.addEventListener(
         ? "Telaffuz: Açık"
         : "Telaffuz: Kapalı";
 
-  
+
 
     if (!isPronunciationEnabled) {
       nowSpeakBox.style.display = "none";
@@ -7245,10 +7935,17 @@ chunkPracticeButton.addEventListener(
     isChunkTranslationVisible =
       !isChunkTranslationVisible;
 
-    chunkPracticeButton.textContent =
+    setPauseSpeakButton(
+      chunkPracticeButton,
+      "parts",
       isChunkTranslationVisible
-        ? "Parça Çevirisi: Açık"
-        : "Parça Çevirisi: Kapalı";
+        ? "Parçalar açık"
+        : "Parçalar"
+    );
+    chunkPracticeButton.classList.toggle(
+      "ps-active",
+      isChunkTranslationVisible
+    );
 
     if (isChunkTranslationVisible) {
       stopNormalTranslation();
@@ -7321,21 +8018,6 @@ chunkPracticeButton.addEventListener(
       previousSentenceButton.disabled =
         !previousSentenceText;
     }
-if (
-  isSubtitlePanelHidden &&
-  fullSentence.trim() &&
-  fullSentence.trim() !==
-    subtitleHiddenAtSentence
-) {
-  isSubtitlePanelHidden = false;
-  subtitleHiddenAtSentence = "";
-
-  panel.style.display =
-    "block";
-
-  subtitleOpenButton.style.display =
-    "none";
-}
 completedBox.textContent =
   fullSentence;
 
@@ -7488,100 +8170,390 @@ if (
 }
   }
 
-function updateVideoStatus() {
-  const video =
-    getNetflixVideo();
+function setSubtitlePanelVisibility(
+  shouldShow
+) {
+  isSubtitlePanelHidden =
+    !shouldShow;
+  subtitleHiddenAtSentence = "";
+  panel.style.display =
+    shouldShow ? "block" : "none";
+  subtitleVisibilityButton.textContent =
+    shouldShow
+      ? "Çeviri kartını gizle"
+      : "Çeviri kartını göster";
+  panelVisibilityButton.classList.toggle(
+    "ps-active",
+    shouldShow
+  );
+}
 
+function setTranscriptPanelVisibility(
+  shouldShow
+) {
+  transcriptOverlay.style.display =
+    shouldShow ? "flex" : "none";
+  panel.classList.toggle(
+    "ps-panel-shifted",
+    shouldShow
+  );
+  controlsPanel.classList.toggle(
+    "ps-transcript-open",
+    shouldShow
+  );
+  transcriptButton.classList.toggle(
+    "ps-active",
+    shouldShow
+  );
+
+  if (!shouldShow) {
+    exportMenu.classList.remove(
+      "ps-open"
+    );
+    exportButton.classList.remove(
+      "ps-active"
+    );
+  }
+
+  window.requestAnimationFrame(
+    updateOverlaySpacing
+  );
+}
+
+function updateMediaTitle() {
+  const titleText = String(
+    document.title || ""
+  )
+    .replace(/\s*[-|]\s*Netflix.*$/i, "")
+    .trim();
+
+  mediaTitle.textContent =
+    titleText || "PauseSpeak";
+}
+
+function updateOverlaySpacing() {
+  const playerRectangle =
+    playerShell.getBoundingClientRect();
+
+  if (
+    playerRectangle.height <= 0 ||
+    playerRectangle.top <= 0
+  ) {
+    return;
+  }
+
+  const reservedSpace = Math.max(
+    72,
+    Math.ceil(
+      window.innerHeight -
+        playerRectangle.top +
+        28
+    )
+  );
+
+  controlsPanel.style.setProperty(
+    "--ps-card-bottom",
+    `${reservedSpace}px`
+  );
+}
+
+function updatePlayerChrome() {
+  const video = getNetflixVideo();
+
+  updateMediaTitle();
+  updateOverlaySpacing();
+  mediaSubtitle.textContent =
+    status.textContent ||
+    "PauseSpeak hazır";
+
+  if (!video) {
+    currentTimeLabel.textContent =
+      "0:00";
+    durationLabel.textContent =
+      "0:00";
+    progressRange.value = "0";
+    progressRange.style.setProperty(
+      "--ps-progress",
+      "0%"
+    );
+    playPauseButton.disabled = true;
+    seekBackwardButton.disabled = true;
+    seekForwardButton.disabled = true;
+    nextSentenceButton.disabled = true;
+    return;
+  }
+
+  const currentTime = Math.max(
+    0,
+    Number(video.currentTime) || 0
+  );
+  const cues = getTranscriptCues().cues;
+  const cueDuration =
+    cues.length > 0
+      ? Math.max(
+          0,
+          Number(
+            cues[cues.length - 1]
+              .endTimeMs
+          ) / 1000
+        )
+      : 0;
+  const videoDuration = Number(
+    video.duration
+  );
+  const duration =
+    Number.isFinite(videoDuration) &&
+    videoDuration > 0
+      ? videoDuration
+      : cueDuration;
+  const progress = duration > 0
+    ? Math.min(
+        1000,
+        Math.max(
+          0,
+          Math.round(
+            currentTime / duration * 1000
+          )
+        )
+      )
+    : 0;
+
+  currentTimeLabel.textContent =
+    formatTranscriptTime(
+      currentTime * 1000
+    );
+  durationLabel.textContent =
+    formatTranscriptTime(
+      duration * 1000
+    );
+
+  if (
+    progressRange.dataset.dragging !==
+    "true"
+  ) {
+    progressRange.value =
+      String(progress);
+  }
+
+  progressRange.style.setProperty(
+    "--ps-progress",
+    `${Number(progressRange.value) /
+      10}%`
+  );
+
+  setPauseSpeakButton(
+    playPauseButton,
+    video.paused ? "play" : "pause"
+  );
+  playPauseButton.setAttribute(
+    "aria-label",
+    video.paused
+      ? "Videoyu oynat"
+      : "Videoyu duraklat"
+  );
+  speedButton.textContent =
+    `${Number(video.playbackRate || 1)
+      .toFixed(2)
+      .replace(/0$/, "")}x`;
+
+  playPauseButton.disabled = false;
+  seekBackwardButton.disabled =
+    currentTime <= 0.05;
+  seekForwardButton.disabled =
+    duration > 0 &&
+    currentTime >= duration - 0.05;
+
+  const currentIndex =
+    findTranscriptCueIndex(
+      cues,
+      currentTime * 1000
+    );
+
+  nextSentenceButton.disabled =
+    cues.length === 0 ||
+    (
+      currentIndex >= 0 &&
+      currentIndex >= cues.length - 1
+    );
+}
+
+function seekVideoRelative(seconds) {
+  const video = getNetflixVideo();
+
+  if (!video) {
+    return;
+  }
+
+  const duration = Number(
+    video.duration
+  );
+  const targetSeconds = Math.max(
+    0,
+    Number(video.currentTime) +
+      seconds
+  );
+  const boundedTargetSeconds =
+    Number.isFinite(duration) &&
+    duration > 0
+      ? Math.min(
+          duration,
+          targetSeconds
+        )
+      : targetSeconds;
+
+  requestNetflixSeek(
+    boundedTargetSeconds * 1000,
+    seconds < 0
+      ? "10 saniye geri gidiliyor…"
+      : "10 saniye ileri gidiliyor…"
+  );
+  status.textContent =
+    seconds < 0
+      ? "↶ 10 saniye geri gidiliyor"
+      : "↷ 10 saniye ileri gidiliyor";
+  updatePlayerChrome();
+}
+
+function seekToNextSentence() {
+  const video = getNetflixVideo();
+  const cues = getTranscriptCues().cues;
+
+  if (!video || cues.length === 0) {
+    status.textContent =
+      "Sonraki altyazı henüz bulunamadı";
+    return;
+  }
+
+  const currentTimeMs =
+    Number(video.currentTime) * 1000;
+  let nextIndex =
+    findTranscriptCueIndex(
+      cues,
+      currentTimeMs
+    ) + 1;
+
+  if (nextIndex <= 0) {
+    nextIndex = cues.findIndex(
+      (cue) =>
+        cue.startTimeMs >
+        currentTimeMs + 150
+    );
+  }
+
+  const cue = cues[nextIndex];
+
+  if (!cue) {
+    status.textContent =
+      "Sonraki altyazı bulunamadı";
+    return;
+  }
+
+  seekToTranscriptCue(cue);
+  void video.play().catch(() => {});
+}
+
+function showInterfaceControls() {
+  if (isInterfaceHidden) {
+    return;
+  }
+
+  controlsPanel.classList.remove(
+    "ps-controls-hidden"
+  );
+
+  if (controlsHideTimeout) {
+    clearTimeout(controlsHideTimeout);
+  }
+
+  controlsHideTimeout =
+    window.setTimeout(() => {
+      const video = getNetflixVideo();
+      const hasOpenMenu = [
+        settingsMenu,
+        audioMenu,
+        moreMenu
+      ].some((menu) =>
+        menu.classList.contains(
+          "ps-open"
+        )
+      );
+
+      if (
+        video &&
+        !video.paused &&
+        !hasOpenMenu &&
+        transcriptOverlay.style.display ===
+          "none" &&
+        usageOverlay.style.display ===
+          "none"
+      ) {
+        controlsPanel.classList.add(
+          "ps-controls-hidden"
+        );
+      }
+    }, 3200);
+}
+
+function updateVideoStatus() {
+  const video = getNetflixVideo();
   const isNetflixWatchPage =
     /^\/watch(?:\/|$)/.test(
       window.location.pathname
     );
 
   if (!isNetflixWatchPage) {
-    panel.style.display =
+    controlsPanel.classList.add(
+      "ps-interface-hidden"
+    );
+    subtitleOpenButton.style.display =
       "none";
-subtitleOpenButton.style.display =
-  "none";
-    controlsPanel.style.display =
+    usageOverlay.style.display =
       "none";
-
-    controlsToggleButton.style.display =
-      "none";
-
+    setTranscriptPanelVisibility(false);
     lastVideoFound = null;
-panel.style.display =
-  isSubtitlePanelHidden
-    ? "none"
-    : "block";
-
-subtitleOpenButton.style.display =
-  isSubtitlePanelHidden
-    ? "block"
-    : "none";
-
-const isSmallScreen =
-  window.innerWidth < 1200; controlsToggleButton.style.display =
-      "block";
-
-    controlsPanel.style.display =
-      areRemoteControlsVisible
-        ? "flex"
-        : "none";
-  } else {
-    controlsToggleButton.style.display =
-      "none";
-
-    controlsPanel.style.display =
-      "flex";
-  }
-
-  const videoFound =
-    Boolean(video);
-
-  if (
-    videoFound ===
-    lastVideoFound
-  ) {
     return;
   }
 
-  lastVideoFound =
-    videoFound;
+  controlsPanel.classList.toggle(
+    "ps-interface-hidden",
+    isInterfaceHidden
+  );
+  subtitleOpenButton.style.display =
+    isInterfaceHidden
+      ? "block"
+      : "none";
+  panel.style.display =
+    isSubtitlePanelHidden
+      ? "none"
+      : "block";
 
-  if (videoFound) {
-    status.textContent =
-      "✅ Video bulundu";
+  const videoFound = Boolean(video);
 
-    pauseButton.disabled =
-      false;
+  if (videoFound !== lastVideoFound) {
+    lastVideoFound = videoFound;
 
-    playButton.disabled =
-      false;
-
-    replayButton.disabled =
-      completedStartTimeMs ===
-      null;
-
-    speakButton.disabled =
-      completedStartTimeMs ===
-        null ||
-      !SpeechRecognitionClass;
-  } else {
-    status.textContent =
-      "⏳ Video aranıyor...";
-
-    pauseButton.disabled =
-      true;
-
-    playButton.disabled =
-      true;
-
-    replayButton.disabled =
-      true;
-
-    speakButton.disabled =
-      true;
+    if (videoFound) {
+      status.textContent =
+        "✅ Video bulundu";
+      pauseButton.disabled = false;
+      playButton.disabled = false;
+      replayButton.disabled =
+        completedStartTimeMs === null;
+      speakButton.disabled =
+        completedStartTimeMs === null ||
+        !SpeechRecognitionClass;
+      showInterfaceControls();
+    } else {
+      status.textContent =
+        "⏳ Video aranıyor...";
+      pauseButton.disabled = true;
+      playButton.disabled = true;
+      replayButton.disabled = true;
+      speakButton.disabled = true;
+    }
   }
+
+  updatePlayerChrome();
 }
 
 function updateSubtitle() {
@@ -7975,97 +8947,284 @@ previousSentenceButton.addEventListener(
       }
     }
   );
-panel.appendChild(
-  subtitleCloseButton
+setPauseSpeakButton(
+  interfaceCloseButton,
+  "close"
 );
-  panel.appendChild(title);
-  panel.appendChild(status);
-
-  panel.appendChild(
-    subtitleTitle
-  );
-
-  panel.appendChild(
-    subtitleBox
-  );
-
-  panel.appendChild(
-    completedTitle
-  );
-
-  panel.appendChild(
-    completedBox
-  );
-
-  panel.appendChild(
-    translationTitle
-  );
-
-  panel.appendChild(
-    translationBox
-  );
-
-  panel.appendChild(
-    pronunciationTitle
-  );
-panel.appendChild(
-  nowSpeakTitle
+setPauseSpeakButton(
+  settingsButton,
+  "sliders"
+);
+setPauseSpeakButton(
+  panelVisibilityButton,
+  "panel"
 );
 
-panel.appendChild(
-  nowSpeakBox
+moreButton.className =
+  "ps-icon-button";
+moreButton.title = "Diğer seçenekler";
+setPauseSpeakButton(
+  moreButton,
+  "more"
 );
-  panel.appendChild(
-    spokenTitle
-  );
 
-  panel.appendChild(
-    spokenBox
-  );
+previousSentenceButton.className =
+  "ps-side-nav ps-previous";
+previousSentenceButton.title =
+  "Önceki cümleyi tekrar oynat";
+setPauseSpeakButton(
+  previousSentenceButton,
+  "previous",
+  "Önceki cümle"
+);
 
-  panel.appendChild(
-    pronunciationResultTitle
-  );
-
-  panel.appendChild(
-    pronunciationResultBox
-  );
-
-  panel.appendChild(
-    speakButton
-  );
-topControlsRow.appendChild(
-  moreButton
+setPauseSpeakButton(
+  nextSentenceButton,
+  "next",
+  "Sonraki cümle"
 );
 
 [
-  previousSentenceButton,
-  replayButton,
-  speakButton,
-  pronunciationToggleButton,
-  turkishTranslationSpeechToggleButton,
-  automaticPauseToggleButton,
   chunkPracticeButton,
-  transcriptButton,
-  usageButton,
-  pauseButton,
-  playButton
+  replayButton,
+  transcriptButton
 ].forEach((button) => {
-  moreMenu.appendChild(
-    button
-  );
+  button.className =
+    "ps-command-button";
 });
 
-controlsPanel.appendChild(
-  topControlsRow
+setPauseSpeakButton(
+  chunkPracticeButton,
+  "parts",
+  "Parçalar"
+);
+setPauseSpeakButton(
+  replayButton,
+  "replay",
+  "Cümleyi tekrarla"
+);
+setPauseSpeakButton(
+  seekBackwardButton,
+  "rewind",
+  "10 sn geri"
+);
+setPauseSpeakButton(
+  playPauseButton,
+  "pause"
+);
+setPauseSpeakButton(
+  seekForwardButton,
+  "forward",
+  "10 sn ileri"
+);
+setPauseSpeakButton(
+  transcriptButton,
+  "subtitles",
+  "Altyazılar"
+);
+setPauseSpeakButton(
+  audioSubtitleButton,
+  "audio",
+  "Ses ve altyazı"
+);
+setPauseSpeakButton(
+  playerShellToggleButton,
+  "chevronDown"
 );
 
-controlsPanel.appendChild(
+const settingsMenuTitle =
+  document.createElement("div");
+settingsMenuTitle.className =
+  "ps-menu-title";
+settingsMenuTitle.textContent =
+  "PauseSpeak ayarları";
+
+const audioMenuTitle =
+  document.createElement("div");
+audioMenuTitle.className =
+  "ps-menu-title";
+audioMenuTitle.textContent =
+  "Ses ve altyazı";
+
+const moreMenuTitle =
+  document.createElement("div");
+moreMenuTitle.className =
+  "ps-menu-title";
+moreMenuTitle.textContent =
+  "Diğer seçenekler";
+
+fontScaleSetting.append(
+  fontScaleLabel,
+  fontScaleRange
+);
+opacitySetting.append(
+  opacityLabel,
+  opacityRange
+);
+
+settingsMenu.append(
+  settingsMenuTitle,
+  pronunciationToggleButton,
+  speakButton,
+  fontScaleSetting,
+  opacitySetting
+);
+
+audioMenu.append(
+  audioMenuTitle,
+  turkishTranslationSpeechToggleButton,
+  automaticPauseToggleButton,
+  subtitleVisibilityButton
+);
+
+moreMenu.replaceChildren(
+  moreMenuTitle,
+  usageButton,
+  helpButton
+);
+
+  mediaCopy.append(
+    mediaTitle
+  );
+topLeft.append(
+  interfaceCloseButton
+);
+topActions.append(
+  settingsButton,
+  speedButton,
+  panelVisibilityButton,
+  moreButton
+);
+topBar.append(
+  topLeft,
+  topActions
+);
+
+panel.replaceChildren(
+  subtitleCloseButton,
+  subtitleBox,
+  translationBox,
+  pronunciationTitle,
+  nowSpeakTitle,
+  nowSpeakBox,
+  spokenTitle,
+  spokenBox,
+  pronunciationResultTitle,
+  pronunciationResultBox,
+  chunkTitle,
+  chunkBox,
+  improveTranslationButton,
+  title,
+  status,
+  subtitleTitle,
+  completedTitle,
+  completedBox,
+  translationTitle
+);
+
+progressRow.append(
+  currentTimeLabel,
+  progressRange,
+  durationLabel
+);
+commandRow.append(
+  chunkPracticeButton,
+  replayButton,
+  seekBackwardButton,
+  playPauseButton,
+  seekForwardButton,
+  transcriptButton,
+  audioSubtitleButton
+);
+playerShell.append(
+  playerShellToggleButton,
+  progressRow,
+  commandRow
+);
+
+setPauseSpeakButton(
+  exportButton,
+  "export"
+);
+transcriptCloseButton.className =
+  "ps-transcript-action";
+setPauseSpeakButton(
+  transcriptCloseButton,
+  "close"
+);
+
+for (const [format, label] of [
+  ["srt", "SRT (.srt)"],
+  ["vtt", "VTT (.vtt)"],
+  ["timed-txt", "Zamanlı TXT"],
+  ["plain-txt", "Sadece altyazı (.txt)"]
+]) {
+  const formatButton =
+    document.createElement("button");
+  formatButton.type = "button";
+  formatButton.textContent = label;
+  formatButton.dataset.exportFormat =
+    format;
+
+  if (format === selectedExportFormat) {
+    formatButton.classList.add(
+      "ps-selected"
+    );
+  }
+
+  exportFormats.appendChild(
+    formatButton
+  );
+}
+
+for (const [language, label] of [
+  ["en", "İngilizce"],
+  ["tr", "Türkçe · çevrilen satırlar"],
+  ["bilingual", "İki dilli"]
+]) {
+  const languageButton =
+    document.createElement("button");
+  languageButton.type = "button";
+  languageButton.textContent = label;
+  languageButton.dataset.exportLanguage =
+    language;
+  exportLanguages.appendChild(
+    languageButton
+  );
+}
+
+exportMenu.append(
+  exportFormatsLabel,
+  exportFormats,
+  exportLanguagesLabel,
+  exportLanguages
+);
+transcriptHeaderActions.append(
+  exportButton,
+  transcriptCloseButton
+);
+transcriptHeader.replaceChildren(
+  transcriptTitle,
+  transcriptHeaderActions
+);
+transcriptPanel.replaceChildren(
+  transcriptHeader,
+  exportMenu,
+  transcriptSearchInput,
+  transcriptStatus,
+  transcriptList,
+  transcriptSettingsButton
+);
+
+controlsPanel.replaceChildren(
+  topBar,
+  panel,
+  previousSentenceButton,
+  nextSentenceButton,
+  playerShell,
+  settingsMenu,
+  audioMenu,
   moreMenu
-);
-
-panel.appendChild(
-  improveTranslationButton
 );
 improveTranslationButton.addEventListener(
   "click",
@@ -8074,6 +9233,399 @@ improveTranslationButton.addEventListener(
   }
 );
 
+interfaceCloseButton.addEventListener(
+  "click",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    isInterfaceHidden = true;
+    closePauseSpeakMenus();
+    controlsPanel.classList.add(
+      "ps-interface-hidden"
+    );
+    subtitleOpenButton.textContent =
+      "PauseSpeak'i Göster";
+    subtitleOpenButton.style.display =
+      "block";
+  },
+  true
+);
+
+settingsButton.addEventListener(
+  "click",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    togglePauseSpeakMenu(
+      settingsMenu
+    );
+  }
+);
+
+audioSubtitleButton.addEventListener(
+  "click",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    togglePauseSpeakMenu(audioMenu);
+  }
+);
+
+playerShellToggleButton.addEventListener(
+  "click",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    isPlayerShellCollapsed =
+      !isPlayerShellCollapsed;
+    playerShell.classList.toggle(
+      "ps-collapsed",
+      isPlayerShellCollapsed
+    );
+    setPauseSpeakButton(
+      playerShellToggleButton,
+      isPlayerShellCollapsed
+        ? "chevronUp"
+        : "chevronDown"
+    );
+    playerShellToggleButton.title =
+      isPlayerShellCollapsed
+        ? "Oynatıcı çubuğunu aç"
+        : "Oynatıcı çubuğunu küçült";
+    playerShellToggleButton.setAttribute(
+      "aria-label",
+      playerShellToggleButton.title
+    );
+    window.requestAnimationFrame(
+      updateOverlaySpacing
+    );
+    showInterfaceControls();
+  }
+);
+
+panelVisibilityButton.addEventListener(
+  "click",
+  () => {
+    setSubtitlePanelVisibility(
+      isSubtitlePanelHidden
+    );
+  }
+);
+
+subtitleVisibilityButton.addEventListener(
+  "click",
+  () => {
+    setSubtitlePanelVisibility(
+      isSubtitlePanelHidden
+    );
+  }
+);
+
+speedButton.addEventListener(
+  "click",
+  () => {
+    const video = getNetflixVideo();
+
+    if (!video) {
+      return;
+    }
+
+    const currentIndex =
+      playbackRates.findIndex(
+        (rate) =>
+          Math.abs(
+            rate - video.playbackRate
+          ) < 0.01
+      );
+    const nextIndex =
+      (currentIndex + 1) %
+      playbackRates.length;
+
+    video.playbackRate =
+      playbackRates[nextIndex];
+    speedButton.textContent =
+      `${playbackRates[nextIndex]}x`;
+    status.textContent =
+      `Oynatma hızı: ${playbackRates[nextIndex]}x`;
+  }
+);
+
+nextSentenceButton.addEventListener(
+  "click",
+  () => {
+    seekToNextSentence();
+  }
+);
+
+seekBackwardButton.addEventListener(
+  "click",
+  () => {
+    seekVideoRelative(-10);
+  }
+);
+
+seekForwardButton.addEventListener(
+  "click",
+  () => {
+    seekVideoRelative(10);
+  }
+);
+
+playPauseButton.addEventListener(
+  "click",
+  async () => {
+    const video = getNetflixVideo();
+
+    if (!video) {
+      return;
+    }
+
+    stopSpeechRecognition();
+
+    if (video.paused) {
+      try {
+        await video.play();
+        status.textContent =
+          "▶️ Video oynatılıyor";
+      } catch (error) {
+        status.textContent =
+          "Video başlatılamadı";
+      }
+    } else {
+      video.pause();
+      status.textContent =
+        "⏸️ Video durduruldu";
+    }
+
+    updatePlayerChrome();
+    showInterfaceControls();
+  }
+);
+
+progressRange.addEventListener(
+  "pointerdown",
+  () => {
+    progressRange.dataset.dragging =
+      "true";
+  }
+);
+
+progressRange.addEventListener(
+  "input",
+  () => {
+    const video = getNetflixVideo();
+    const duration = Number(
+      video?.duration
+    );
+
+    progressRange.style.setProperty(
+      "--ps-progress",
+      `${Number(progressRange.value) /
+        10}%`
+    );
+
+    if (
+      video &&
+      Number.isFinite(duration)
+    ) {
+      currentTimeLabel.textContent =
+        formatTranscriptTime(
+          duration *
+            Number(progressRange.value) /
+            1000 * 1000
+        );
+    }
+  }
+);
+
+progressRange.addEventListener(
+  "change",
+  () => {
+    const video = getNetflixVideo();
+    const duration = Number(
+      video?.duration
+    );
+
+    if (
+      video &&
+      Number.isFinite(duration)
+    ) {
+      requestNetflixSeek(
+        duration *
+          Number(progressRange.value),
+        "Seçilen zamana gidiliyor…"
+      );
+    }
+
+    progressRange.dataset.dragging =
+      "false";
+    updatePlayerChrome();
+  }
+);
+
+progressRange.addEventListener(
+  "pointerup",
+  () => {
+    progressRange.dataset.dragging =
+      "false";
+  }
+);
+
+fontScaleRange.addEventListener(
+  "input",
+  () => {
+    const percentage = Number(
+      fontScaleRange.value
+    );
+    controlsPanel.style.setProperty(
+      "--ps-subtitle-scale",
+      String(percentage / 100)
+    );
+    fontScaleLabel.querySelector(
+      "strong"
+    ).textContent = `${percentage}%`;
+    localStorage.setItem(
+      "pausespeak-subtitle-scale",
+      String(percentage)
+    );
+  }
+);
+
+opacityRange.addEventListener(
+  "input",
+  () => {
+    const percentage = Number(
+      opacityRange.value
+    );
+    controlsPanel.style.setProperty(
+      "--ps-card-opacity",
+      String(percentage / 100)
+    );
+    opacityLabel.querySelector(
+      "strong"
+    ).textContent = `${percentage}%`;
+    localStorage.setItem(
+      "pausespeak-card-opacity",
+      String(percentage)
+    );
+  }
+);
+
+for (const formatButton of
+  exportFormats.querySelectorAll(
+    "button[data-export-format]"
+  )) {
+  formatButton.addEventListener(
+    "click",
+    () => {
+      selectedExportFormat =
+        formatButton.dataset
+          .exportFormat;
+      exportFormats
+        .querySelectorAll("button")
+        .forEach((button) => {
+          button.classList.toggle(
+            "ps-selected",
+            button === formatButton
+          );
+        });
+    }
+  );
+}
+
+for (const languageButton of
+  exportLanguages.querySelectorAll(
+    "button[data-export-language]"
+  )) {
+  languageButton.addEventListener(
+    "click",
+    () => {
+      downloadSubtitleExport(
+        selectedExportFormat,
+        languageButton.dataset
+          .exportLanguage
+      );
+    }
+  );
+}
+
+exportButton.addEventListener(
+  "click",
+  () => {
+    exportMenu.classList.toggle(
+      "ps-open"
+    );
+    exportButton.classList.toggle(
+      "ps-active",
+      exportMenu.classList.contains(
+        "ps-open"
+      )
+    );
+  }
+);
+
+transcriptSettingsButton.addEventListener(
+  "click",
+  () => {
+    setTranscriptPanelVisibility(false);
+    togglePauseSpeakMenu(
+      settingsMenu
+    );
+  }
+);
+
+helpButton.addEventListener(
+  "click",
+  () => {
+    status.textContent =
+      "Kısayollar: ←/→ 10 sn · Enter oynat/duraklat · ↑/↓ kelime seç";
+    closePauseSpeakMenus();
+    showInterfaceControls();
+  }
+);
+
+try {
+  const savedScale = Number(
+    localStorage.getItem(
+      "pausespeak-subtitle-scale"
+    )
+  );
+  const savedOpacity = Number(
+    localStorage.getItem(
+      "pausespeak-card-opacity"
+    )
+  );
+
+  if (
+    savedScale >= 80 &&
+    savedScale <= 140
+  ) {
+    fontScaleRange.value =
+      String(savedScale);
+    fontScaleRange.dispatchEvent(
+      new Event("input")
+    );
+  }
+
+  if (
+    savedOpacity >= 45 &&
+    savedOpacity <= 98
+  ) {
+    opacityRange.value =
+      String(savedOpacity);
+    opacityRange.dispatchEvent(
+      new Event("input")
+    );
+  }
+} catch (error) {
+  console.debug(
+    "PauseSpeak görünüm ayarları okunamadı.",
+    error
+  );
+}
+
+setSubtitlePanelVisibility(true);
+
 transcriptButton.addEventListener(
   "click",
   (event) => {
@@ -8081,9 +9633,9 @@ transcriptButton.addEventListener(
     event.stopPropagation();
 
     renderTranscriptPanel();
-    transcriptOverlay.style.display =
-      "flex";
-    moreMenu.style.display = "none";
+    setTranscriptPanelVisibility(true);
+    closePauseSpeakMenus();
+    showInterfaceControls();
 
     window.postMessage(
       {
@@ -8100,8 +9652,7 @@ transcriptButton.addEventListener(
 transcriptCloseButton.addEventListener(
   "click",
   () => {
-    transcriptOverlay.style.display =
-      "none";
+    setTranscriptPanelVisibility(false);
   }
 );
 
@@ -8116,8 +9667,7 @@ transcriptOverlay.addEventListener(
   "click",
   (event) => {
     if (event.target === transcriptOverlay) {
-      transcriptOverlay.style.display =
-        "none";
+      setTranscriptPanelVisibility(false);
     }
   }
 );
@@ -8131,8 +9681,8 @@ usageButton.addEventListener(
     void refreshUsagePanel();
     usageOverlay.style.display =
       "flex";
-    moreMenu.style.display =
-      "none";
+    closePauseSpeakMenus();
+    showInterfaceControls();
   },
   true
 );
@@ -8182,17 +9732,7 @@ subtitleCloseButton.addEventListener(
   (event) => {
     event.preventDefault();
     event.stopPropagation();
-
-    isSubtitlePanelHidden = true;
-
-    subtitleHiddenAtSentence =
-      completedBox.textContent.trim();
-
-    panel.style.display =
-      "none";
-
-    subtitleOpenButton.style.display =
-      "block";
+    setSubtitlePanelVisibility(false);
   },
   true
 );
@@ -8202,26 +9742,21 @@ subtitleOpenButton.addEventListener(
   (event) => {
     event.preventDefault();
     event.stopPropagation();
-
-    isSubtitlePanelHidden = false;
-    subtitleHiddenAtSentence = "";
-
-    panel.style.display =
-      "block";
-
+    isInterfaceHidden = false;
+    controlsPanel.classList.remove(
+      "ps-interface-hidden"
+    );
     subtitleOpenButton.style.display =
       "none";
+    showInterfaceControls();
   },
   true
 );
 document.documentElement.appendChild(
-  panel
+  controlsPanel
 );
 document.documentElement.appendChild(
   subtitleOpenButton
-);
-document.documentElement.appendChild(
-  controlsPanel
 );
 document.documentElement.appendChild(
   usageOverlay
@@ -8230,71 +9765,32 @@ document.documentElement.appendChild(
   transcriptOverlay
 );
 
-const controlsToggleButton =
-  document.createElement(
-    "button"
+[
+  "pointermove",
+  "pointerdown",
+  "touchstart",
+  "keydown"
+].forEach((eventName) => {
+  document.addEventListener(
+    eventName,
+    showInterfaceControls,
+    {
+      capture: true,
+      passive: true
+    }
   );
+});
 
-controlsToggleButton.type =
-  "button";
-
-controlsToggleButton.textContent =
-  "☰";
-
-controlsToggleButton.title =
-  "Kontrolleri göster";
-
-Object.assign(
-  controlsToggleButton.style,
-  {
-    position: "fixed",
-    top: "24px",
-    right: "18px",
-    zIndex: "2147483647",
-    width: "52px",
-    height: "46px",
-    padding: "0",
-    border:
-      "1px solid rgba(255, 255, 255, 0.35)",
-    borderRadius: "14px",
-    backgroundColor:
-      "rgba(15, 20, 20, 0.62)",
-    color: "#ffffff",
-    fontSize: "24px",
-    fontWeight: "700",
-    cursor: "pointer",
-    backdropFilter: "blur(10px)",
-    boxShadow:
-      "0 8px 22px rgba(0, 0, 0, 0.35)"
-  }
-);
-
-let areRemoteControlsVisible =
-  window.innerWidth >= 1200;
-
-controlsToggleButton.addEventListener(
+document.addEventListener(
   "click",
   (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    areRemoteControlsVisible =
-      !areRemoteControlsVisible;
-
-    controlsPanel.style.display =
-      areRemoteControlsVisible
-        ? "flex"
-        : "none";
-
-    controlsToggleButton.textContent =
-      areRemoteControlsVisible
-        ? "✕"
-        : "☰";
-
-    controlsToggleButton.title =
-      areRemoteControlsVisible
-        ? "Kontrolleri gizle"
-        : "Kontrolleri göster";
+    if (
+      !controlsPanel.contains(
+        event.target
+      )
+    ) {
+      closePauseSpeakMenus();
+    }
   },
   true
 );
@@ -8307,78 +9803,20 @@ function movePauseSpeakPanelsForFullscreen() {
     fullscreenContainer ||
     document.documentElement;
 
-  const isSmallScreen =
-    window.innerWidth < 1200;
-
-panel.style.bottom =
-  window.innerWidth <= 1100
-    ? fullscreenContainer
-      ? "8px"
-      : "15px"
-    : fullscreenContainer
-      ? "35px"
-      : "130px";
-
-controlsPanel.style.top =
-  fullscreenContainer
-    ? "8px"
-    : "60px";
-
-controlsPanel.style.right =
-  fullscreenContainer
-    ? "8px"
-    : "16px";
-
-  controlsPanel.style.backgroundColor =
-    fullscreenContainer
-      ? "rgba(15, 20, 20, 0.55)"
-      : "rgba(15, 20, 20, 0.78)";
-
-  controlsToggleButton.style.top =
-    fullscreenContainer
-      ? "24px"
-      : "20px";
-
-  if (isSmallScreen) {
-    controlsToggleButton.style.display =
-      "block";
-
-    controlsPanel.style.display =
-      areRemoteControlsVisible
-        ? "flex"
-        : "none";
-  } else {
-    controlsToggleButton.style.display =
-      "none";
-
-    controlsPanel.style.display =
-      "flex";
-
-    areRemoteControlsVisible =
-      true;
-  }
-
-  targetContainer.appendChild(
-    panel
-  );
-targetContainer.appendChild(
-  subtitleOpenButton
-);
   targetContainer.appendChild(
     controlsPanel
   );
-
   targetContainer.appendChild(
-    controlsToggleButton
+    subtitleOpenButton
   );
-
   targetContainer.appendChild(
     usageOverlay
   );
-
   targetContainer.appendChild(
     transcriptOverlay
   );
+
+  showInterfaceControls();
 }
 
 document.addEventListener(
@@ -8400,17 +9838,14 @@ const runPauseSpeakUpdate = () => {
     );
 
   if (!isNetflixWatchPage) {
-    panel.style.display = "none";
     subtitleOpenButton.style.display =
       "none";
-    controlsPanel.style.display =
-      "none";
-    controlsToggleButton.style.display =
-      "none";
+    controlsPanel.classList.add(
+      "ps-interface-hidden"
+    );
     usageOverlay.style.display =
       "none";
-    transcriptOverlay.style.display =
-      "none";
+    setTranscriptPanelVisibility(false);
 
     lastVideoFound = null;
     return;
