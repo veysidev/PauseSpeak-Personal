@@ -396,6 +396,120 @@
       : null;
   }
 
+  function shouldSeparateTtmlRuns(
+    existingText,
+    incomingText
+  ) {
+    const existing = String(existingText || "");
+    const incoming = String(incomingText || "");
+
+    if (
+      !existing ||
+      !incoming ||
+      /\s$/.test(existing) ||
+      /^\s/.test(incoming)
+    ) {
+      return false;
+    }
+
+    const left = existing.trimEnd();
+    const right = incoming.trimStart();
+
+    if (!left || !right) {
+      return false;
+    }
+
+    const leftCharacter = left.slice(-1);
+    const rightCharacter = right.charAt(0);
+
+    if (
+      /^[,.;:!?%\u2026)\]}\u00bb\u201d'\u2019]/.test(
+        rightCharacter
+      ) ||
+      /^[\-\u2010-\u2015/]/.test(
+        rightCharacter
+      ) ||
+      /[\-\u2010-\u2015/]$/.test(
+        leftCharacter
+      ) ||
+      /[(\[{\u00ab\u201c\u2018$\u00a3\u20ac\u00a5]$/.test(
+        leftCharacter
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      /['\u2019]$/.test(leftCharacter) &&
+      /^(?:s|t|re|ve|ll|d|m)\b/i.test(right)
+    ) {
+      return false;
+    }
+
+    if (
+      /[.,:]$/.test(leftCharacter) &&
+      /\d/.test(left.slice(-2, -1)) &&
+      /\d/.test(rightCharacter)
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function extractTtmlParagraphText(paragraph) {
+    function readNode(node) {
+      if (!node) {
+        return "";
+      }
+
+      if (
+        node.nodeType === 3 ||
+        node.nodeType === 4
+      ) {
+        return String(
+          node.nodeValue || node.textContent || ""
+        );
+      }
+
+      const localName = String(
+        node.localName || node.nodeName || ""
+      )
+        .split(":")
+        .pop()
+        .toLowerCase();
+
+      if (localName === "br") {
+        return " ";
+      }
+
+      let combined = "";
+
+      for (const child of node.childNodes || []) {
+        const childText = readNode(child);
+
+        if (!childText) {
+          continue;
+        }
+
+        if (
+          shouldSeparateTtmlRuns(
+            combined,
+            childText
+          )
+        ) {
+          combined += " ";
+        }
+
+        combined += childText;
+      }
+
+      return combined;
+    }
+
+    return readNode(paragraph);
+  }
+
   function parseTtml(text) {
     if (!/<(?:\w+:)?tt\b/i.test(text)) {
       return null;
@@ -461,7 +575,9 @@
       cues.push({
         startTimeMs: begin,
         endTimeMs: end,
-        text: paragraph.textContent
+        text: extractTtmlParagraphText(
+          paragraph
+        )
       });
     }
 

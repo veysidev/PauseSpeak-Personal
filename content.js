@@ -280,6 +280,14 @@ let currentSubtitleChunkTranslations = [];
 let isChunkTranslationVisible = false;
 let isSubtitlePanelHidden = false;
 let subtitleHiddenAtSentence = "";
+let isPrivacyCurtainActive = false;
+let privacyTapCount = 0;
+let privacyTapStartedAt = 0;
+let privacyLastTapAt = 0;
+let privacyLastTapX = 0;
+let privacyLastTapY = 0;
+let privacySuppressClickUntil = 0;
+let privacyHeartbeatAt = Date.now();
 
   let speechRecognition = null;
   let isSpeechListening = false;
@@ -306,6 +314,8 @@ let subtitleHiddenAtSentence = "";
   let pronunciationCoachManualPause = false;
   let pronunciationCoachHadSpeech = false;
   let pronunciationCoachIsModelSpeaking = false;
+  let pronunciationCoachWaitingForTranslation =
+    false;
   let pronunciationCoachRestartCount = 0;
   let pronunciationCoachRestartTimeout = null;
   let pronunciationCoachSilenceTimeout = null;
@@ -346,6 +356,18 @@ let subtitleHiddenAtSentence = "";
 
   const panel = document.createElement("div");
   panel.id = panelId;
+  const privacyCurtain =
+    document.createElement("div");
+  privacyCurtain.id =
+    "pausespeak-privacy-curtain";
+  privacyCurtain.setAttribute(
+    "aria-hidden",
+    "true"
+  );
+  privacyCurtain.setAttribute(
+    "aria-label",
+    "PauseSpeak gizlilik perdesi"
+  );
   const subtitleCloseButton =
   document.createElement("button");
 
@@ -1127,7 +1149,7 @@ chunkPracticeButton.disabled = true;
   panelVisibilityButton.className =
     "ps-icon-button ps-panel-button";
   panelVisibilityButton.title =
-    "Çeviri kartını göster veya gizle";
+    "Sağdaki altyazı geçmişini göster";
 
   const nextSentenceButton =
     document.createElement("button");
@@ -4345,6 +4367,124 @@ window.addEventListener(
     return document.querySelector("video");
   }
 
+  function resetPrivacyTapSequence() {
+    privacyTapCount = 0;
+    privacyTapStartedAt = 0;
+    privacyLastTapAt = 0;
+    privacyLastTapX = 0;
+    privacyLastTapY = 0;
+  }
+
+  function setPrivacyCurtainVisibility(
+    shouldShow
+  ) {
+    isPrivacyCurtainActive =
+      Boolean(shouldShow);
+    privacyCurtain.classList.toggle(
+      "ps-open",
+      isPrivacyCurtainActive
+    );
+    privacyCurtain.setAttribute(
+      "aria-hidden",
+      String(!isPrivacyCurtainActive)
+    );
+    resetPrivacyTapSequence();
+
+    const video = getNetflixVideo();
+
+    if (video && !video.paused) {
+      video.pause();
+    }
+
+    stopSpeechRecognition();
+
+    if (isPronunciationCoachOpen) {
+      pronunciationCoachManualPause = true;
+      pronunciationCoachStatus.textContent =
+        "Gizlilik perdesi açık — ilerlemen korunuyor";
+      stopPronunciationCoachRecognition(
+        false
+      );
+      renderPronunciationCoach();
+    }
+
+    if (isPrivacyCurtainActive) {
+      closePauseSpeakMenus();
+      status.textContent =
+        "Gizlilik perdesi açık — video durduruldu";
+    } else {
+      status.textContent =
+        "Gizlilik perdesi kapandı — video duraklatılmış durumda";
+    }
+  }
+
+  function handlePrivacyCurtainPointerUp(
+    event
+  ) {
+    if (
+      event.isPrimary === false ||
+      (
+        event.pointerType === "mouse" &&
+        event.button !== 0
+      )
+    ) {
+      return;
+    }
+
+    const now = Date.now();
+    const elapsedFromFirst =
+      now - privacyTapStartedAt;
+    const elapsedFromLast =
+      now - privacyLastTapAt;
+    const distanceFromLast =
+      Math.hypot(
+        Number(event.clientX) -
+          privacyLastTapX,
+        Number(event.clientY) -
+          privacyLastTapY
+      );
+    const continuesSequence =
+      privacyTapCount > 0 &&
+      elapsedFromFirst <= 1100 &&
+      elapsedFromLast <= 520 &&
+      distanceFromLast <= 72;
+
+    if (!continuesSequence) {
+      privacyTapCount = 1;
+      privacyTapStartedAt = now;
+    } else {
+      privacyTapCount += 1;
+    }
+
+    privacyLastTapAt = now;
+    privacyLastTapX =
+      Number(event.clientX);
+    privacyLastTapY =
+      Number(event.clientY);
+
+    if (privacyTapCount < 3) {
+      return;
+    }
+
+    privacySuppressClickUntil =
+      now + 650;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    setPrivacyCurtainVisibility(
+      !isPrivacyCurtainActive
+    );
+  }
+
+  function clearPrivacyCurtainAfterSleep() {
+    privacyHeartbeatAt = Date.now();
+
+    if (!isPrivacyCurtainActive) {
+      return;
+    }
+
+    setPrivacyCurtainVisibility(false);
+  }
+
   function isVisible(element) {
     const rectangle = element.getBoundingClientRect();
     const style = window.getComputedStyle(element);
@@ -4406,7 +4546,67 @@ function removeSubtitleDescriptions(text) {
       : "";
   }
 
+  function getSubtitleFromNativeTextTracks(
+    video
+  ) {
+    if (!video?.textTracks) {
+      return "";
+    }
+
+    for (const track of Array.from(
+      video.textTracks
+    )) {
+      if (
+        track.mode !== "showing" ||
+        !track.activeCues?.length
+      ) {
+        continue;
+      }
+
+      const activeCueTexts = Array.from(
+        track.activeCues
+      )
+        .map((cue) =>
+          cleanText(cue?.text || "")
+        )
+        .filter(Boolean);
+
+      if (activeCueTexts.length) {
+        return activeCueTexts.reduce(
+          (
+            combinedText,
+            cueText
+          ) =>
+            mergeOverlappingSubtitleText(
+              combinedText,
+              cueText
+            ),
+          ""
+        );
+      }
+    }
+
+    return "";
+  }
+
   function getNetflixSubtitle() {
+    const video = getNetflixVideo();
+    const capturedTrackSubtitle =
+      getSubtitleFromCapturedTrack(video);
+
+    if (capturedTrackSubtitle) {
+      return capturedTrackSubtitle;
+    }
+
+    const nativeTrackSubtitle =
+      getSubtitleFromNativeTextTracks(
+        video
+      );
+
+    if (nativeTrackSubtitle) {
+      return nativeTrackSubtitle;
+    }
+
     const platform = getPlaybackPlatform();
     const selectors = platform === "youtube"
       ? [
@@ -4438,13 +4638,21 @@ function removeSubtitleDescriptions(text) {
       const uniqueTexts = [...new Set(texts)];
 
       if (uniqueTexts.length > 0) {
-        return uniqueTexts.join(" ");
+        return uniqueTexts.reduce(
+          (
+            combinedText,
+            visibleText
+          ) =>
+            mergeOverlappingSubtitleText(
+              combinedText,
+              visibleText
+            ),
+          ""
+        );
       }
     }
 
-    return getSubtitleFromCapturedTrack(
-      getNetflixVideo()
-    );
+    return "";
   }
 
   function endsSentence(text) {
@@ -4457,10 +4665,132 @@ function removeSubtitleDescriptions(text) {
     accumulatedText,
     incomingText
   ) {
+    const normalizeOverlapWord =
+      (word) =>
+        String(word || "")
+          .toLocaleLowerCase("en-US")
+          .replace(/[’‘`]/g, "'")
+          .replace(
+            /^[^\p{L}\p{N}']+|[^\p{L}\p{N}']+$/gu,
+            ""
+          );
+    const collapseRepeatedBlocks =
+      (value) => {
+        let words = cleanText(value)
+          .split(" ")
+          .filter(Boolean);
+        let changed = true;
+
+        while (changed) {
+          changed = false;
+          const normalizedWords =
+            words.map(
+              normalizeOverlapWord
+            );
+          const maximumBlockLength =
+            Math.floor(
+              normalizedWords.length / 2
+            );
+
+          for (
+            let blockLength =
+              maximumBlockLength;
+            blockLength >= 4;
+            blockLength -= 1
+          ) {
+            let duplicateStart = -1;
+
+            for (
+              let startIndex = 0;
+              startIndex +
+                  blockLength * 2 <=
+                normalizedWords.length;
+              startIndex += 1
+            ) {
+              const firstBlock =
+                normalizedWords.slice(
+                  startIndex,
+                  startIndex +
+                    blockLength
+                );
+              const secondBlock =
+                normalizedWords.slice(
+                  startIndex +
+                    blockLength,
+                  startIndex +
+                    blockLength * 2
+                );
+
+              if (
+                firstBlock.every(
+                  (word, index) =>
+                    word &&
+                    word ===
+                      secondBlock[index]
+                )
+              ) {
+                duplicateStart =
+                  startIndex +
+                  blockLength;
+                break;
+              }
+            }
+
+            if (duplicateStart >= 0) {
+              words.splice(
+                duplicateStart,
+                blockLength
+              );
+              changed = true;
+              break;
+            }
+          }
+        }
+
+        return cleanText(words.join(" "));
+      };
+    const findWordSequence = (
+      haystack,
+      needle
+    ) => {
+      if (
+        !needle.length ||
+        needle.length > haystack.length
+      ) {
+        return -1;
+      }
+
+      for (
+        let startIndex = 0;
+        startIndex <=
+          haystack.length -
+            needle.length;
+        startIndex += 1
+      ) {
+        if (
+          needle.every(
+            (word, offset) =>
+              word &&
+              word ===
+                haystack[
+                  startIndex + offset
+                ]
+          )
+        ) {
+          return startIndex;
+        }
+      }
+
+      return -1;
+    };
     const accumulated =
-      cleanText(accumulatedText);
+      collapseRepeatedBlocks(
+        accumulatedText
+      );
     const incoming =
-      cleanText(incomingText);
+      collapseRepeatedBlocks(
+        incomingText
+      );
 
     if (!accumulated) {
       return incoming;
@@ -4482,15 +4812,6 @@ function removeSubtitleDescriptions(text) {
       accumulated.split(" ");
     const incomingWords =
       incoming.split(" ");
-    const normalizeOverlapWord =
-      (word) =>
-        String(word || "")
-          .toLocaleLowerCase("en-US")
-          .replace(/[’‘`]/g, "'")
-          .replace(
-            /^[^\p{L}\p{N}']+|[^\p{L}\p{N}']+$/gu,
-            ""
-          );
     const normalizedAccumulated =
       accumulatedWords.map(
         normalizeOverlapWord
@@ -4499,6 +4820,24 @@ function removeSubtitleDescriptions(text) {
       incomingWords.map(
         normalizeOverlapWord
       );
+
+    if (
+      findWordSequence(
+        normalizedIncoming,
+        normalizedAccumulated
+      ) >= 0
+    ) {
+      return incoming;
+    }
+
+    if (
+      findWordSequence(
+        normalizedAccumulated,
+        normalizedIncoming
+      ) >= 0
+    ) {
+      return accumulated;
+    }
     const maximumOverlap = Math.min(
       normalizedAccumulated.length,
       normalizedIncoming.length
@@ -4540,17 +4879,61 @@ function removeSubtitleDescriptions(text) {
       }
 
       return cleanText(
-        [
-          accumulated,
-          ...incomingWords.slice(
-            overlapLength
-          )
-        ].join(" ")
+        collapseRepeatedBlocks(
+          [
+            accumulated,
+            ...incomingWords.slice(
+              overlapLength
+            )
+          ].join(" ")
+        )
+      );
+    }
+
+    const maximumRestartLength =
+      Math.min(
+        normalizedAccumulated.length,
+        normalizedIncoming.length
+      );
+
+    for (
+      let restartLength =
+        maximumRestartLength;
+      restartLength >= 4;
+      restartLength -= 1
+    ) {
+      const restartWords =
+        normalizedIncoming.slice(
+          0,
+          restartLength
+        );
+      const restartIndex =
+        findWordSequence(
+          normalizedAccumulated,
+          restartWords
+        );
+
+      if (restartIndex < 0) {
+        continue;
+      }
+
+      return cleanText(
+        collapseRepeatedBlocks(
+          [
+            ...accumulatedWords.slice(
+              0,
+              restartIndex
+            ),
+            ...incomingWords
+          ].join(" ")
+        )
       );
     }
 
     return cleanText(
-      `${accumulated} ${incoming}`
+      collapseRepeatedBlocks(
+        `${accumulated} ${incoming}`
+      )
     );
   }
 
@@ -6043,6 +6426,92 @@ async function improveCurrentTranslation() {
     return "Mevcut Türkçe çeviri hazırlanıyor…";
   }
 
+  function isPronunciationCoachTranslationReady() {
+    if (
+      pronunciationCoachSentence !==
+        cleanText(
+          completedBox.textContent
+        )
+    ) {
+      return false;
+    }
+
+    if (isChunkTranslationVisible) {
+      return (
+        currentSubtitleChunks.length > 0 &&
+        currentSubtitleChunkTranslations.length >=
+          currentSubtitleChunks.length &&
+        currentSubtitleChunks.every(
+          (_chunk, index) => {
+            const translatedChunk =
+              cleanText(
+                currentSubtitleChunkTranslations[
+                  index
+                ] || ""
+              );
+
+            return Boolean(
+              translatedChunk &&
+              translatedChunk !==
+                "Çevriliyor..."
+            );
+          }
+        )
+      );
+    }
+
+    const sentenceTranslation = cleanText(
+      translationBox.textContent
+    );
+
+    return Boolean(
+      sentenceTranslation &&
+      !/^(Çevriliyor|İngilizce cümle tamamlandığında|Türkçe çeviri burada görünecek|Mevcut Türkçe çeviri hazırlanıyor)/i.test(
+        sentenceTranslation
+      )
+    );
+  }
+
+  function tryStartPronunciationCoachAfterTranslation() {
+    if (
+      !isPronunciationCoachSessionActive ||
+      !isPronunciationCoachOpen ||
+      pronunciationCoachManualPause ||
+      pronunciationCoachIsModelSpeaking ||
+      pronunciationCoachRecognition ||
+      pronunciationCoachListening ||
+      !getCurrentPronunciationCoachChunk()
+    ) {
+      return false;
+    }
+
+    const video = getNetflixVideo();
+
+    if (
+      !video ||
+      !video.paused ||
+      !isPronunciationCoachTranslationReady()
+    ) {
+      pronunciationCoachWaitingForTranslation =
+        true;
+      pronunciationCoachStatus.textContent =
+        video && video.paused
+          ? "Çeviri tamamlanınca mikrofon otomatik açılacak"
+          : "Video oynarken mikrofon kapalı";
+      renderPronunciationCoach();
+      return false;
+    }
+
+    pronunciationCoachWaitingForTranslation =
+      false;
+    pronunciationCoachStatus.textContent =
+      "Çeviri hazır — mikrofon açılıyor";
+    pronunciationCoachShouldRestart = true;
+    renderPronunciationCoach();
+    schedulePronunciationCoachRestart(220);
+    return true;
+  }
+
   function getPronunciationCoachStudyContext(
     word
   ) {
@@ -6343,6 +6812,115 @@ async function improveCurrentTranslation() {
     return element;
   }
 
+  function applyPronunciationCoachStateToSubtitle() {
+    if (
+      !isPronunciationCoachOpen ||
+      !isPronunciationCoachSessionActive
+    ) {
+      return;
+    }
+
+    subtitleBox.classList.add(
+      "ps-inline-coach-active"
+    );
+    panel.classList.add(
+      "ps-inline-coach-active"
+    );
+    const coachWords =
+      pronunciationCoachChunks.flatMap(
+        (chunk, chunkIndex) =>
+          chunk.parts
+            .map((part, partIndex) => ({
+              part,
+              partIndex,
+              chunkIndex
+            }))
+            .filter(
+              ({ part }) =>
+                part.kind === "word"
+            )
+      );
+    const studyButtons = Array.from(
+      subtitleBox.querySelectorAll(
+        "button[data-study-text]"
+      )
+    );
+
+    studyButtons.forEach(
+      (segmentButton, wordIndex) => {
+        const reference =
+          coachWords[wordIndex] || null;
+
+        segmentButton.classList.add(
+          "ps-inline-coach-segment"
+        );
+        segmentButton.classList.remove(
+          "ps-coach-word-active",
+          "ps-coach-word-passed",
+          "ps-coach-word-proper",
+          "ps-coach-word-retry",
+          "ps-coach-word-live-passed"
+        );
+
+        if (!reference) {
+          delete segmentButton.dataset
+            .coachWordKey;
+          return;
+        }
+
+        const {
+          part,
+          partIndex,
+          chunkIndex
+        } = reference;
+
+        segmentButton.dataset.coachWordKey =
+          part.key;
+
+        if (part.state === "passed") {
+          segmentButton.classList.add(
+            "ps-coach-word-passed"
+          );
+        } else if (
+          part.state === "proper"
+        ) {
+          segmentButton.classList.add(
+            "ps-coach-word-proper"
+          );
+        } else if (
+          part.state === "retry"
+        ) {
+          segmentButton.classList.add(
+            "ps-coach-word-retry"
+          );
+        }
+
+        if (
+          pronunciationCoachLiveMatches.has(
+            part.key
+          )
+        ) {
+          segmentButton.classList.add(
+            "ps-coach-word-live-passed"
+          );
+        }
+
+        if (
+          chunkIndex ===
+            pronunciationCoachChunkIndex &&
+          partIndex ===
+            pronunciationCoachActiveWordIndex &&
+          part.state !== "passed" &&
+          part.state !== "proper"
+        ) {
+          segmentButton.classList.add(
+            "ps-coach-word-active"
+          );
+        }
+      }
+    );
+  }
+
   function createPronunciationCoachChunkCard(
     chunk,
     chunkIndex
@@ -6538,8 +7116,35 @@ async function improveCurrentTranslation() {
         ? "Dinliyorum"
         : pronunciationCoachManualPause
           ? "Devam et"
+          : pronunciationCoachWaitingForTranslation
+            ? "Çeviri bekleniyor"
           : "Konuş"
     );
+
+    pronunciationCoachButton.classList.toggle(
+      "ps-listening",
+      pronunciationCoachListening
+    );
+    pronunciationCoachButton.title =
+      pronunciationCoachListening
+        ? "Dinliyorum — duraklatmak için dokun"
+        : pronunciationCoachManualPause
+          ? "Telaffuza devam et"
+          : pronunciationCoachWaitingForTranslation
+            ? "Çeviri tamamlanınca mikrofon otomatik açılacak"
+          : "Telaffuz Koçu";
+    pronunciationCoachButton.setAttribute(
+      "aria-label",
+      pronunciationCoachButton.title
+    );
+    pronunciationCoachButton.setAttribute(
+      "aria-pressed",
+      String(
+        isPronunciationCoachSessionActive
+      )
+    );
+
+    applyPronunciationCoachStateToSubtitle();
   }
 
   function evaluatePronunciationCoachText(
@@ -6727,15 +7332,18 @@ async function improveCurrentTranslation() {
 
   function finishPronunciationCoachSentence() {
     stopPronunciationCoachRecognition(false);
+    pronunciationCoachWaitingForTranslation =
+      true;
     pronunciationCoachLiveMatches.clear();
     pronunciationCoachActiveWordIndex = -1;
     pronunciationCoachStatus.textContent =
       "Cümle tamamlandı — video devam ediyor";
     pronunciationCoachHeard.textContent =
       "Tüm kelimeler tamamlandı";
-    pronunciationCoachPanel.classList.add(
-      "ps-complete"
+    panel.classList.add(
+      "ps-inline-coach-complete"
     );
+    renderPronunciationCoach();
 
     pronunciationCoachAdvanceTimeout =
       setTimeout(async () => {
@@ -6749,9 +7357,10 @@ async function improveCurrentTranslation() {
           "aria-hidden",
           "true"
         );
-        pronunciationCoachPanel.classList.remove(
-          "ps-complete"
+        panel.classList.remove(
+          "ps-inline-coach-complete"
         );
+        renderChunkedSubtitle();
 
         const video = getNetflixVideo();
 
@@ -6951,6 +7560,8 @@ async function improveCurrentTranslation() {
   }
 
   function startPronunciationCoachRecognition() {
+    const video = getNetflixVideo();
+
     if (
       !SpeechRecognitionClass ||
       !isPronunciationCoachSessionActive ||
@@ -6962,6 +7573,31 @@ async function improveCurrentTranslation() {
     ) {
       return;
     }
+
+    if (
+      !video ||
+      !video.paused ||
+      !isPronunciationCoachTranslationReady()
+    ) {
+      if (
+        isPronunciationCoachSessionActive &&
+        isPronunciationCoachOpen &&
+        !pronunciationCoachManualPause &&
+        !pronunciationCoachIsModelSpeaking
+      ) {
+        pronunciationCoachWaitingForTranslation =
+          true;
+        pronunciationCoachStatus.textContent =
+          video && video.paused
+            ? "Çeviri tamamlanınca mikrofon otomatik açılacak"
+            : "Video oynarken mikrofon kapalı";
+        renderPronunciationCoach();
+      }
+      return;
+    }
+
+    pronunciationCoachWaitingForTranslation =
+      false;
 
     const recognition =
       new SpeechRecognitionClass();
@@ -6975,6 +7611,30 @@ async function improveCurrentTranslation() {
     pronunciationCoachShouldRestart =
       true;
     pronunciationCoachHadSpeech = false;
+    const stopCoachForVideoPlayback = () => {
+      if (
+        pronunciationCoachRecognition !==
+          recognition
+      ) {
+        return;
+      }
+
+      pronunciationCoachWaitingForTranslation =
+        true;
+      pronunciationCoachShouldRestart =
+        false;
+      pronunciationCoachStatus.textContent =
+        "Video oynarken mikrofon kapalı";
+      stopPronunciationCoachRecognition(
+        false
+      );
+    };
+
+    video.addEventListener(
+      "play",
+      stopCoachForVideoPlayback,
+      { once: true }
+    );
 
     recognition.onstart = () => {
       pronunciationCoachListening = true;
@@ -7107,6 +7767,11 @@ async function improveCurrentTranslation() {
     };
 
     recognition.onend = () => {
+      video.removeEventListener(
+        "play",
+        stopCoachForVideoPlayback
+      );
+
       if (
         pronunciationCoachRecognition ===
         recognition
@@ -7139,6 +7804,10 @@ async function improveCurrentTranslation() {
     try {
       recognition.start();
     } catch (error) {
+      video.removeEventListener(
+        "play",
+        stopCoachForVideoPlayback
+      );
       pronunciationCoachRecognition =
         null;
       pronunciationCoachListening = false;
@@ -7356,9 +8025,19 @@ async function improveCurrentTranslation() {
       "true"
     );
     pronunciationCoachManualPause = false;
+    pronunciationCoachWaitingForTranslation =
+      true;
     pronunciationCoachRestartCount = 0;
-    pronunciationCoachPanel.classList.remove(
-      "ps-complete"
+    panel.classList.remove(
+      "ps-inline-coach-complete"
+    );
+    isPronunciationCoachOpen = true;
+    pronunciationCoachOverlay.classList.remove(
+      "ps-open"
+    );
+    pronunciationCoachOverlay.setAttribute(
+      "aria-hidden",
+      "true"
     );
 
     stopPronunciationCoachRecognition(false);
@@ -7377,14 +8056,7 @@ async function improveCurrentTranslation() {
       );
     }
 
-    isPronunciationCoachOpen = true;
-    pronunciationCoachOverlay.classList.add(
-      "ps-open"
-    );
-    pronunciationCoachOverlay.setAttribute(
-      "aria-hidden",
-      "false"
-    );
+    renderPronunciationCoach();
 
     const video = getNetflixVideo();
 
@@ -7412,9 +8084,7 @@ async function improveCurrentTranslation() {
       return;
     }
 
-    schedulePronunciationCoachRestart(
-      220
-    );
+    tryStartPronunciationCoachAfterTranslation();
   }
 
   function closePronunciationCoach(
@@ -7431,6 +8101,8 @@ async function improveCurrentTranslation() {
     pronunciationCoachIsModelSpeaking =
       false;
     pronunciationCoachManualPause = false;
+    pronunciationCoachWaitingForTranslation =
+      false;
     isPronunciationCoachOpen = false;
     pronunciationCoachOverlay.classList.remove(
       "ps-open"
@@ -7438,6 +8110,13 @@ async function improveCurrentTranslation() {
     pronunciationCoachOverlay.setAttribute(
       "aria-hidden",
       "true"
+    );
+    panel.classList.remove(
+      "ps-inline-coach-active",
+      "ps-inline-coach-complete"
+    );
+    subtitleBox.classList.remove(
+      "ps-inline-coach-active"
     );
 
     if (
@@ -7471,6 +8150,17 @@ async function improveCurrentTranslation() {
         "false"
       );
     }
+
+    pronunciationCoachButton.classList.remove(
+      "ps-listening"
+    );
+    pronunciationCoachButton.title =
+      "Telaffuz Koçu";
+    pronunciationCoachButton.setAttribute(
+      "aria-label",
+      pronunciationCoachButton.title
+    );
+    renderChunkedSubtitle();
 
     if (pronunciationCoachVideoPreview) {
       pronunciationCoachVideoPreview
@@ -7887,18 +8577,20 @@ async function improveCurrentTranslation() {
 ) {
   const pieces =
     String(sentence || "").match(
-      /[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*(?:-[\p{L}\p{N}]+)*|[^\s\p{L}\p{N}]+/gu
+      /[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*(?:-[\p{L}\p{N}]+)*|\s+|[^\s\p{L}\p{N}]+/gu
     ) || [];
 
   return pieces.map(
     (piece) => ({
       text: piece,
       type:
-        /^[\p{L}\p{N}]/u.test(
-          piece
-        )
-          ? "word"
-          : "punctuation"
+        /^\s+$/u.test(piece)
+          ? "spacing"
+          : /^[\p{L}\p{N}]/u.test(
+              piece
+            )
+            ? "word"
+            : "punctuation"
     })
   );
 }
@@ -7910,7 +8602,8 @@ function createStudyTokenMappings(
   for (const segment of segments) {
     if (
       !segment ||
-      segment.type === "punctuation"
+      segment.type === "punctuation" ||
+      segment.type === "spacing"
     ) {
       continue;
     }
@@ -8300,6 +8993,15 @@ function appendStudySegments(
   segments
 ) {
   for (const segment of segments) {
+    if (segment.type === "spacing") {
+      container.appendChild(
+        document.createTextNode(
+          segment.text
+        )
+      );
+      continue;
+    }
+
     if (
       segment.type ===
       "punctuation"
@@ -8406,6 +9108,21 @@ Object.assign(
 
 function renderChunkedSubtitle() {
   clearKeyboardStudyMeaningTimer();
+  const shouldDecoratePronunciationCoach =
+    isPronunciationCoachOpen &&
+    isPronunciationCoachSessionActive;
+
+  subtitleBox.classList.toggle(
+    "ps-inline-coach-active",
+    shouldDecoratePronunciationCoach
+  );
+  panel.classList.toggle(
+    "ps-inline-coach-active",
+    shouldDecoratePronunciationCoach
+  );
+  panel.classList.remove(
+    "ps-inline-coach-complete"
+  );
   subtitleBox.replaceChildren();
 
   translationBox.style.display =
@@ -8457,12 +9174,9 @@ function renderChunkedSubtitle() {
       Object.assign(
         englishLine.style,
         {
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          justifyContent: "center",
+          display: "block",
           textAlign: "center",
-          gap: "4px"
+          whiteSpace: "normal"
         }
       );
 
@@ -8512,10 +9226,12 @@ function renderChunkedSubtitle() {
     }
   );
 
-  if (isPronunciationCoachOpen) {
+  if (shouldDecoratePronunciationCoach) {
     synchronizePronunciationCoachChunks();
-    renderPronunciationCoach();
+    applyPronunciationCoachStateToSubtitle();
+    tryStartPronunciationCoachAfterTranslation();
   }
+
 }
 
 async function loadStudyMeaning(
@@ -12190,9 +12906,13 @@ function setSubtitlePanelVisibility(
     shouldShow
       ? "Çeviri kartını gizle"
       : "Çeviri kartını göster";
-  panelVisibilityButton.classList.toggle(
+  transcriptButton.classList.toggle(
     "ps-active",
     shouldShow
+  );
+  transcriptButton.setAttribute(
+    "aria-pressed",
+    String(shouldShow)
   );
 }
 
@@ -12209,9 +12929,21 @@ function setTranscriptPanelVisibility(
     "ps-transcript-open",
     shouldShow
   );
-  transcriptButton.classList.toggle(
+  panelVisibilityButton.classList.toggle(
     "ps-active",
     shouldShow
+  );
+  panelVisibilityButton.title =
+    shouldShow
+      ? "Sağdaki altyazı geçmişini kapat"
+      : "Sağdaki altyazı geçmişini göster";
+  panelVisibilityButton.setAttribute(
+    "aria-label",
+    panelVisibilityButton.title
+  );
+  panelVisibilityButton.setAttribute(
+    "aria-pressed",
+    String(shouldShow)
   );
 
   if (!shouldShow) {
@@ -12969,6 +13701,10 @@ setPauseSpeakButton(
   panelVisibilityButton,
   "panel"
 );
+panelVisibilityButton.setAttribute(
+  "aria-label",
+  panelVisibilityButton.title
+);
 setPauseSpeakButton(
   improveTranslationButton,
   "waveSpark"
@@ -13070,6 +13806,12 @@ setPauseSpeakButton(
   transcriptButton,
   "subtitles",
   "Altyazılar"
+);
+transcriptButton.title =
+  "Ana altyazı kartını göster veya gizle";
+transcriptButton.setAttribute(
+  "aria-label",
+  transcriptButton.title
 );
 setPauseSpeakButton(
   audioSubtitleButton,
@@ -13297,6 +14039,7 @@ const pronunciationCoachTranslationObserver =
   new MutationObserver(() => {
     if (isPronunciationCoachOpen) {
       renderPronunciationCoach();
+      tryStartPronunciationCoachAfterTranslation();
     }
   });
 
@@ -13315,10 +14058,42 @@ pronunciationCoachButton.addEventListener(
     event.preventDefault();
     event.stopPropagation();
     closePauseSpeakMenus();
-    openPronunciationCoach(
-      completedBox.textContent,
-      true
-    );
+
+    if (
+      !isPronunciationCoachSessionActive ||
+      !isPronunciationCoachOpen
+    ) {
+      openPronunciationCoach(
+        completedBox.textContent,
+        true
+      );
+      return;
+    }
+
+    if (
+      pronunciationCoachIsModelSpeaking
+    ) {
+      window.speechSynthesis?.cancel();
+      pronunciationCoachIsModelSpeaking =
+        false;
+    }
+
+    if (pronunciationCoachListening) {
+      pronunciationCoachManualPause =
+        true;
+      pronunciationCoachStatus.textContent =
+        "Mikrofon duraklatıldı — ilerlemen korunuyor";
+      stopPronunciationCoachRecognition(
+        false
+      );
+      renderPronunciationCoach();
+      return;
+    }
+
+    pronunciationCoachManualPause = false;
+    pronunciationCoachStatus.textContent =
+      "Mikrofon hazırlanıyor";
+    startPronunciationCoachRecognition();
   }
 );
 
@@ -13537,9 +14312,31 @@ playerShellToggleButton.addEventListener(
 
 panelVisibilityButton.addEventListener(
   "click",
-  () => {
-    setSubtitlePanelVisibility(
-      isSubtitlePanelHidden
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const shouldShow =
+      transcriptOverlay.style.display !==
+      "flex";
+
+    if (shouldShow) {
+      renderTranscriptPanel();
+      closePauseSpeakMenus();
+      showInterfaceControls();
+
+      window.postMessage(
+        {
+          source: "PAUSESPEAK_EXTENSION",
+          type:
+            "PAUSESPEAK_SUBTITLE_TRACKS_REQUEST"
+        },
+        "*"
+      );
+    }
+
+    setTranscriptPanelVisibility(
+      shouldShow
     );
   }
 );
@@ -13885,18 +14682,8 @@ transcriptButton.addEventListener(
     event.preventDefault();
     event.stopPropagation();
 
-    renderTranscriptPanel();
-    setTranscriptPanelVisibility(true);
-    closePauseSpeakMenus();
-    showInterfaceControls();
-
-    window.postMessage(
-      {
-        source: "PAUSESPEAK_EXTENSION",
-        type:
-          "PAUSESPEAK_SUBTITLE_TRACKS_REQUEST"
-      },
-      "*"
+    setSubtitlePanelVisibility(
+      isSubtitlePanelHidden
     );
   },
   true
@@ -14023,6 +14810,87 @@ document.documentElement.appendChild(
 document.documentElement.appendChild(
   pronunciationCoachOverlay
 );
+document.documentElement.appendChild(
+  privacyCurtain
+);
+
+document.addEventListener(
+  "pointerup",
+  handlePrivacyCurtainPointerUp,
+  true
+);
+
+document.addEventListener(
+  "click",
+  (event) => {
+    if (
+      !isPrivacyCurtainActive &&
+      Date.now() >
+        privacySuppressClickUntil
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  },
+  true
+);
+
+privacyCurtain.addEventListener(
+  "contextmenu",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+);
+
+document.addEventListener(
+  "freeze",
+  clearPrivacyCurtainAfterSleep
+);
+document.addEventListener(
+  "resume",
+  clearPrivacyCurtainAfterSleep
+);
+window.addEventListener(
+  "pageshow",
+  (event) => {
+    if (event.persisted) {
+      clearPrivacyCurtainAfterSleep();
+    }
+  }
+);
+document.addEventListener(
+  "visibilitychange",
+  () => {
+    if (
+      document.visibilityState ===
+      "visible"
+    ) {
+      privacyHeartbeatAt = Date.now();
+    }
+  }
+);
+window.setInterval(
+  () => {
+    const now = Date.now();
+    const elapsed =
+      now - privacyHeartbeatAt;
+
+    privacyHeartbeatAt = now;
+
+    if (
+      isPrivacyCurtainActive &&
+      document.visibilityState ===
+        "visible" &&
+      elapsed > 15000
+    ) {
+      clearPrivacyCurtainAfterSleep();
+    }
+  },
+  1000
+);
 
 [
   "pointermove",
@@ -14076,6 +14944,9 @@ function movePauseSpeakPanelsForFullscreen() {
   );
   targetContainer.appendChild(
     pronunciationCoachOverlay
+  );
+  targetContainer.appendChild(
+    privacyCurtain
   );
 
   showInterfaceControls();
@@ -14168,6 +15039,18 @@ function refreshPlaybackMediaContext() {
 }
 
 const runPauseSpeakUpdate = () => {
+  if (isPrivacyCurtainActive) {
+    const privacyVideo =
+      getNetflixVideo();
+
+    if (
+      privacyVideo &&
+      !privacyVideo.paused
+    ) {
+      privacyVideo.pause();
+    }
+  }
+
   if (!isSupportedWatchPage()) {
     subtitleOpenButton.style.display =
       "none";
@@ -14187,6 +15070,26 @@ const runPauseSpeakUpdate = () => {
   }
 
   refreshPlaybackMediaContext();
+
+  const pronunciationCoachVideo =
+    getNetflixVideo();
+
+  if (
+    isPronunciationCoachSessionActive &&
+    pronunciationCoachVideo &&
+    !pronunciationCoachVideo.paused &&
+    (
+      pronunciationCoachRecognition ||
+      pronunciationCoachListening
+    )
+  ) {
+    pronunciationCoachWaitingForTranslation =
+      true;
+    pronunciationCoachShouldRestart = false;
+    stopPronunciationCoachRecognition(false);
+    pronunciationCoachStatus.textContent =
+      "Video oynarken mikrofon kapalı";
+  }
 
   if (
     capturedSubtitleTracks.size === 0 &&

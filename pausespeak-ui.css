@@ -3844,6 +3844,78 @@ button.ps-coach-word:focus-visible,
   background-image: none !important;
 }
 
+/* PauseSpeak Inline Pronunciation Coach ------------------------------
+   The normal subtitle rows and study buttons stay intact. The coach
+   only adds state classes to those already-rendered buttons. */
+#pausespeak-status-panel
+  #pausespeak-subtitle-english
+  button[data-study-text].ps-inline-coach-segment {
+  white-space: normal !important;
+}
+
+#pausespeak-status-panel
+  #pausespeak-subtitle-english
+  button[data-study-text].ps-coach-word-active {
+  color: #eafdff !important;
+  background: rgba(88, 199, 229, 0.18) !important;
+  box-shadow: inset 0 -2px 0 #7bd7ea,
+    0 0 0 1px rgba(123, 215, 234, 0.32) !important;
+}
+
+#pausespeak-status-panel
+  #pausespeak-subtitle-english
+  button[data-study-text].ps-coach-word-passed,
+#pausespeak-status-panel
+  #pausespeak-subtitle-english
+  button[data-study-text].ps-coach-word-proper,
+#pausespeak-status-panel
+  #pausespeak-subtitle-english
+  button[data-study-text].ps-coach-word-live-passed {
+  color: #8bd3ad !important;
+  background: rgba(121, 202, 161, 0.08) !important;
+  box-shadow: inset 0 -2px 0 rgba(121, 202, 161, 0.68) !important;
+}
+
+#pausespeak-status-panel
+  #pausespeak-subtitle-english
+  button[data-study-text].ps-coach-word-retry {
+  color: #e2a0a0 !important;
+  background: rgba(217, 138, 138, 0.08) !important;
+  box-shadow: inset 0 -2px 0 rgba(217, 138, 138, 0.68) !important;
+}
+
+#pausespeak-pronunciation-coach-button.ps-listening {
+  color: #ffffff !important;
+  border-color: #7bd7ea !important;
+  box-shadow: 0 0 0 3px rgba(88, 199, 229, 0.14),
+    0 0 20px rgba(88, 199, 229, 0.3) !important;
+}
+
+/* PauseSpeak Privacy Curtain ----------------------------------------- */
+#pausespeak-privacy-curtain {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 2147483647 !important;
+  display: none !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  background: #000000 !important;
+  border: 0 !important;
+  opacity: 1 !important;
+  pointer-events: none !important;
+  touch-action: none !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+#pausespeak-privacy-curtain.ps-open {
+  display: block !important;
+  pointer-events: auto !important;
+}
+
 @media (max-width: 680px), (max-height: 560px) {
   .ps-pronunciation-coach-header {
     grid-template-columns: minmax(0, 1fr) 38px;

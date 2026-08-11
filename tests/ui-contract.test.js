@@ -15,7 +15,7 @@ const popup = read("popup.html");
 const manifest = JSON.parse(read("manifest.json"));
 
 test("manifest uses the Netflix and YouTube release version", () => {
-  assert.equal(manifest.version, "1.1.3");
+  assert.equal(manifest.version, "1.1.8");
 });
 
 test("Netflix and YouTube both load the content and MAIN-world bridge", () => {
@@ -484,6 +484,182 @@ test("rolling Netflix captions merge their shared suffix and prefix once", () =>
     ),
     "I know that that was unusual."
   );
+
+  const visibleNodes = [
+    "When you get",
+    "When you get into something like this where it just isn't happening,",
+    "When you get into something like this where it just isn't happening, this is what in law enforcement we refer to as the whodunit."
+  ];
+  const mergedVisibleNodes =
+    visibleNodes.reduce(
+      (combined, visible) =>
+        sandbox.mergeOverlappingSubtitleText(
+          combined,
+          visible
+        ),
+      ""
+    );
+
+  assert.equal(
+    mergedVisibleNodes,
+    visibleNodes[2]
+  );
+  assert.match(
+    content,
+    /uniqueTexts\.reduce\([\s\S]*?mergeOverlappingSubtitleText/s
+  );
+
+  const photographedDuplicate =
+    "Law enforcement's latest efforts have been sifting through Law enforcement's latest efforts have been sifting through surveillance videos from downtown and any doorbell cameras in the area of the crime scene.";
+  const photographedExpected =
+    "Law enforcement's latest efforts have been sifting through surveillance videos from downtown and any doorbell cameras in the area of the crime scene.";
+
+  assert.equal(
+    sandbox.mergeOverlappingSubtitleText(
+      "",
+      photographedDuplicate
+    ),
+    photographedExpected
+  );
+
+  assert.equal(
+    sandbox.mergeOverlappingSubtitleText(
+      "Tonight investigators said Law enforcement's latest efforts have been sifting through",
+      "Law enforcement’s latest efforts have been sifting through surveillance videos."
+    ),
+    "Tonight investigators said Law enforcement's latest efforts have been sifting through surveillance videos."
+  );
+});
+
+test("timed subtitle cues are preferred over rolling DOM text and real spaces are preserved", () => {
+  const subtitleReader = content.match(
+    /function getNetflixSubtitle\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function endsSentence)/
+  );
+  const segmenter = content.match(
+    /function createImmediateStudySegments\([\s\S]*?\r?\n\}\r?\n(?=function createStudyTokenMappings)/
+  );
+
+  assert.ok(subtitleReader, "subtitle reader was not found");
+  assert.ok(segmenter, "immediate segmenter was not found");
+  assert.match(
+    subtitleReader[0],
+    /getSubtitleFromCapturedTrack\(video\)[\s\S]*?return capturedTrackSubtitle[\s\S]*?getSubtitleFromNativeTextTracks/s
+  );
+  assert.match(
+    content,
+    /function getSubtitleFromNativeTextTracks[\s\S]*?track\.activeCues[\s\S]*?mergeOverlappingSubtitleText/s
+  );
+  assert.match(
+    content,
+    /segment\.type === "spacing"[\s\S]*?document\.createTextNode\(\s*segment\.text/s
+  );
+  assert.match(
+    content,
+    /createImmediateStudySegments\([\s\S]*?display: "block"[\s\S]*?whiteSpace: "normal"/s
+  );
+
+  const sandbox = { result: null };
+
+  vm.runInNewContext(
+    `${segmenter[0]}\nresult = createImmediateStudySegments("doorbell cameras in the area.");`,
+    sandbox
+  );
+
+  assert.equal(
+    Array.from(
+      sandbox.result,
+      (segment) => segment.text
+    ).join(""),
+    "doorbell cameras in the area."
+  );
+  assert.deepEqual(
+    Array.from(
+      sandbox.result,
+      (segment) => segment.type
+    ),
+    [
+      "word",
+      "spacing",
+      "word",
+      "spacing",
+      "word",
+      "spacing",
+      "word",
+      "spacing",
+      "word",
+      "punctuation"
+    ]
+  );
+});
+
+test("Netflix TTML run and line boundaries cannot fuse neighboring words", () => {
+  const helper = bridge.match(
+    /function shouldSeparateTtmlRuns[\s\S]*?\r?\n  }\r?\n(?=\r?\n  function parseTtml)/
+  );
+
+  assert.ok(helper, "TTML text extractor was not found");
+  assert.match(
+    bridge,
+    /text:\s*extractTtmlParagraphText\(\s*paragraph\s*\)/s
+  );
+  assert.doesNotMatch(
+    bridge,
+    /text:\s*paragraph\.textContent/
+  );
+
+  const textNode = (value) => ({
+    nodeType: 3,
+    nodeValue: value,
+    childNodes: []
+  });
+  const element = (localName, ...children) => ({
+    nodeType: 1,
+    localName,
+    childNodes: children
+  });
+  const span = (value) =>
+    element("span", textNode(value));
+  const sandbox = { result: "", resultTwo: "" };
+
+  Object.assign(sandbox, {
+      paragraph: element(
+        "p",
+        span("[news anchor 2] Law"),
+        element("br"),
+        span("enforcement's latest efforts have been"),
+        element("br"),
+        span("sifting through surveillance videos from downtown"),
+        span("and any doorbell cameras"),
+        span("in the area of the crime scene"),
+        span(".")
+      ),
+      paragraphTwo: element(
+        "p",
+        span("they"),
+        span("'re"),
+        span("usually left to die"),
+        span(";"),
+        span("eight"),
+        span("-"),
+        span("thousanders")
+      )
+  });
+
+  vm.runInNewContext(
+    `${helper[0]}\n` +
+      `result = extractTtmlParagraphText(paragraph);\n` +
+      `resultTwo = extractTtmlParagraphText(paragraphTwo);`,
+    sandbox
+  );
+
+  assert.equal(
+    sandbox.result,
+    "[news anchor 2] Law enforcement's latest efforts have been sifting through surveillance videos from downtown and any doorbell cameras in the area of the crime scene."
+  );
+  assert.equal(
+    sandbox.resultTwo,
+    "they're usually left to die; eight-thousanders"
+  );
 });
 
 test("overlapping server chunks are rejected before caching or coaching", () => {
@@ -947,46 +1123,273 @@ test("Coach Listen replays the whole sentence and closing keeps video paused", (
   );
 });
 
-test("Coach keeps single view and offers a selectable all-chunks stack", () => {
-  assert.match(content, /Tüm parçalar/);
-  assert.match(content, /Tek parça/);
-  assert.match(
-    content,
-    /pausespeak-coach-view-mode/
-  );
-  assert.match(
-    content,
-    /isPronunciationCoachAllChunksVisible[\s\S]*?pronunciationCoachChunks\.forEach[\s\S]*?createPronunciationCoachChunkCard/s
-  );
-  assert.match(
-    content,
-    /else \{[\s\S]*?chunk\.parts\.forEach[\s\S]*?createPronunciationCoachWordElement/s
-  );
-  assert.match(
-    content,
-    /selectPronunciationCoachChunk\(\s*chunkIndex\s*\)/s
-  );
-  assert.match(
-    css,
-    /\.ps-pronunciation-coach-words\.ps-all-chunks\s*\{[^}]*display:\s*grid/s
-  );
-  assert.match(
-    css,
-    /\.ps-coach-chunk-card\s*\{[^}]*opacity:\s*0\.43/s
-  );
-  assert.match(
-    css,
-    /\.ps-coach-chunk-card\.ps-active\s*\{[^}]*opacity:\s*1/s
+test("Pronunciation Coach stays inside the unchanged subtitle card", () => {
+  const openHelper = content.match(
+    /function openPronunciationCoach\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function closePronunciationCoach)/
   );
 
-  const selectionHelper = content.match(
-    /function selectPronunciationCoachChunk\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function movePronunciationCoachChunk)/
+  assert.ok(openHelper, "coach open helper was not found");
+  assert.match(
+    openHelper[0],
+    /isPronunciationCoachOpen\s*=\s*true/
   );
-
-  assert.ok(selectionHelper);
+  assert.match(
+    openHelper[0],
+    /pronunciationCoachOverlay\.classList\.remove\(\s*"ps-open"\s*\)/s
+  );
   assert.doesNotMatch(
-    selectionHelper[0],
-    /\.state\s*=/
+    openHelper[0],
+    /pronunciationCoachOverlay\.classList\.add\(\s*"ps-open"\s*\)/s
+  );
+  const decorator = content.match(
+    /function applyPronunciationCoachStateToSubtitle\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function createPronunciationCoachChunkCard)/
+  );
+
+  assert.ok(decorator, "inline coach decorator was not found");
+  assert.match(
+    decorator[0],
+    /querySelectorAll\(\s*"button\[data-study-text\]"\s*\)/s
+  );
+  assert.match(
+    decorator[0],
+    /segmentButton\.classList\.remove\([\s\S]*?ps-coach-word-passed[\s\S]*?segmentButton\.classList\.add/s
+  );
+  assert.doesNotMatch(
+    decorator[0],
+    /replaceChildren|createElement|createTextNode/
+  );
+  assert.match(
+    content,
+    /function renderChunkedSubtitle\([\s\S]*?appendStudySegments\([\s\S]*?applyPronunciationCoachStateToSubtitle\(\)/s
+  );
+  assert.match(
+    css,
+    /Inline Pronunciation Coach/
+  );
+  assert.match(
+    css,
+    /button\[data-study-text\]\.ps-inline-coach-segment[\s\S]*?white-space:\s*normal !important/s
+  );
+  assert.match(
+    css,
+    /button\[data-study-text\]\.ps-coach-word-passed[\s\S]*?color:\s*#8bd3ad !important/s
+  );
+  assert.match(
+    css,
+    /button\[data-study-text\]\.ps-coach-word-retry[\s\S]*?color:\s*#e2a0a0 !important/s
+  );
+
+  const makeButton = (text) => {
+    const classes = new Set();
+
+    return {
+      textContent: text,
+      dataset: { studyText: text },
+      classes,
+      classList: {
+        add: (...names) =>
+          names.forEach((name) =>
+            classes.add(name)
+          ),
+        remove: (...names) =>
+          names.forEach((name) =>
+            classes.delete(name)
+          )
+      }
+    };
+  };
+  const buttons = [
+    makeButton("When"),
+    makeButton("you"),
+    makeButton("speak")
+  ];
+  const sandbox = {
+    isPronunciationCoachOpen: true,
+    isPronunciationCoachSessionActive: true,
+    pronunciationCoachChunks: [
+      {
+        parts: [
+          { kind: "word", key: "0", state: "passed" },
+          { kind: "word", key: "1", state: "pending" },
+          { kind: "word", key: "2", state: "retry" }
+        ]
+      }
+    ],
+    pronunciationCoachChunkIndex: 0,
+    pronunciationCoachActiveWordIndex: 1,
+    pronunciationCoachLiveMatches:
+      new Set(["1"]),
+    subtitleBox: {
+      classList: { add: () => {} },
+      querySelectorAll: () => buttons
+    },
+    panel: {
+      classList: { add: () => {} }
+    }
+  };
+
+  vm.runInNewContext(
+    `${decorator[0]}\napplyPronunciationCoachStateToSubtitle();`,
+    sandbox
+  );
+
+  assert.deepEqual(
+    buttons.map((button) =>
+      button.textContent
+    ),
+    ["When", "you", "speak"]
+  );
+  assert.equal(
+    buttons[0].classes.has(
+      "ps-coach-word-passed"
+    ),
+    true
+  );
+  assert.equal(
+    buttons[1].classes.has(
+      "ps-coach-word-live-passed"
+    ),
+    true
+  );
+  assert.equal(
+    buttons[1].classes.has(
+      "ps-coach-word-active"
+    ),
+    true
+  );
+  assert.equal(
+    buttons[2].classes.has(
+      "ps-coach-word-retry"
+    ),
+    true
+  );
+});
+
+test("Pronunciation Coach waits for translation and never listens while video plays", () => {
+  const readyHelper = content.match(
+    /function isPronunciationCoachTranslationReady\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function tryStartPronunciationCoachAfterTranslation)/
+  );
+  const startHelper = content.match(
+    /function startPronunciationCoachRecognition\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function preparePronunciationCoachSentence)/
+  );
+  const openHelper = content.match(
+    /function openPronunciationCoach\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function closePronunciationCoach)/
+  );
+
+  assert.ok(readyHelper, "translation readiness helper was not found");
+  assert.ok(startHelper, "coach recognition starter was not found");
+  assert.ok(openHelper, "coach open helper was not found");
+  assert.match(
+    readyHelper[0],
+    /translationBox\.textContent[\s\S]*?Çevriliyor/s
+  );
+  assert.match(
+    startHelper[0],
+    /!video\.paused[\s\S]*?!isPronunciationCoachTranslationReady\(\)/s
+  );
+  assert.match(
+    startHelper[0],
+    /const stopCoachForVideoPlayback[\s\S]*?stopPronunciationCoachRecognition\(\s*false\s*\)/s
+  );
+  assert.match(
+    startHelper[0],
+    /video\.addEventListener\(\s*"play",\s*stopCoachForVideoPlayback/s
+  );
+  assert.match(
+    content,
+    /pronunciationCoachTranslationObserver[\s\S]*?tryStartPronunciationCoachAfterTranslation\(\)/s
+  );
+  assert.match(
+    content,
+    /const runPauseSpeakUpdate = \(\) => \{[\s\S]*?!pronunciationCoachVideo\.paused[\s\S]*?stopPronunciationCoachRecognition\(false\)/s
+  );
+  assert.doesNotMatch(
+    openHelper[0],
+    /schedulePronunciationCoachRestart\(\s*220\s*\)/s
+  );
+});
+
+test("subtitle card and right transcript controls use their nearby buttons", () => {
+  const topHandler = content.match(
+    /panelVisibilityButton\.addEventListener\([\s\S]*?\r?\n\);\r?\n(?=\r?\nsubtitleVisibilityButton\.addEventListener)/
+  );
+  const dockHandler = content.match(
+    /transcriptButton\.addEventListener\([\s\S]*?\r?\n\);\r?\n(?=\r?\ntranscriptCloseButton\.addEventListener)/
+  );
+
+  assert.ok(topHandler, "top transcript handler was not found");
+  assert.ok(dockHandler, "dock subtitle handler was not found");
+  assert.match(
+    topHandler[0],
+    /setTranscriptPanelVisibility/
+  );
+  assert.doesNotMatch(
+    topHandler[0],
+    /setSubtitlePanelVisibility/
+  );
+  assert.match(
+    dockHandler[0],
+    /setSubtitlePanelVisibility/
+  );
+  assert.doesNotMatch(
+    dockHandler[0],
+    /setTranscriptPanelVisibility/
+  );
+  assert.match(
+    content,
+    /function setSubtitlePanelVisibility[\s\S]*?transcriptButton\.classList\.toggle/s
+  );
+  assert.match(
+    content,
+    /function setTranscriptPanelVisibility[\s\S]*?panelVisibilityButton\.classList\.toggle/s
+  );
+});
+
+test("three mouse clicks or taps toggle a black privacy curtain and keep video paused", () => {
+  const visibilityHelper = content.match(
+    /function setPrivacyCurtainVisibility\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function handlePrivacyCurtainPointerUp)/
+  );
+  const gestureHelper = content.match(
+    /function handlePrivacyCurtainPointerUp\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function clearPrivacyCurtainAfterSleep)/
+  );
+
+  assert.ok(visibilityHelper, "privacy visibility helper was not found");
+  assert.ok(gestureHelper, "privacy gesture helper was not found");
+  assert.match(
+    gestureHelper[0],
+    /privacyTapCount < 3/
+  );
+  assert.match(
+    gestureHelper[0],
+    /setPrivacyCurtainVisibility\(\s*!isPrivacyCurtainActive\s*\)/s
+  );
+  assert.match(
+    visibilityHelper[0],
+    /video\.pause\(\)/
+  );
+  assert.doesNotMatch(
+    visibilityHelper[0],
+    /video\.play\(/
+  );
+  assert.match(
+    content,
+    /const runPauseSpeakUpdate = \(\) => \{[\s\S]*?if \(isPrivacyCurtainActive\)[\s\S]*?privacyVideo\.pause\(\)/s
+  );
+  assert.match(
+    content,
+    /document\.addEventListener\(\s*"freeze",\s*clearPrivacyCurtainAfterSleep/s
+  );
+  assert.match(
+    content,
+    /document\.addEventListener\(\s*"resume",\s*clearPrivacyCurtainAfterSleep/s
+  );
+  assert.match(
+    css,
+    /#pausespeak-privacy-curtain\s*\{[\s\S]*?background:\s*#000000 !important[\s\S]*?pointer-events:\s*none !important/s
+  );
+  assert.match(
+    css,
+    /#pausespeak-privacy-curtain\.ps-open\s*\{[^}]*pointer-events:\s*auto !important/s
   );
 });
 
