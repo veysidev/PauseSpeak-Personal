@@ -84,7 +84,7 @@ saveButton.addEventListener(
     syncCodeInput.value = code;
     saveSyncCode(
       code,
-      "Kod kaydedildi. Netflix sekmesini yenilemen gerekmez."
+      "Kod kaydedildi. Netflix veya YouTube sekmesini yenilemen gerekmez."
     );
   }
 );

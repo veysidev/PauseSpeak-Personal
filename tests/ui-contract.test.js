@@ -1,0 +1,1130 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+
+const root = path.resolve(__dirname, "..");
+const read = (file) =>
+  fs.readFileSync(path.join(root, file), "utf8");
+
+const content = read("content.js");
+const bridge = read("player-bridge.js");
+const css = read("pausespeak-ui.css");
+const popup = read("popup.html");
+const manifest = JSON.parse(read("manifest.json"));
+
+test("manifest uses the Netflix and YouTube release version", () => {
+  assert.equal(manifest.version, "1.1.3");
+});
+
+test("Netflix and YouTube both load the content and MAIN-world bridge", () => {
+  const contentEntry = manifest.content_scripts.find(
+    (entry) => entry.js?.includes("content.js")
+  );
+  const bridgeEntry = manifest.content_scripts.find(
+    (entry) => entry.js?.includes("player-bridge.js")
+  );
+
+  assert.ok(contentEntry);
+  assert.ok(bridgeEntry);
+  assert.equal(bridgeEntry.world, "MAIN");
+
+  for (const pattern of [
+    "https://www.netflix.com/*",
+    "https://www.youtube.com/*",
+    "https://youtube.com/*"
+  ]) {
+    assert.ok(contentEntry.matches.includes(pattern));
+  }
+
+  assert.ok(
+    bridgeEntry.matches.includes(
+      "https://www.netflix.com/watch/*"
+    )
+  );
+  assert.ok(
+    bridgeEntry.matches.includes(
+      "https://www.youtube.com/*"
+    )
+  );
+});
+
+test("YouTube visible captions, full tracks and SPA video changes are supported", () => {
+  assert.match(content, /\.ytp-caption-segment/);
+  assert.match(content, /function isSupportedWatchPage/);
+  assert.match(content, /function getYouTubeVideoId/);
+  assert.match(
+    content,
+    /function refreshPlaybackMediaContext[\s\S]*?resetPlaybackMediaContext/s
+  );
+  assert.match(
+    content,
+    /capturedSubtitleTracks\.clear\(\)[\s\S]*?requestPageSubtitleTracks\(\)/s
+  );
+  assert.match(
+    bridge,
+    /ytInitialPlayerResponse/
+  );
+  assert.match(
+    bridge,
+    /playerCaptionsTracklistRenderer/
+  );
+  assert.match(
+    bridge,
+    /searchParams\.set\(\s*"fmt",\s*"json3"/s
+  );
+  assert.match(
+    bridge,
+    /parseYouTubeJson3[\s\S]*?tStartMs[\s\S]*?dDurationMs/s
+  );
+});
+
+test("YouTube bridge publishes JSON3 cues and seeks the real player", async () => {
+  const pageMessages = [];
+  const listeners = new Map();
+  const captionData = {
+    events: [
+      {
+        tStartMs: 1200,
+        dDurationMs: 1800,
+        segs: [{ utf8: "Hello there." }]
+      },
+      {
+        tStartMs: 3100,
+        dDurationMs: 1600,
+        segs: [{ utf8: "How are you?" }]
+      }
+    ]
+  };
+  const video = {
+    currentTime: 0,
+    paused: true,
+    pause() {
+      this.paused = true;
+    },
+    async play() {
+      this.paused = false;
+    }
+  };
+  let playCount = 0;
+  const playerResponse = {
+    captions: {
+      playerCaptionsTracklistRenderer: {
+        captionTracks: [
+          {
+            baseUrl: "https://www.youtube.com/api/timedtext?v=abc123&lang=en",
+            languageCode: "en",
+            vssId: ".en",
+            name: { simpleText: "English" }
+          }
+        ]
+      }
+    }
+  };
+  const player = {
+    getPlayerResponse: () => playerResponse,
+    pauseVideo() {
+      video.paused = true;
+    },
+    seekTo(seconds) {
+      video.currentTime = seconds;
+    },
+    playVideo() {
+      playCount += 1;
+      video.paused = false;
+    }
+  };
+  const createResponse = () => ({
+    ok: true,
+    url: "https://www.youtube.com/api/timedtext?v=abc123&lang=en&fmt=json3",
+    headers: {
+      get: (name) =>
+        name === "content-type"
+          ? "application/json"
+          : ""
+    },
+    clone() {
+      return createResponse();
+    },
+    async text() {
+      return JSON.stringify(captionData);
+    },
+    async json() {
+      return captionData;
+    }
+  });
+  const documentStub = {
+    getElementById: (id) =>
+      id === "movie_player" ? player : null,
+    querySelector: (selector) =>
+      selector.includes("video") ? video : null,
+    createElement: () => {
+      const element = { textContent: "" };
+
+      Object.defineProperty(element, "innerHTML", {
+        set(value) {
+          this.textContent = String(value)
+            .replace(/<[^>]+>/g, " ");
+        }
+      });
+
+      return element;
+    }
+  };
+  const windowStub = {
+    location: {
+      hostname: "www.youtube.com",
+      pathname: "/watch",
+      search: "?v=abc123",
+      href: "https://www.youtube.com/watch?v=abc123"
+    },
+    document: documentStub,
+    async fetch() {
+      return createResponse();
+    },
+    addEventListener(type, listener) {
+      listeners.set(type, listener);
+    },
+    postMessage(message) {
+      pageMessages.push(message);
+    }
+  };
+
+  vm.runInNewContext(bridge, {
+    window: windowStub,
+    document: documentStub,
+    URL,
+    URLSearchParams,
+    Map,
+    Set,
+    Math,
+    Number,
+    String,
+    Array,
+    Object,
+    Promise,
+    Reflect,
+    JSON,
+    setTimeout,
+    clearTimeout,
+    console
+  });
+
+  const onMessage = listeners.get("message");
+  assert.ok(onMessage);
+
+  onMessage({
+    source: windowStub,
+    data: {
+      source: "PAUSESPEAK_EXTENSION",
+      type: "PAUSESPEAK_SUBTITLE_TRACKS_REQUEST"
+    }
+  });
+  await new Promise((resolve) =>
+    setTimeout(resolve, 20)
+  );
+
+  const trackMessage = pageMessages.find(
+    (message) =>
+      message.type ===
+      "PAUSESPEAK_SUBTITLE_TRACK"
+  );
+
+  assert.equal(trackMessage.track.language, "en");
+  assert.equal(trackMessage.track.cues.length, 2);
+  assert.equal(
+    trackMessage.track.cues[0].text,
+    "Hello there."
+  );
+
+  onMessage({
+    source: windowStub,
+    data: {
+      source: "PAUSESPEAK_EXTENSION",
+      type: "PAUSESPEAK_SEEK_REQUEST",
+      requestId: "youtube-seek",
+      targetTimeMs: 3100
+    }
+  });
+  await new Promise((resolve) =>
+    setTimeout(resolve, 20)
+  );
+
+  assert.equal(video.currentTime, 3.1);
+  assert.equal(playCount, 1);
+  assert.ok(
+    pageMessages.some(
+      (message) =>
+        message.type ===
+          "PAUSESPEAK_SEEK_RESPONSE" &&
+        message.requestId ===
+          "youtube-seek" &&
+        message.success === true
+    )
+  );
+});
+
+test("the continuous dock keeps all seven actions", () => {
+  for (const label of [
+    "Parçalar",
+    "Cümleyi tekrarla",
+    "10 sn geri",
+    "10 sn ileri",
+    "Altyazılar",
+    "Ses ve altyazı"
+  ]) {
+    assert.match(content, new RegExp(label));
+  }
+
+  assert.doesNotMatch(
+    content,
+    /ps-(?:study|playback|tools)-group/
+  );
+  assert.match(
+    css,
+    /\.ps-command-row\s*\{[^}]*grid-template-columns:\s*repeat\(2,[^}]*66px 72px 66px/s
+  );
+});
+
+test("Mist Ocean uses one calm low-glare surface system", () => {
+  assert.match(
+    css,
+    /PauseSpeak Mist Ocean/
+  );
+  assert.match(css, /--ps-blue:\s*#58c7e5/i);
+  assert.match(css, /--ps-blue-strong:\s*#7bd7ea/i);
+  assert.match(
+    css,
+    /PauseSpeak Mist Ocean[\s\S]*?#pausespeak-status-panel,[\s\S]*?background:\s*rgba\(29, 42, 48, var\(--ps-card-opacity\)\)/s
+  );
+  assert.match(
+    css,
+    /PauseSpeak Mist Ocean[\s\S]*?\.ps-player-shell,[\s\S]*?background:\s*rgba\(20, 33, 39, 0\.86\)/s
+  );
+  assert.match(
+    css,
+    /PauseSpeak Mist Ocean[\s\S]*?#pausespeak-status-panel #pausespeak-subtitle-english\s*\{[^}]*color:\s*#f1f4f5/s
+  );
+  assert.match(content, /Arayüz opaklığı/);
+  assert.match(popup, /#1b282e/i);
+  assert.match(popup, /#58c7e5/i);
+});
+
+test("local fallback creates natural chunks for the photographed subtitles", () => {
+  const helper = content.match(
+    /function createFallbackSubtitleChunks\([\s\S]*?\r?\n}\r?\n(?=\r?\nasync function requestSubtitleChunks)/
+  );
+
+  assert.ok(
+    helper,
+    "fallback chunk helper was not found"
+  );
+
+  const sandbox = {
+    cleanText: (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim()
+  };
+
+  vm.runInNewContext(
+    helper[0],
+    sandbox
+  );
+
+  const examples = [
+    {
+      sentence:
+        "On this project, I will be supported by a team of Nepalese climbers, who would climb with me on different mountains throughout the expedition.",
+      chunks: [
+        "On this project,",
+        "I will be supported",
+        "by a team of Nepalese climbers,",
+        "who would climb with me",
+        "on different mountains throughout the expedition."
+      ]
+    },
+    {
+      sentence:
+        "I would need to be the first climber in history to summit six 8 , 000-meter peaks in the spring season.",
+      chunks: [
+        "I would need to be the first climber in history",
+        "to summit six 8 , 000-meter peaks",
+        "in the spring season."
+      ]
+    },
+    {
+      sentence:
+        "The climbing community of Nepal have always been the pioneers of eight-thousanders, but they never got the respect they deserve.",
+      chunks: [
+        "The climbing community of Nepal have always been the pioneers of eight-thousanders,",
+        "but they never got the respect they deserve."
+      ]
+    },
+    {
+      sentence:
+        "When a climber gets into trouble without other strong climbers around them to help, they're usually left to die.",
+      chunks: [
+        "When a climber gets into trouble",
+        "without other strong climbers around them to help,",
+        "they're usually left to die."
+      ]
+    }
+  ];
+
+  for (const example of examples) {
+    const chunks = Array.from(
+      sandbox
+        .createFallbackSubtitleChunks(
+          example.sentence
+        )
+    );
+
+    assert.deepEqual(
+      chunks,
+      example.chunks
+    );
+
+    assert.equal(
+      chunks.join(" "),
+      example.sentence
+    );
+  }
+
+  assert.deepEqual(
+    Array.from(
+      sandbox
+        .createFallbackSubtitleChunks(
+          "I want to go to the store because we need to buy some food."
+        )
+    ),
+    [
+      "I want to go to the store",
+      "because we need to buy some food."
+    ]
+  );
+
+  assert.deepEqual(
+    Array.from(
+      sandbox
+        .createFallbackSubtitleChunks(
+          "Come here. Sit down."
+        )
+    ),
+    [
+      "Come here.",
+      "Sit down."
+    ]
+  );
+});
+
+test("empty or failed AI chunking keeps the local fallback retryable", () => {
+  assert.match(
+    content,
+    /const fallbackChunks\s*=\s*createFallbackSubtitleChunks\(\s*sentence\s*\)/s
+  );
+  assert.match(
+    content,
+    /validateSubtitleChunks\(\s*sentence,\s*chunks\s*\)[\s\S]*?chunkCache\.set/s
+  );
+  assert.doesNotMatch(
+    content,
+    /cachedChunks\.length > 0/
+  );
+
+  const fallbackAssignments =
+    content.match(
+      /currentSubtitleChunks\s*=\s*createFallbackSubtitleChunks\(\s*sentence\s*\)/gs
+    ) || [];
+
+  assert.ok(
+    fallbackAssignments.length >= 2,
+    "fallback must cover initial render and request failure"
+  );
+});
+
+test("rolling Netflix captions merge their shared suffix and prefix once", () => {
+  const helper = content.match(
+    /function mergeOverlappingSubtitleText\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function addSentencePart)/
+  );
+
+  assert.ok(
+    helper,
+    "subtitle overlap helper was not found"
+  );
+
+  const sandbox = {
+    cleanText: (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim()
+  };
+
+  vm.runInNewContext(
+    helper[0],
+    sandbox
+  );
+
+  const merged =
+    sandbox.mergeOverlappingSubtitleText(
+      "The coroner called me and confirmed to us that Maddie and Kaylee were in bed together,",
+      "that Maddie and Kaylee were in bed together, and that a very large knife with a seven-inch blade was used."
+    );
+
+  assert.equal(
+    merged,
+    "The coroner called me and confirmed to us that Maddie and Kaylee were in bed together, and that a very large knife with a seven-inch blade was used."
+  );
+
+  assert.equal(
+    sandbox.mergeOverlappingSubtitleText(
+      "I know that",
+      "that was unusual."
+    ),
+    "I know that that was unusual."
+  );
+});
+
+test("overlapping server chunks are rejected before caching or coaching", () => {
+  const normalizer = content.match(
+    /function normalizeSubtitleChunkValidationText\([\s\S]*?\r?\n\}\r?\n(?=\r?\nfunction validateSubtitleChunks)/
+  );
+  const validator = content.match(
+    /function validateSubtitleChunks\([\s\S]*?\r?\n\}\r?\n(?=\r?\nfunction createFallbackSubtitleChunks)/
+  );
+
+  assert.ok(normalizer, "chunk normalizer was not found");
+  assert.ok(validator, "chunk validator was not found");
+
+  const sandbox = {
+    cleanText: (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    removeSubtitleDescriptions: (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim()
+  };
+
+  vm.runInNewContext(
+    `${normalizer[0]}\n${validator[0]}`,
+    sandbox
+  );
+
+  const sentence =
+    "The coroner called me and confirmed to us that Maddie and Kaylee were in bed together, and that a very large knife with a seven-inch blade was used.";
+  const validChunks = [
+    "The coroner called me and confirmed to us",
+    "that Maddie and Kaylee were in bed together,",
+    "and that a very large knife with a seven-inch blade was used."
+  ];
+  const overlappingChunks = [
+    "The coroner called me and confirmed to us that Maddie and Kaylee were in bed together,",
+    "that Maddie and Kaylee were in bed together,",
+    "and that a very large knife with a seven-inch blade was used."
+  ];
+
+  assert.equal(
+    sandbox.validateSubtitleChunks(
+      sentence,
+      validChunks
+    ),
+    true
+  );
+  assert.equal(
+    sandbox.validateSubtitleChunks(
+      sentence,
+      overlappingChunks
+    ),
+    false
+  );
+  assert.match(
+    content,
+    /if \(Array\.isArray\(cachedChunks\)\) \{[\s\S]*?chunkCache\.delete/s
+  );
+});
+
+test("voice mark remains while card progress lines are removed", () => {
+  assert.match(content, /waveSpark/);
+  assert.doesNotMatch(content, /ps-speech-pulse/);
+  assert.doesNotMatch(content, /ps-sentence-progress/);
+  assert.doesNotMatch(css, /\.ps-speech-pulse/);
+  assert.doesNotMatch(css, /\.ps-sentence-progress/);
+  assert.match(css, /#58c7e5/i);
+  assert.match(css, /#7bd7ea/i);
+  assert.match(popup, /class="brand-mark"/);
+});
+
+test("word and phrase details use a centered dismissible panel", () => {
+  assert.match(content, /pausespeak-study-meaning-overlay/);
+  assert.match(content, /renderStudyMeaningLoading/);
+  assert.match(content, /closeStudyMeaningPanel/);
+  assert.match(css, /#pausespeak-study-meaning-panel/);
+  assert.match(css, /align-items:\s*center/);
+  assert.match(css, /justify-content:\s*center/);
+});
+
+test("multi-word expression selection uses the Mist Ocean highlight", () => {
+  assert.match(content, /getStudySelectionButtons/);
+  assert.match(content, /selectStudyExpression/);
+  assert.match(content, /selectStudyExpressionByText/);
+  assert.match(css, /\.ps-study-selected/);
+  assert.doesNotMatch(content, /#facc15/i);
+});
+
+test("mouse and arrow-key word interactions stay intentionally different", () => {
+  const hoverHandler = content.match(
+    /segmentButton\.addEventListener\(\s*"mouseenter",[\s\S]*?(?=segmentButton\.addEventListener\(\s*"mouseleave")/
+  );
+
+  assert.ok(hoverHandler, "mouse hover handler was not found");
+  assert.match(hoverHandler[0], /ps-study-hovered/);
+  assert.doesNotMatch(
+    hoverHandler[0],
+    /openStudyMeaningForButton|loadStudyMeaning/
+  );
+  assert.match(
+    content,
+    /openStudyMeaningForButton\(\s*segmentButton,\s*"pointer"\s*\)/s
+  );
+  assert.match(
+    content,
+    /keyboardStudyMeaningDelayMs\s*=\s*1800/
+  );
+  assert.match(
+    content,
+    /scheduleKeyboardStudyMeaning\(\s*selectedButton,\s*remoteStudyButtonIndex\s*\)/s
+  );
+  assert.match(
+    content,
+    /openStudyMeaningForButton\(\s*segmentButton,\s*"keyboard"\s*\)/s
+  );
+  assert.doesNotMatch(content, /selectedButton\.click\(\)/);
+  assert.match(content, /event\.pointerType !== "mouse"/);
+  assert.match(css, /\.ps-study-hovered/);
+  assert.match(css, /\.ps-study-keyboard-target/);
+  assert.match(css, /ps-study-keyboard-dwell 1800ms/);
+});
+
+test("interface opacity controls every PauseSpeak glass surface", () => {
+  assert.match(content, /Arayüz opaklığı/);
+  assert.match(
+    content,
+    /document\.documentElement\.style\.setProperty\(\s*"--ps-ui-opacity"/s
+  );
+  assert.match(
+    content,
+    /controlsPanel\.style\.setProperty\(\s*"--ps-ui-opacity"/s
+  );
+  assert.match(content, /pausespeak-ui-opacity/);
+  assert.match(
+    content,
+    /localStorage\.getItem\(\s*"pausespeak-card-opacity"\s*\)/s
+  );
+  assert.match(css, /PauseSpeak Unified Interface Opacity/);
+  assert.match(css, /--ps-ui-opacity:\s*0\.88/);
+
+  for (const selector of [
+    "#pausespeak-status-panel",
+    ".ps-player-shell",
+    ".ps-top-button",
+    ".ps-side-nav",
+    ".ps-popup-menu",
+    "#pausespeak-transcript-panel",
+    "#pausespeak-study-meaning-panel",
+    "#pausespeak-pronunciation-coach-panel",
+    "#pausespeak-usage-overlay > div"
+  ]) {
+    const escapedSelector = selector.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
+    );
+
+    assert.match(
+      css,
+      new RegExp(
+        `${escapedSelector}[\\s\\S]*?var\\(--ps-ui-opacity\\)`,
+        "s"
+      )
+    );
+  }
+
+  assert.doesNotMatch(
+    css,
+    /#pausespeak-controls-panel\s*\{[^}]*opacity:\s*var\(--ps-ui-opacity\)/s
+  );
+});
+
+test("Pronunciation Coach replaces the old two-control pronunciation UI", () => {
+  const settingsAppend = content.match(
+    /settingsMenu\.append\([\s\S]*?\);/
+  );
+  const panelChildren = content.match(
+    /panel\.replaceChildren\([\s\S]*?\);/
+  );
+
+  assert.ok(settingsAppend, "settings menu assembly was not found");
+  assert.ok(panelChildren, "subtitle panel assembly was not found");
+  assert.doesNotMatch(
+    settingsAppend[0],
+    /pronunciationToggleButton|speakButton/
+  );
+  assert.doesNotMatch(
+    panelChildren[0],
+    /pronunciationTitle|spokenBox|pronunciationResultBox|chunkBox/
+  );
+  assert.match(
+    panelChildren[0],
+    /pronunciationCoachButton/
+  );
+  assert.match(
+    content,
+    /pausespeak-pronunciation-coach-overlay/
+  );
+  assert.match(
+    content,
+    /currentSubtitleChunks\.length[\s\S]*?createFallbackSubtitleChunks/s
+  );
+  assert.match(
+    content,
+    /word\.state\s*=\s*"passed"/
+  );
+  assert.match(
+    content,
+    /word\.state === "pending"[\s\S]*?word\.state = "retry"/s
+  );
+  assert.match(content, /"proper-name"/);
+  assert.match(content, /looksLikeOpeningName/);
+  assert.match(
+    content,
+    /"no-speech"[\s\S]*?ilerlemen korunuyor/s
+  );
+  assert.match(content, /}, 3200\);/);
+  assert.match(
+    content,
+    /isPronunciationCoachSessionActive[\s\S]*?openPronunciationCoach\(\s*fullSentence,\s*false/s
+  );
+  assert.match(
+    content,
+    /if \(isPronunciationCoachOpen\) \{\s*return;/s
+  );
+  assert.match(
+    css,
+    /PauseSpeak Pronunciation Coach/
+  );
+  assert.match(css, /\.ps-coach-word-active/);
+  assert.match(css, /\.ps-coach-word-passed/);
+  assert.match(css, /\.ps-coach-word-retry/);
+  assert.match(css, /#8bd3ad/i);
+  assert.match(css, /#e2a0a0/i);
+});
+
+test("Pronunciation Coach accepts a remaining word without resetting earlier words", () => {
+  const helper = content.match(
+    /function getPronunciationCoachCharacterDistance\([\s\S]*?\r?\n  }\r?\n(?=\r?\n  function getPronunciationCoachProperNames)/
+  );
+
+  assert.ok(helper, "coach word matcher was not found");
+
+  const sandbox = {
+    getWordTokens: (value) =>
+      String(value || "")
+        .toLowerCase()
+        .replace(/[’‘`]/g, "'")
+        .replace(/[^a-z0-9'\s]/g, " ")
+        .replace(/'/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .split(" ")
+        .filter(Boolean),
+    references: [
+      { key: "looking", word: { text: "looking" } },
+      { key: "forward", word: { text: "forward" } },
+      { key: "seeing", word: { text: "seeing" } }
+    ],
+    remaining: null,
+    phrase: null,
+    tolerant: null,
+    shortMismatch: null
+  };
+
+  vm.runInNewContext(
+    `${helper[0]}\n` +
+      `remaining = collectPronunciationCoachMatches(references, "forward");\n` +
+      `phrase = collectPronunciationCoachMatches(references, "looking forward seeing");\n` +
+      `tolerant = isPronunciationCoachWordMatch("forward", "forword");\n` +
+      `shortMismatch = isPronunciationCoachWordMatch("the", "they");`,
+    sandbox
+  );
+
+  assert.deepEqual(
+    Array.from(sandbox.remaining.matchedKeys),
+    ["forward"]
+  );
+  assert.deepEqual(
+    Array.from(sandbox.phrase.matchedKeys),
+    ["looking", "forward", "seeing"]
+  );
+  assert.equal(sandbox.tolerant.success, true);
+  assert.equal(sandbox.shortMismatch.success, false);
+});
+
+test("Pronunciation Coach auto-passes names without treating a new sentence as a name", () => {
+  const helper = content.match(
+    /function createPronunciationCoachParts\([\s\S]*?\r?\n  }\r?\n(?=\r?\n  function getPronunciationCoachWordReferences)/
+  );
+
+  assert.ok(helper, "coach name classifier was not found");
+
+  const sandbox = {
+    currentSentenceStudySegments: [
+      { text: "Kristi", type: "proper-name" }
+    ],
+    getWordTokens: (value) =>
+      String(value || "")
+        .toLowerCase()
+        .replace(/[’‘`]/g, "'")
+        .replace(/[^a-z0-9'\s]/g, " ")
+        .replace(/'/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .split(" ")
+        .filter(Boolean),
+    result: null,
+    openingName: null
+  };
+
+  vm.runInNewContext(
+    `${helper[0]}\n` +
+      `result = createPronunciationCoachChunks("On this project, Kristi works. Sit down.", ["On this project, Kristi works.", "Sit down."]);\n` +
+      `openingName = createPronunciationCoachChunks("Everest is high.", ["Everest is high."]);`,
+    sandbox
+  );
+
+  const states = Object.fromEntries(
+    sandbox.result
+      .flatMap((chunk) => chunk.parts)
+      .filter((part) => part.kind === "word")
+      .map((part) => [part.text, part.state])
+  );
+
+  assert.equal(states.On, "pending");
+  assert.equal(states.Kristi, "proper");
+  assert.equal(states.Sit, "pending");
+  assert.equal(
+    sandbox.openingName[0].parts[0].state,
+    "proper"
+  );
+});
+
+test("Pronunciation Coach opens contextual word details and resumes progress", () => {
+  assert.match(
+    content,
+    /part\.kind === "word"[\s\S]*?document\.createElement/s
+  );
+  assert.match(content, /data\.coachWordKey|dataset\.coachWordKey/);
+  assert.match(
+    content,
+    /openPronunciationCoachStudyMeaning\([\s\S]*?loadStudyMeaning\(/s
+  );
+  assert.match(
+    content,
+    /pronunciationCoachResumeAfterMeaning\s*=[\s\S]*?!pronunciationCoachManualPause/s
+  );
+  assert.match(
+    content,
+    /function resumePronunciationCoachAfterStudyMeaning\([\s\S]*?schedulePronunciationCoachRestart\(/s
+  );
+  assert.match(
+    content,
+    /closeStudyMeaningPanel\([\s\S]*?resumePronunciationCoachAfterStudyMeaning\(\)/s
+  );
+  assert.match(css, /\.ps-coach-word-study-selected/);
+});
+
+test("Pronunciation Coach reuses translation, navigates chunks and previews platform audio", () => {
+  assert.match(
+    content,
+    /getPronunciationCoachTranslation\([\s\S]*?currentSubtitleChunkTranslations[\s\S]*?translationBox\.textContent/s
+  );
+  assert.doesNotMatch(
+    content.match(
+      /function getPronunciationCoachTranslation\([\s\S]*?\n  }\n(?=\n  function getPronunciationCoachStudyContext)/
+    )?.[0] || "",
+    /fetch\(/
+  );
+  assert.match(
+    content,
+    /movePronunciationCoachChunk\(-1\)/
+  );
+  assert.match(
+    content,
+    /movePronunciationCoachChunk\(1\)/
+  );
+  assert.match(
+    content,
+    /function synchronizePronunciationCoachChunks\([\s\S]*?savedStates[\s\S]*?word\.state\s*=\s*savedStates\.get/s
+  );
+  assert.match(
+    content,
+    /PAUSESPEAK_COACH_PREVIEW_REQUEST/
+  );
+  assert.match(
+    content,
+    /PAUSESPEAK_COACH_RETURN_REQUEST/
+  );
+  assert.match(
+    bridge,
+    /PAUSESPEAK_COACH_PREVIEW_REQUEST[\s\S]*?shouldPlay:\s*true/s
+  );
+  assert.match(
+    bridge,
+    /PAUSESPEAK_COACH_RETURN_REQUEST[\s\S]*?shouldPlay:\s*false/s
+  );
+  assert.match(
+    content,
+    /event\.target !==\s*pronunciationCoachOverlay[\s\S]*?closePronunciationCoach\(/s
+  );
+  assert.match(css, /\.ps-pronunciation-coach-translation/);
+  assert.match(css, /\.ps-pronunciation-coach-chunk-navigation/);
+});
+
+test("Coach Listen replays the whole sentence and closing keeps video paused", () => {
+  const rangeHelper = content.match(
+    /function getPronunciationCoachVideoRange\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function finishPronunciationCoachVideoPreview)/
+  );
+
+  assert.ok(
+    rangeHelper,
+    "coach video range helper was not found"
+  );
+
+  const sandbox = {
+    completedStartTimeMs: 2200,
+    completedEndTimeMs: 6800,
+    getNetflixVideo: () => ({
+      currentTime: 9.25
+    }),
+    result: null
+  };
+
+  vm.runInNewContext(
+    `${rangeHelper[0]}\nresult = getPronunciationCoachVideoRange();`,
+    sandbox
+  );
+
+  assert.equal(
+    sandbox.result.startTimeMs,
+    2200
+  );
+  assert.equal(
+    sandbox.result.endTimeMs,
+    6800
+  );
+  assert.equal(
+    sandbox.result.returnTimeMs,
+    9250
+  );
+
+  assert.match(content, /Cümleyi baştan dinle/);
+  assert.match(
+    content,
+    /if \(!resumeVideo\)[\s\S]*?video\.pause\(\)/s
+  );
+  assert.doesNotMatch(
+    content,
+    /closePronunciationCoach\(\s*true,\s*true\s*\)/
+  );
+  assert.match(
+    css,
+    /#pausespeak-pronunciation-coach-overlay button\.ps-coach-word\s*\{[^}]*background:\s*transparent !important/s
+  );
+  assert.match(
+    css,
+    /#pausespeak-pronunciation-coach-overlay button\.ps-coach-word:hover[\s\S]*?background:\s*rgba\(88, 199, 229,/s
+  );
+});
+
+test("Coach keeps single view and offers a selectable all-chunks stack", () => {
+  assert.match(content, /Tüm parçalar/);
+  assert.match(content, /Tek parça/);
+  assert.match(
+    content,
+    /pausespeak-coach-view-mode/
+  );
+  assert.match(
+    content,
+    /isPronunciationCoachAllChunksVisible[\s\S]*?pronunciationCoachChunks\.forEach[\s\S]*?createPronunciationCoachChunkCard/s
+  );
+  assert.match(
+    content,
+    /else \{[\s\S]*?chunk\.parts\.forEach[\s\S]*?createPronunciationCoachWordElement/s
+  );
+  assert.match(
+    content,
+    /selectPronunciationCoachChunk\(\s*chunkIndex\s*\)/s
+  );
+  assert.match(
+    css,
+    /\.ps-pronunciation-coach-words\.ps-all-chunks\s*\{[^}]*display:\s*grid/s
+  );
+  assert.match(
+    css,
+    /\.ps-coach-chunk-card\s*\{[^}]*opacity:\s*0\.43/s
+  );
+  assert.match(
+    css,
+    /\.ps-coach-chunk-card\.ps-active\s*\{[^}]*opacity:\s*1/s
+  );
+
+  const selectionHelper = content.match(
+    /function selectPronunciationCoachChunk\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function movePronunciationCoachChunk)/
+  );
+
+  assert.ok(selectionHelper);
+  assert.doesNotMatch(
+    selectionHelper[0],
+    /\.state\s*=/
+  );
+});
+
+test("a completed selected chunk immediately advances to the next unfinished chunk", () => {
+  const helper = content.match(
+    /function advancePronunciationCoach\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function commitPronunciationCoachResult)/
+  );
+
+  assert.ok(helper);
+
+  const sandbox = {
+    pronunciationCoachChunks: [
+      { complete: false },
+      { complete: false },
+      { complete: true }
+    ],
+    pronunciationCoachChunkIndex: 2,
+    pronunciationCoachLiveMatches:
+      new Set(),
+    pronunciationCoachActiveWordIndex: 4,
+    pronunciationCoachLastHeard: "done",
+    pronunciationCoachHeard: {
+      textContent: ""
+    },
+    pronunciationCoachStatus: {
+      textContent: ""
+    },
+    isPronunciationCoachChunkComplete:
+      (chunk) => chunk.complete,
+    renderPronunciationCoach: () => {},
+    finishPronunciationCoachSentence:
+      () => {},
+    schedulePronunciationCoachRestart:
+      (delay) => {
+        sandbox.restartDelay = delay;
+      },
+    restartDelay: null,
+    result: null
+  };
+
+  vm.runInNewContext(
+    `${helper[0]}\nresult = advancePronunciationCoach();`,
+    sandbox
+  );
+
+  assert.equal(
+    sandbox.pronunciationCoachChunkIndex,
+    0
+  );
+  assert.equal(sandbox.restartDelay, 220);
+  assert.equal(sandbox.result, false);
+  assert.match(
+    content,
+    /advancePronunciationCoach\(\);\s*\}, 180\)/s
+  );
+});
+
+test("clicking the middle of a phrase selects its full contiguous range", () => {
+  const helper = content.match(
+    /function getStudySelectionButtons\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction selectStudyExpression)/
+  );
+
+  assert.ok(helper, "selection helper was not found");
+
+  const sandbox = {
+    cleanText: (value) => String(value || "").trim(),
+    currentStudyTokenMappings: [
+      { text: "out of here", type: "expression" },
+      { text: "out of here", type: "expression" },
+      { text: "out of here", type: "expression" },
+      { text: "now", type: "word" }
+    ],
+    studyButtons: [
+      { id: "out" },
+      { id: "of" },
+      { id: "here" },
+      { id: "now" }
+    ],
+    result: null
+  };
+
+  vm.runInNewContext(
+    `${helper[0]}\nresult = getStudySelectionButtons(studyButtons, 1, currentStudyTokenMappings[1]);`,
+    sandbox
+  );
+
+  assert.deepEqual(
+    Array.from(
+      sandbox.result,
+      (button) => button.id
+    ),
+    ["out", "of", "here"]
+  );
+});
+
+test("translation improvement icon survives loading", () => {
+  assert.match(content, /aria-busy/);
+  assert.match(
+    content,
+    /setPauseSpeakButton\(\s*improveTranslationButton,\s*"waveSpark"\s*\)/s
+  );
+});
+
+test("transcript drawer uses a subtle active-line treatment", () => {
+  assert.match(content, /row\.dataset\.active/);
+  assert.match(css, /button\[data-active="true"\]/);
+  assert.match(
+    css,
+    /PauseSpeak Mist Ocean[\s\S]*?button\[data-active="true"\][\s\S]*?border-left-color:\s*var\(--ps-blue-strong\)/s
+  );
+});
+
+test("motion has an accessibility fallback", () => {
+  assert.match(css, /prefers-reduced-motion:\s*reduce/);
+  assert.match(content, /prefers-reduced-motion:\s*reduce/);
+});
+
+test("Netflix and YouTube seeking remain on the page bridge", () => {
+  assert.match(content, /PAUSESPEAK_SEEK_REQUEST/);
+  assert.doesNotMatch(content, /\bvideo\.currentTime\s*=/);
+  assert.match(bridge, /getNetflixPlayer/);
+  assert.match(bridge, /seekYouTubePlayer/);
+  assert.match(
+    bridge,
+    /player\?\.seekTo|video\.fastSeek|Reflect\.set/
+  );
+});
+
+test("all subtitle export choices remain available", () => {
+  for (const value of [
+    '"srt"',
+    '"vtt"',
+    '"timed-txt"',
+    '"plain-txt"',
+    '"bilingual"'
+  ]) {
+    assert.match(content, new RegExp(value));
+  }
+
+  assert.match(content, /replace\(\/\\\[[^\n]+\\\]/);
+});

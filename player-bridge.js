@@ -8,6 +8,73 @@
   const capturedSubtitleTracks = new Map();
   const inspectedSubtitleResponses = new Set();
   const maximumSubtitleBytes = 5 * 1024 * 1024;
+  let activeMediaKey = "";
+  let youtubeCaptionLoad = null;
+
+  function getPlaybackPlatform() {
+    const hostname = window.location.hostname
+      .toLowerCase();
+
+    if (
+      hostname === "youtube.com" ||
+      hostname.endsWith(".youtube.com")
+    ) {
+      return "youtube";
+    }
+
+    if (
+      hostname === "netflix.com" ||
+      hostname.endsWith(".netflix.com")
+    ) {
+      return "netflix";
+    }
+
+    return "unsupported";
+  }
+
+  function getYouTubeVideoId() {
+    if (window.location.pathname === "/watch") {
+      return new URLSearchParams(
+        window.location.search
+      ).get("v") || "";
+    }
+
+    const shortsMatch =
+      window.location.pathname.match(
+        /^\/shorts\/([^/?#]+)/
+      );
+
+    return shortsMatch?.[1] || "";
+  }
+
+  function getPlaybackMediaKey() {
+    const platform = getPlaybackPlatform();
+
+    if (platform === "youtube") {
+      return `youtube:${getYouTubeVideoId()}`;
+    }
+
+    if (platform === "netflix") {
+      return `netflix:${window.location.pathname}`;
+    }
+
+    return "unsupported";
+  }
+
+  function refreshMediaScope() {
+    const nextMediaKey = getPlaybackMediaKey();
+
+    if (nextMediaKey === activeMediaKey) {
+      return nextMediaKey;
+    }
+
+    activeMediaKey = nextMediaKey;
+    capturedSubtitleTracks.clear();
+    inspectedSubtitleResponses.clear();
+    youtubeCaptionLoad = null;
+
+    return nextMediaKey;
+  }
 
   function getNetflixPlayer() {
     const playerApp =
@@ -30,6 +97,45 @@
 
     return videoPlayerManager
       ?.getVideoPlayerBySessionId?.(sessionId);
+  }
+
+  function getYouTubeVideo() {
+    return document.querySelector(
+      "video.html5-main-video, video"
+    );
+  }
+
+  function getYouTubePlayerResponse() {
+    const player = document.getElementById(
+      "movie_player"
+    );
+    const directResponse =
+      player?.getPlayerResponse?.();
+
+    if (directResponse?.captions) {
+      return directResponse;
+    }
+
+    if (window.ytInitialPlayerResponse?.captions) {
+      return window.ytInitialPlayerResponse;
+    }
+
+    const serializedResponse =
+      window.ytplayer?.config?.args
+        ?.player_response;
+
+    if (typeof serializedResponse === "string") {
+      try {
+        return JSON.parse(serializedResponse);
+      } catch (error) {
+        console.debug(
+          "PauseSpeak YouTube oynatıcı yanıtını okuyamadı:",
+          error
+        );
+      }
+    }
+
+    return null;
   }
 
   function postPageMessage(type, payload = {}) {
@@ -398,6 +504,8 @@
   }
 
   function publishSubtitleTrack(url, parsedTrack) {
+    refreshMediaScope();
+
     const trackId = createTrackId(
       url,
       parsedTrack
@@ -429,6 +537,246 @@
       "PAUSESPEAK_SUBTITLE_TRACK",
       { track }
     );
+  }
+
+  function getYouTubeTrackLabel(track) {
+    const name = track?.name;
+
+    if (typeof name?.simpleText === "string") {
+      return name.simpleText;
+    }
+
+    if (Array.isArray(name?.runs)) {
+      return name.runs
+        .map((run) => run?.text || "")
+        .join("")
+        .trim();
+    }
+
+    return track?.languageCode || "";
+  }
+
+  function parseYouTubeJson3(data) {
+    const events = Array.isArray(data?.events)
+      ? data.events
+      : [];
+    const rawCues = events
+      .map((event, index) => {
+        const startTimeMs = Number(
+          event?.tStartMs
+        );
+        const nextStartTimeMs = Number(
+          events[index + 1]?.tStartMs
+        );
+        const durationMs = Number(
+          event?.dDurationMs
+        );
+        const inferredEndTimeMs =
+          Number.isFinite(nextStartTimeMs) &&
+          nextStartTimeMs > startTimeMs
+            ? nextStartTimeMs
+            : startTimeMs + 2000;
+        const endTimeMs =
+          Number.isFinite(durationMs) &&
+          durationMs > 0
+            ? startTimeMs + durationMs
+            : inferredEndTimeMs;
+        const text = Array.isArray(
+          event?.segs
+        )
+          ? event.segs
+              .map((segment) =>
+                segment?.utf8 || ""
+              )
+              .join("")
+          : "";
+
+        return {
+          startTimeMs,
+          endTimeMs,
+          text
+        };
+      });
+
+    return normalizeCues(rawCues);
+  }
+
+  function rankYouTubeCaptionTrack(track) {
+    const language = String(
+      track?.languageCode || ""
+    ).toLowerCase();
+    let score = 0;
+
+    if (/^en(?:-|$)/.test(language)) {
+      score += 100;
+    }
+
+    if (track?.kind !== "asr") {
+      score += 20;
+    }
+
+    if (track?.isTranslatable) {
+      score += 2;
+    }
+
+    return score;
+  }
+
+  async function loadYouTubeCaptionTracks() {
+    const mediaKey = refreshMediaScope();
+    const videoId = getYouTubeVideoId();
+
+    if (
+      getPlaybackPlatform() !== "youtube" ||
+      !videoId
+    ) {
+      return;
+    }
+
+    if (
+      youtubeCaptionLoad?.mediaKey ===
+      mediaKey
+    ) {
+      return youtubeCaptionLoad.promise;
+    }
+
+    const promise = (async () => {
+      let playerResponse = null;
+
+      for (
+        let attempt = 0;
+        attempt < 20;
+        attempt += 1
+      ) {
+        playerResponse =
+          getYouTubePlayerResponse();
+
+        if (playerResponse?.captions) {
+          break;
+        }
+
+        await wait(250);
+      }
+
+      const trackList =
+        playerResponse?.captions
+          ?.playerCaptionsTracklistRenderer
+          ?.captionTracks;
+
+      if (!Array.isArray(trackList)) {
+        return;
+      }
+
+      const selectedTracks = [...trackList]
+        .sort(
+          (first, second) =>
+            rankYouTubeCaptionTrack(second) -
+            rankYouTubeCaptionTrack(first)
+        )
+        .slice(0, 6);
+
+      await Promise.allSettled(
+        selectedTracks.map(async (track) => {
+          if (!track?.baseUrl) {
+            return;
+          }
+
+          const captionUrl = new URL(
+            track.baseUrl,
+            window.location.href
+          );
+
+          captionUrl.searchParams.set(
+            "fmt",
+            "json3"
+          );
+
+          const response = await window.fetch(
+            captionUrl.toString(),
+            {
+              credentials: "include"
+            }
+          );
+
+          if (!response.ok) {
+            return;
+          }
+
+          const cues = parseYouTubeJson3(
+            await response.json()
+          );
+
+          if (
+            cues.length < 2 ||
+            getYouTubeVideoId() !== videoId ||
+            getPlaybackMediaKey() !== mediaKey
+          ) {
+            return;
+          }
+
+          const trackId = [
+            "youtube",
+            videoId,
+            track.vssId ||
+              track.languageCode ||
+              "captions"
+          ].join(":");
+          const subtitleTrack = {
+            trackId,
+            language:
+              track.languageCode || "",
+            format:
+              track.kind === "asr"
+                ? "youtube-json3-asr"
+                : "youtube-json3",
+            label: getYouTubeTrackLabel(
+              track
+            ),
+            cues
+          };
+
+          capturedSubtitleTracks.set(
+            trackId,
+            subtitleTrack
+          );
+          postPageMessage(
+            "PAUSESPEAK_SUBTITLE_TRACK",
+            { track: subtitleTrack }
+          );
+        })
+      );
+    })().catch((error) => {
+      console.debug(
+        "PauseSpeak YouTube altyazıları yüklenemedi:",
+        error
+      );
+    });
+
+    youtubeCaptionLoad = {
+      mediaKey,
+      promise
+    };
+
+    void promise.finally(() => {
+      const hasCurrentYouTubeTrack = [
+        ...capturedSubtitleTracks.keys()
+      ].some((trackId) =>
+        trackId.startsWith(
+          `youtube:${videoId}:`
+        )
+      );
+
+      if (
+        getPlaybackMediaKey() === mediaKey &&
+        !hasCurrentYouTubeTrack &&
+        youtubeCaptionLoad?.mediaKey ===
+          mediaKey
+      ) {
+        youtubeCaptionLoad = null;
+      }
+    });
+
+    return promise;
   }
 
   function looksLikeSubtitleResponse(
@@ -719,12 +1067,119 @@
     }
   }
 
-  async function seekAndPlay(
-    responseType,
-    requestId,
+  async function waitForVideoSeek(
+    video,
     targetTimeMs
   ) {
+    for (
+      let attempt = 0;
+      attempt < 25;
+      attempt += 1
+    ) {
+      const currentTimeMs =
+        Number(video.currentTime) * 1000;
+
+      if (
+        Number.isFinite(currentTimeMs) &&
+        Math.abs(
+          currentTimeMs - targetTimeMs
+        ) < 1500
+      ) {
+        return;
+      }
+
+      await wait(100);
+    }
+  }
+
+  async function seekYouTubePlayer(
+    targetTimeMs,
+    shouldPlay
+  ) {
+    const video = getYouTubeVideo();
+    const player = document.getElementById(
+      "movie_player"
+    );
+
+    if (!video) {
+      throw new Error(
+        "YouTube video öğesi bulunamadı."
+      );
+    }
+
+    if (typeof player?.pauseVideo === "function") {
+      player.pauseVideo();
+    } else {
+      video.pause();
+    }
+
+    const targetSeconds = targetTimeMs / 1000;
+
+    if (typeof player?.seekTo === "function") {
+      player.seekTo(targetSeconds, true);
+    } else if (
+      typeof video.fastSeek === "function"
+    ) {
+      video.fastSeek(targetSeconds);
+    } else {
+      Reflect.set(
+        video,
+        "currentTime",
+        targetSeconds
+      );
+    }
+
+    await waitForVideoSeek(
+      video,
+      targetTimeMs
+    );
+
+    if (shouldPlay) {
+      if (
+        typeof player?.playVideo ===
+        "function"
+      ) {
+        player.playVideo();
+      } else {
+        await video.play();
+      }
+    } else if (
+      typeof player?.pauseVideo ===
+      "function"
+    ) {
+      player.pauseVideo();
+    } else {
+      video.pause();
+    }
+  }
+
+  async function seekPlayer(
+    responseType,
+    requestId,
+    targetTimeMs,
+    shouldPlay = true
+  ) {
     try {
+      if (
+        getPlaybackPlatform() ===
+        "youtube"
+      ) {
+        await seekYouTubePlayer(
+          targetTimeMs,
+          shouldPlay
+        );
+
+        sendResponse(
+          responseType,
+          requestId,
+          true,
+          shouldPlay
+            ? "Seçilen altyazı oynatılıyor."
+            : "Video konumu geri yüklendi."
+        );
+        return;
+      }
+
       const player = getNetflixPlayer();
 
       if (
@@ -735,7 +1190,7 @@
           responseType,
           requestId,
           false,
-          "Netflix oynatıcı kontrolü bulunamadı."
+          "Video oynatıcı kontrolü bulunamadı."
         );
         return;
       }
@@ -750,25 +1205,43 @@
 
       await waitForSeek(player, targetTimeMs);
 
-      if (typeof player.play === "function") {
-        await Promise.resolve(player.play());
+      if (shouldPlay) {
+        if (typeof player.play === "function") {
+          await Promise.resolve(player.play());
+        } else {
+          const video = document.querySelector("video");
+
+          if (!video) {
+            throw new Error(
+              "Video öğesi bulunamadı."
+            );
+          }
+
+          await video.play();
+        }
+      } else if (
+        typeof player.pause === "function"
+      ) {
+        await Promise.resolve(player.pause());
       } else {
         const video = document.querySelector("video");
 
         if (!video) {
           throw new Error(
-            "Netflix video öğesi bulunamadı."
+            "Video öğesi bulunamadı."
           );
         }
 
-        await video.play();
+        video.pause();
       }
 
       sendResponse(
         responseType,
         requestId,
         true,
-        "Seçilen altyazı oynatılıyor."
+        shouldPlay
+          ? "Seçilen altyazı oynatılıyor."
+          : "Video konumu geri yüklendi."
       );
     } catch (error) {
       console.error(
@@ -780,7 +1253,7 @@
         responseType,
         requestId,
         false,
-        "Netflix zaman atlama işlemini reddetti."
+        "Video zaman atlama işlemini reddetti."
       );
     }
   }
@@ -806,12 +1279,21 @@
       data.type ===
       "PAUSESPEAK_SUBTITLE_TRACKS_REQUEST"
     ) {
+      refreshMediaScope();
+
       for (const track of
         capturedSubtitleTracks.values()) {
         postPageMessage(
           "PAUSESPEAK_SUBTITLE_TRACK",
           { track }
         );
+      }
+
+      if (
+        getPlaybackPlatform() ===
+        "youtube"
+      ) {
+        void loadYouTubeCaptionTracks();
       }
 
       return;
@@ -824,7 +1306,18 @@
       },
       PAUSESPEAK_SEEK_REQUEST: {
         responseType:
-          "PAUSESPEAK_SEEK_RESPONSE"
+          "PAUSESPEAK_SEEK_RESPONSE",
+        shouldPlay: true
+      },
+      PAUSESPEAK_COACH_PREVIEW_REQUEST: {
+        responseType:
+          "PAUSESPEAK_COACH_PREVIEW_RESPONSE",
+        shouldPlay: true
+      },
+      PAUSESPEAK_COACH_RETURN_REQUEST: {
+        responseType:
+          "PAUSESPEAK_COACH_RETURN_RESPONSE",
+        shouldPlay: false
       }
     }[data.type];
 
@@ -849,10 +1342,11 @@
       return;
     }
 
-    void seekAndPlay(
+    void seekPlayer(
       requestSettings.responseType,
       data.requestId,
-      Math.round(targetTimeMs)
+      Math.round(targetTimeMs),
+      requestSettings.shouldPlay !== false
     );
   });
 })();

@@ -10,20 +10,68 @@
       width: 320px;
       margin: 0;
       padding: 20px;
-      font-family: Arial, sans-serif;
-      color: #e5e7eb;
-      background: #111827;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      color: #eaf1f3;
+      background: linear-gradient(145deg, #1b282e, #24373e);
     }
 
     h1 {
-      margin-top: 0;
-      margin-bottom: 8px;
-      font-size: 24px;
+      margin: 0;
+      color: #f1f4f5;
+      font-size: 22px;
+      line-height: 1.15;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .brand-mark {
+      width: 48px;
+      height: 48px;
+      display: inline-flex;
+      flex: 0 0 48px;
+      align-items: center;
+      justify-content: center;
+      color: #7bd7ea;
+      background: rgba(38, 56, 64, 0.92);
+      border: 1px solid rgba(133, 194, 209, 0.2);
+      border-radius: 14px;
+      box-shadow: 0 10px 26px rgba(6, 15, 19, 0.3);
+    }
+
+    .brand-mark svg {
+      width: 30px;
+      height: 26px;
+    }
+
+    .brand-mark rect {
+      fill: currentColor;
+    }
+
+    .brand-mark path {
+      fill: none;
+      stroke: #58c7e5;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .eyebrow {
+      margin-top: 4px;
+      color: #7bd7ea;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
     }
 
     p {
       margin: 0 0 16px;
-      color: #cbd5e1;
+      color: #a9bbc2;
       font-size: 13px;
       line-height: 1.45;
     }
@@ -39,10 +87,10 @@
       box-sizing: border-box;
       width: 100%;
       padding: 10px;
-      border: 1px solid #475569;
-      border-radius: 8px;
-      color: #f8fafc;
-      background: #0f172a;
+      border: 1px solid rgba(133, 194, 209, 0.2);
+      border-radius: 10px;
+      color: #edf2f3;
+      background: rgba(16, 28, 34, 0.76);
       font-family: Consolas, monospace;
       font-size: 12px;
     }
@@ -57,31 +105,52 @@
     button {
       width: 100%;
       padding: 10px;
-      border: 1px solid #3b82f6;
-      border-radius: 8px;
+      border: 1px solid rgba(88, 199, 229, 0.42);
+      border-radius: 10px;
       cursor: pointer;
-      color: #eff6ff;
-      background: #1d4ed8;
+      color: #ecfeff;
+      background: linear-gradient(110deg, #43b7d2, #237e99);
       font-size: 13px;
       font-weight: 700;
     }
 
     button.secondary {
-      border-color: #64748b;
-      background: #334155;
+      color: #eaf1f3;
+      border-color: rgba(133, 194, 209, 0.18);
+      background: rgba(42, 60, 68, 0.9);
+    }
+
+    button:hover,
+    button:focus-visible {
+      border-color: #7bd7ea;
+      outline: none;
+      filter: brightness(1.08);
     }
 
     #status {
       min-height: 18px;
       margin: 12px 0 0;
-      color: #bfdbfe;
+      color: #7bd7ea;
       font-size: 12px;
     }
   </style>
 </head>
 
 <body>
-  <h1>PauseSpeak</h1>
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 28 24">
+        <rect x="3" y="4" width="3.5" height="16" rx="1.75" />
+        <rect x="9" y="4" width="3.5" height="16" rx="1.75" />
+        <path d="M16 14l2.2-4 2.4 7 2.1-10 2.3 7" />
+      </svg>
+    </span>
+
+    <div>
+      <h1>PauseSpeak</h1>
+      <div class="eyebrow">Duraklat · Dinle · Konuş</div>
+    </div>
+  </div>
 
   <p>
     Bilgisayar ve tablette aynı kodu kaydet.
