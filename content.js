@@ -274,6 +274,11 @@ let subtitleChunkAbortController = null;
 let subtitleTranslationRequestNumber = 0;
 let subtitleTranslationAbortController = null;
 
+let sentenceTranslationPrefetchRequestNumber = 0;
+let sentenceTranslationPrefetchAbortController = null;
+let sentenceTranslationPrefetchKey = "";
+let sentenceTranslationPrefetchPromise = null;
+
 let currentSubtitleChunks = [];
 let currentSubtitleChunkTranslations = [];
 
@@ -3589,6 +3594,385 @@ function getTranscriptCues() {
   };
 }
 
+function collectTranscriptSentence(
+  cues,
+  startIndex
+) {
+  if (
+    !Array.isArray(cues) ||
+    startIndex < 0 ||
+    startIndex >= cues.length
+  ) {
+    return null;
+  }
+
+  let sentence = "";
+  const maximumCueCount = 40;
+
+  for (
+    let index = startIndex;
+    index < cues.length &&
+      index < startIndex + maximumCueCount;
+    index += 1
+  ) {
+    const cueText =
+      removeSubtitleDescriptions(
+        cues[index]?.text
+      );
+
+    if (!cueText) {
+      continue;
+    }
+
+    sentence =
+      mergeOverlappingSubtitleText(
+        sentence,
+        cueText
+      );
+
+    if (endsSentence(cueText)) {
+      return {
+        text: cleanText(sentence),
+        startIndex,
+        endIndex: index,
+        startTimeMs:
+          Number(
+            cues[startIndex]
+              ?.startTimeMs
+          ) || 0,
+        endTimeMs:
+          Number(
+            cues[index]?.endTimeMs
+          ) || 0
+      };
+    }
+  }
+
+  return null;
+}
+
+function getSentenceForTranslationPrefetch(
+  video
+) {
+  const cues = getTranscriptCues().cues;
+
+  if (!video || cues.length === 0) {
+    return null;
+  }
+
+  const currentTimeMs =
+    Number(video.currentTime) * 1000;
+  let cueIndex = findTranscriptCueIndex(
+    cues,
+    currentTimeMs
+  );
+
+  if (cueIndex < 0) {
+    cueIndex = cues.findIndex(
+      (cue) =>
+        cue.startTimeMs >=
+        currentTimeMs - 250
+    );
+  }
+
+  if (cueIndex < 0) {
+    return null;
+  }
+
+  let startIndex = cueIndex;
+  const minimumStartIndex = Math.max(
+    0,
+    cueIndex - 40
+  );
+
+  while (
+    startIndex > minimumStartIndex &&
+    !endsSentence(
+      removeSubtitleDescriptions(
+        cues[startIndex - 1]?.text
+      )
+    )
+  ) {
+    startIndex -= 1;
+  }
+
+  if (
+    startIndex === minimumStartIndex &&
+    startIndex > 0 &&
+    !endsSentence(
+      removeSubtitleDescriptions(
+        cues[startIndex - 1]?.text
+      )
+    )
+  ) {
+    return null;
+  }
+
+  let sentence =
+    collectTranscriptSentence(
+      cues,
+      startIndex
+    );
+
+  if (
+    sentence &&
+    completedEndTimeMs !== null &&
+    sentence.endTimeMs <=
+      completedEndTimeMs + 250
+  ) {
+    sentence =
+      collectTranscriptSentence(
+        cues,
+        sentence.endIndex + 1
+      );
+  }
+
+  return sentence?.text
+    ? sentence
+    : null;
+}
+
+function cancelSentenceTranslationPrefetch() {
+  sentenceTranslationPrefetchRequestNumber +=
+    1;
+
+  if (
+    sentenceTranslationPrefetchAbortController
+  ) {
+    sentenceTranslationPrefetchAbortController
+      .abort();
+  }
+
+  sentenceTranslationPrefetchAbortController =
+    null;
+  sentenceTranslationPrefetchKey = "";
+  sentenceTranslationPrefetchPromise = null;
+}
+
+async function prefetchNormalSentenceTranslation(
+  sentence,
+  previousText,
+  requestNumber,
+  signal
+) {
+  if (getCachedCueTranslation(sentence)) {
+    return;
+  }
+
+  const response = await fetch(
+    translationApiUrl,
+    {
+      method: "POST",
+      headers: getUsageSyncHeaders(),
+      body: JSON.stringify({
+        text: sentence,
+        previousText
+      }),
+      signal
+    }
+  );
+  const data = await response.json();
+
+  if (
+    !response.ok ||
+    !data?.success ||
+    typeof data.translation !== "string"
+  ) {
+    throw new Error(
+      data?.error ||
+        "Ön çeviri alınamadı."
+    );
+  }
+
+  recordTextUsage(
+    "normal_translation",
+    data.model,
+    data.usage
+  );
+
+  if (
+    requestNumber !==
+      sentenceTranslationPrefetchRequestNumber ||
+    isChunkTranslationVisible
+  ) {
+    return;
+  }
+
+  cacheCueTranslation(
+    sentence,
+    data.translation
+  );
+}
+
+async function prefetchChunkedSentenceTranslation(
+  sentence,
+  requestNumber,
+  signal
+) {
+  const chunks =
+    await fetchSubtitleChunks(
+      sentence,
+      signal
+    );
+
+  if (
+    requestNumber !==
+      sentenceTranslationPrefetchRequestNumber ||
+    !isChunkTranslationVisible
+  ) {
+    return;
+  }
+
+  let previousText = "";
+
+  for (const chunk of chunks) {
+    await requestSubtitleChunkTranslation(
+      chunk,
+      previousText,
+      sentence,
+      signal
+    );
+
+    if (
+      requestNumber !==
+        sentenceTranslationPrefetchRequestNumber ||
+      !isChunkTranslationVisible
+    ) {
+      return;
+    }
+
+    previousText = chunk;
+  }
+}
+
+function scheduleSentenceTranslationPrefetch(
+  video = getNetflixVideo()
+) {
+  const sentence =
+    getSentenceForTranslationPrefetch(
+      video
+    );
+
+  if (!sentence) {
+    return;
+  }
+
+  const mode =
+    isChunkTranslationVisible
+      ? "chunk"
+      : "normal";
+  const normalizedSentence =
+    cleanText(sentence.text);
+  const prefetchKey =
+    `${mode}:${normalizedSentence.toLocaleLowerCase("en-US")}`;
+
+  if (
+    prefetchKey ===
+      sentenceTranslationPrefetchKey
+  ) {
+    return;
+  }
+
+  if (
+    mode === "normal" &&
+    getCachedCueTranslation(
+      normalizedSentence
+    )
+  ) {
+    cancelSentenceTranslationPrefetch();
+    sentenceTranslationPrefetchKey =
+      prefetchKey;
+    return;
+  }
+
+  const cachedChunks =
+    mode === "chunk"
+      ? getCachedSubtitleChunks(
+          normalizedSentence
+        )
+      : null;
+
+  if (
+    mode === "chunk" &&
+    cachedChunks &&
+    getCachedSubtitleChunkTranslations(
+      normalizedSentence,
+      cachedChunks
+    )
+  ) {
+    cancelSentenceTranslationPrefetch();
+    sentenceTranslationPrefetchKey =
+      prefetchKey;
+    return;
+  }
+
+  cancelSentenceTranslationPrefetch();
+
+  const requestNumber =
+    sentenceTranslationPrefetchRequestNumber;
+  const controller =
+    new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    translationTimeoutMs
+  );
+  const completedText = cleanText(
+    completedBox.textContent
+  );
+  const previousText =
+    completedText ===
+      "Henüz tamamlanan cümle yok."
+      ? ""
+      : completedText;
+
+  sentenceTranslationPrefetchAbortController =
+    controller;
+  sentenceTranslationPrefetchKey =
+    prefetchKey;
+
+  const prefetchWork =
+    mode === "chunk"
+      ? prefetchChunkedSentenceTranslation(
+          normalizedSentence,
+          requestNumber,
+          controller.signal
+        )
+      : prefetchNormalSentenceTranslation(
+          normalizedSentence,
+          previousText,
+          requestNumber,
+          controller.signal
+        );
+
+  sentenceTranslationPrefetchPromise =
+    prefetchWork
+      .catch((error) => {
+        if (
+          error.name !== "AbortError" &&
+          requestNumber ===
+            sentenceTranslationPrefetchRequestNumber
+        ) {
+          console.debug(
+            "PauseSpeak sıradaki cümle ön çevirisi hazırlanamadı.",
+            error
+          );
+          sentenceTranslationPrefetchKey =
+            "";
+        }
+      })
+      .finally(() => {
+        clearTimeout(timeoutId);
+
+        if (
+          sentenceTranslationPrefetchAbortController ===
+            controller
+        ) {
+          sentenceTranslationPrefetchAbortController =
+            null;
+        }
+      });
+}
+
 function formatTranscriptTime(
   timeMs
 ) {
@@ -3653,6 +4037,32 @@ function getCachedCueTranslation(text) {
     normalizeTranscriptText(text)
       .toLocaleLowerCase("en-US")
   ) || "";
+}
+
+function cacheCueTranslation(
+  text,
+  translation
+) {
+  const cacheKey =
+    normalizeTranscriptText(text)
+      .toLocaleLowerCase("en-US");
+  const cleanTranslation =
+    cleanText(translation);
+
+  if (!cacheKey || !cleanTranslation) {
+    return;
+  }
+
+  translatedCueCache.set(
+    cacheKey,
+    cleanTranslation
+  );
+
+  if (translatedCueCache.size > 1500) {
+    translatedCueCache.delete(
+      translatedCueCache.keys().next().value
+    );
+  }
 }
 
 function cleanSubtitleExportText(
@@ -4224,6 +4634,10 @@ function receiveSubtitleTrack(track) {
   );
 
   chooseBestSubtitleTrack();
+
+  scheduleSentenceTranslationPrefetch(
+    getNetflixVideo()
+  );
 
   if (
     transcriptOverlay.style.display !==
@@ -5164,6 +5578,57 @@ function stopNormalTranslation() {
 
     const requestNumber =
       translationRequestNumber;
+    const normalizedText =
+      cleanText(text);
+    let cachedTranslation =
+      getCachedCueTranslation(
+        normalizedText
+      );
+
+    if (cachedTranslation) {
+      translationBox.textContent =
+        cachedTranslation;
+      void speakTranslation(
+        cachedTranslation
+      );
+      return;
+    }
+
+    const matchingPrefetchKey =
+      `normal:${normalizedText.toLocaleLowerCase("en-US")}`;
+
+    if (
+      sentenceTranslationPrefetchKey ===
+        matchingPrefetchKey &&
+      sentenceTranslationPrefetchPromise
+    ) {
+      translationBox.textContent =
+        "Çevriliyor...";
+
+      await sentenceTranslationPrefetchPromise;
+
+      if (
+        requestNumber !==
+          translationRequestNumber ||
+        isChunkTranslationVisible
+      ) {
+        return;
+      }
+
+      cachedTranslation =
+        getCachedCueTranslation(
+          normalizedText
+        );
+
+      if (cachedTranslation) {
+        translationBox.textContent =
+          cachedTranslation;
+        void speakTranslation(
+          cachedTranslation
+        );
+        return;
+      }
+    }
 
     const controller =
       new AbortController();
@@ -5236,17 +5701,10 @@ function stopNormalTranslation() {
       translationBox.textContent =
         data.translation;
 
-      translatedCueCache.set(
-        normalizeTranscriptText(text)
-          .toLocaleLowerCase("en-US"),
+      cacheCueTranslation(
+        text,
         data.translation
       );
-
-      if (translatedCueCache.size > 1500) {
-        translatedCueCache.delete(
-          translatedCueCache.keys().next().value
-        );
-      }
 
       void speakTranslation(
         data.translation
@@ -5471,9 +5929,8 @@ async function improveCurrentTranslation() {
     translationBox.textContent =
       data.translation;
 
-    translatedCueCache.set(
-      normalizeTranscriptText(text)
-        .toLocaleLowerCase("en-US"),
+    cacheCueTranslation(
+      text,
       data.translation
     );
   } catch (error) {
@@ -10743,18 +11200,7 @@ function createFallbackSubtitleChunks(
   return chunks;
 }
 
-async function requestSubtitleChunks(
-  sentence,
-  requestNumber
-) {
-  const cacheKey =
-    cleanText(sentence).toLowerCase();
-
-  const fallbackChunks =
-    createFallbackSubtitleChunks(
-      sentence
-    );
-
+function getSubtitleChunkCache() {
   if (
     !(requestSubtitleChunks.chunkCache
       instanceof Map)
@@ -10763,10 +11209,18 @@ async function requestSubtitleChunks(
       new Map();
   }
 
+  return requestSubtitleChunks.chunkCache;
+}
+
+function getCachedSubtitleChunks(
+  sentence
+) {
+  const cacheKey =
+    cleanText(sentence).toLowerCase();
+  const chunkCache =
+    getSubtitleChunkCache();
   const cachedChunks =
-    requestSubtitleChunks.chunkCache.get(
-      cacheKey
-    );
+    chunkCache.get(cacheKey);
 
   if (
     validateSubtitleChunks(
@@ -10778,11 +11232,132 @@ async function requestSubtitleChunks(
   }
 
   if (Array.isArray(cachedChunks)) {
-    requestSubtitleChunks.chunkCache.delete(
-      cacheKey
+    chunkCache.delete(cacheKey);
+  }
+
+  return null;
+}
+
+function cacheSubtitleChunks(
+  sentence,
+  chunks
+) {
+  if (
+    !validateSubtitleChunks(
+      sentence,
+      chunks
+    )
+  ) {
+    return;
+  }
+
+  const cacheKey =
+    cleanText(sentence).toLowerCase();
+  const chunkCache =
+    getSubtitleChunkCache();
+
+  chunkCache.set(
+    cacheKey,
+    [...chunks]
+  );
+
+  if (chunkCache.size > 500) {
+    chunkCache.delete(
+      chunkCache.keys().next().value
+    );
+  }
+}
+
+async function fetchSubtitleChunks(
+  sentence,
+  signal
+) {
+  const cachedChunks =
+    getCachedSubtitleChunks(sentence);
+
+  if (cachedChunks) {
+    return cachedChunks;
+  }
+
+  const fallbackChunks =
+    createFallbackSubtitleChunks(
+      sentence
+    );
+
+  const response = await fetch(
+    chunkApiUrl,
+    {
+      method: "POST",
+      headers: getUsageSyncHeaders(),
+      body: JSON.stringify({
+        text: sentence
+      }),
+      signal
+    }
+  );
+  const data = await response.json();
+
+  if (
+    response.ok &&
+    data?.success &&
+    Array.isArray(data.chunks)
+  ) {
+    recordTextUsage(
+      "chunk_split",
+      data.model,
+      data.usage
     );
   }
 
+  if (
+    !response.ok ||
+    !data?.success ||
+    !Array.isArray(data.chunks)
+  ) {
+    throw new Error(
+      data?.error ||
+        "Altyazı parçaları alınamadı."
+    );
+  }
+
+  const chunks = data.chunks
+    .filter(
+      (chunk) =>
+        typeof chunk === "string" &&
+        chunk.trim() !== ""
+    )
+    .map((chunk) => cleanText(chunk));
+
+  if (
+    validateSubtitleChunks(
+      sentence,
+      chunks
+    )
+  ) {
+    cacheSubtitleChunks(
+      sentence,
+      chunks
+    );
+    return chunks;
+  }
+
+  if (chunks.length > 1) {
+    console.warn(
+      "PauseSpeak çakışan veya eksik altyazı parçalarını reddetti.",
+      {
+        sentence,
+        chunks
+      }
+    );
+  }
+
+  return fallbackChunks;
+}
+
+async function requestSubtitleChunks(
+  sentence,
+  requestNumber
+) {
   const controller =
     new AbortController();
 
@@ -10795,38 +11370,11 @@ async function requestSubtitleChunks(
     }, chunkTimeoutMs);
 
   try {
-    const response =
-      await fetch(
-        chunkApiUrl,
-        {
-          method: "POST",
-
-          headers:
-            getUsageSyncHeaders(),
-
-          body: JSON.stringify({
-            text: sentence
-          }),
-
-          signal:
-            controller.signal
-        }
+    const chunks =
+      await fetchSubtitleChunks(
+        sentence,
+        controller.signal
       );
-
-    const data =
-      await response.json();
-
-    if (
-      response.ok &&
-      data?.success &&
-      Array.isArray(data.chunks)
-    ) {
-      recordTextUsage(
-        "chunk_split",
-        data.model,
-        data.usage
-      );
-    }
 
     if (
       requestNumber !==
@@ -10835,71 +11383,7 @@ async function requestSubtitleChunks(
       return null;
     }
 
-    if (
-      !response.ok ||
-      !data?.success ||
-      !Array.isArray(
-        data.chunks
-      )
-    ) {
-      throw new Error(
-        data?.error ||
-          "Altyazı parçaları alınamadı."
-      );
-    }
-
-    const chunks =
-      data.chunks
-        .filter(
-          (chunk) =>
-            typeof chunk ===
-              "string" &&
-            chunk.trim() !== ""
-        )
-        .map(
-          (chunk) =>
-            cleanText(chunk)
-        );
-
-    if (
-      validateSubtitleChunks(
-        sentence,
-        chunks
-      )
-    ) {
-      requestSubtitleChunks.chunkCache.set(
-        cacheKey,
-        [...chunks]
-      );
-
-      if (
-        requestSubtitleChunks.chunkCache
-          .size > 500
-      ) {
-        const oldestKey =
-          requestSubtitleChunks.chunkCache
-            .keys()
-            .next()
-            .value;
-
-        requestSubtitleChunks.chunkCache
-          .delete(oldestKey);
-      }
-
-      return chunks;
-    }
-
-    if (chunks.length > 1) {
-      console.warn(
-        "PauseSpeak çakışan veya eksik altyazı parçalarını reddetti.",
-        {
-          sentence,
-          chunks
-        }
-      );
-    }
-
-    return fallbackChunks;
+    return chunks;
   } finally {
     clearTimeout(timeoutId);
 
@@ -10913,6 +11397,72 @@ async function requestSubtitleChunks(
   }
 }
 
+function getSubtitleChunkTranslationCache() {
+  if (
+    !(requestSubtitleChunkTranslation
+      .translationCache instanceof Map)
+  ) {
+    requestSubtitleChunkTranslation
+      .translationCache = new Map();
+  }
+
+  return requestSubtitleChunkTranslation
+    .translationCache;
+}
+
+function getSubtitleChunkTranslationCacheKey(
+  text,
+  previousText,
+  fullText
+) {
+  return JSON.stringify([
+    cleanText(text).toLowerCase(),
+    cleanText(previousText).toLowerCase(),
+    cleanText(fullText).toLowerCase()
+  ]);
+}
+
+function getCachedSubtitleChunkTranslation(
+  text,
+  previousText,
+  fullText
+) {
+  return getSubtitleChunkTranslationCache()
+    .get(
+      getSubtitleChunkTranslationCacheKey(
+        text,
+        previousText,
+        fullText
+      )
+    ) || "";
+}
+
+function getCachedSubtitleChunkTranslations(
+  sentence,
+  chunks
+) {
+  const translations = [];
+  let previousText = "";
+
+  for (const chunk of chunks) {
+    const translation =
+      getCachedSubtitleChunkTranslation(
+        chunk,
+        previousText,
+        sentence
+      );
+
+    if (!translation) {
+      return null;
+    }
+
+    translations.push(translation);
+    previousText = chunk;
+  }
+
+  return translations;
+}
+
 async function requestSubtitleChunkTranslation(
   text,
   previousText,
@@ -10921,26 +11471,16 @@ async function requestSubtitleChunkTranslation(
   improve = false
 ) {
   const cacheKey =
-    JSON.stringify([
-      cleanText(text).toLowerCase(),
-      cleanText(previousText).toLowerCase(),
-      cleanText(fullText).toLowerCase()
-    ]);
-
-  if (
-    !(requestSubtitleChunkTranslation
-      .translationCache instanceof Map)
-  ) {
-    requestSubtitleChunkTranslation
-      .translationCache =
-      new Map();
-  }
+    getSubtitleChunkTranslationCacheKey(
+      text,
+      previousText,
+      fullText
+    );
+  const translationCache =
+    getSubtitleChunkTranslationCache();
 
   const cachedTranslation =
-    requestSubtitleChunkTranslation
-      .translationCache.get(
-        cacheKey
-      );
+    translationCache.get(cacheKey);
 
   if (
     !improve &&
@@ -11000,27 +11540,17 @@ async function requestSubtitleChunkTranslation(
       data.translation
     );
 
-  requestSubtitleChunkTranslation
-    .translationCache.set(
-      cacheKey,
-      translation
-    );
+  translationCache.set(
+    cacheKey,
+    translation
+  );
 
   if (
-    requestSubtitleChunkTranslation
-      .translationCache.size > 500
+    translationCache.size > 500
   ) {
-    const oldestKey =
-      requestSubtitleChunkTranslation
-        .translationCache
-        .keys()
-        .next()
-        .value;
-
-    requestSubtitleChunkTranslation
-      .translationCache.delete(
-        oldestKey
-      );
+    translationCache.delete(
+      translationCache.keys().next().value
+    );
   }
 
   return translation;
@@ -11049,6 +11579,21 @@ async function loadSubtitleChunkTranslations(
     return;
   }
 
+  const chunks =
+    [...currentSubtitleChunks];
+  const cachedTranslations =
+    getCachedSubtitleChunkTranslations(
+      sentence,
+      chunks
+    );
+
+  if (cachedTranslations) {
+    currentSubtitleChunkTranslations =
+      cachedTranslations;
+    renderChunkedSubtitle();
+    return;
+  }
+
   const controller =
     new AbortController();
 
@@ -11060,13 +11605,20 @@ async function loadSubtitleChunkTranslations(
       controller.abort();
     }, translationTimeoutMs);
 
-  const chunks =
-    [...currentSubtitleChunks];
+  let previousCachedText = "";
 
   currentSubtitleChunkTranslations =
-    new Array(
-      chunks.length
-    ).fill("");
+    chunks.map((chunk) => {
+      const translation =
+        getCachedSubtitleChunkTranslation(
+          chunk,
+          previousCachedText,
+          sentence
+        );
+
+      previousCachedText = chunk;
+      return translation;
+    });
 
   renderChunkedSubtitle();
 
@@ -11157,13 +11709,23 @@ async function loadStudySegments(
   const requestNumber =
     ++subtitleChunkRequestNumber;
 
+  const cachedChunks =
+    getCachedSubtitleChunks(sentence);
+
   currentSubtitleChunks =
+    cachedChunks ||
     createFallbackSubtitleChunks(
       sentence
     );
 
   currentSubtitleChunkTranslations =
-    [];
+    isChunkTranslationVisible &&
+    cachedChunks
+      ? getCachedSubtitleChunkTranslations(
+          sentence,
+          cachedChunks
+        ) || []
+      : [];
 
   renderChunkedSubtitle();
 
@@ -11188,7 +11750,12 @@ async function loadStudySegments(
       chunks;
 
     currentSubtitleChunkTranslations =
-      [];
+      isChunkTranslationVisible
+        ? getCachedSubtitleChunkTranslations(
+            sentence,
+            chunks
+          ) || []
+        : [];
 
     renderChunkedSubtitle();
 
@@ -12637,6 +13204,8 @@ chunkPracticeButton.addEventListener(
     isChunkTranslationVisible =
       !isChunkTranslationVisible;
 
+    cancelSentenceTranslationPrefetch();
+
     setPauseSpeakButton(
       chunkPracticeButton,
       "parts",
@@ -12659,6 +13228,7 @@ chunkPracticeButton.addEventListener(
       completedBox.textContent ===
         "Henüz tamamlanan cümle yok."
     ) {
+      scheduleSentenceTranslationPrefetch();
       return;
     }
 
@@ -12685,6 +13255,8 @@ chunkPracticeButton.addEventListener(
         currentTranslationPreviousText
       );
 
+      scheduleSentenceTranslationPrefetch();
+
       return;
     }
 
@@ -12693,6 +13265,8 @@ chunkPracticeButton.addEventListener(
     void loadSubtitleChunkTranslations(
       completedBox.textContent
     );
+
+    scheduleSentenceTranslationPrefetch();
   }
 );
   function finishSentence(video) {
@@ -13400,6 +13974,10 @@ if (isReplayStarting) {
       subtitleBox.textContent =
         "Altyazı bekleniyor...";
     }
+
+    scheduleSentenceTranslationPrefetch(
+      video
+    );
   }
 
   function finishReplay(
@@ -14060,40 +14638,20 @@ pronunciationCoachButton.addEventListener(
     closePauseSpeakMenus();
 
     if (
-      !isPronunciationCoachSessionActive ||
-      !isPronunciationCoachOpen
+      isPronunciationCoachSessionActive &&
+      isPronunciationCoachOpen
     ) {
-      openPronunciationCoach(
-        completedBox.textContent,
-        true
-      );
-      return;
-    }
-
-    if (
-      pronunciationCoachIsModelSpeaking
-    ) {
-      window.speechSynthesis?.cancel();
-      pronunciationCoachIsModelSpeaking =
-        false;
-    }
-
-    if (pronunciationCoachListening) {
-      pronunciationCoachManualPause =
-        true;
-      pronunciationCoachStatus.textContent =
-        "Mikrofon duraklatıldı — ilerlemen korunuyor";
-      stopPronunciationCoachRecognition(
+      closePronunciationCoach(
+        true,
         false
       );
-      renderPronunciationCoach();
       return;
     }
 
-    pronunciationCoachManualPause = false;
-    pronunciationCoachStatus.textContent =
-      "Mikrofon hazırlanıyor";
-    startPronunciationCoachRecognition();
+    openPronunciationCoach(
+      completedBox.textContent,
+      true
+    );
   }
 );
 
@@ -15002,6 +15560,7 @@ function resetPlaybackMediaContext(
 
   stopTranslationSpeech();
   stopNormalTranslation();
+  cancelSentenceTranslationPrefetch();
   stopSpeechRecognition();
   closeStudyMeaningPanel(false);
   closePronunciationCoach(true, false);

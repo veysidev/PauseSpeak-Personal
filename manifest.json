@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
 "name": "PauseSpeak Personal",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "description": "Video izlerken konuşma pratiği yapmaya yardımcı olan uzantı.",
   "action": {
     "default_popup": "popup.html",

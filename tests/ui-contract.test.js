@@ -15,7 +15,131 @@ const popup = read("popup.html");
 const manifest = JSON.parse(read("manifest.json"));
 
 test("manifest uses the Netflix and YouTube release version", () => {
-  assert.equal(manifest.version, "1.1.8");
+  assert.equal(manifest.version, "1.1.9");
+});
+
+test("the main microphone button closes the active inline coach on its second click", () => {
+  const handler = content.match(
+    /pronunciationCoachButton\.addEventListener\([\s\S]*?\r?\n\);\r?\n(?=\r?\npronunciationCoachCloseButton\.addEventListener)/
+  );
+
+  assert.ok(handler, "main microphone handler was not found");
+  assert.match(
+    handler[0],
+    /isPronunciationCoachSessionActive\s*&&[\s\S]*?isPronunciationCoachOpen[\s\S]*?closePronunciationCoach\(\s*true,\s*false\s*\)/s
+  );
+  assert.match(
+    handler[0],
+    /openPronunciationCoach\(\s*completedBox\.textContent,\s*true\s*\)/s
+  );
+  assert.doesNotMatch(
+    handler[0],
+    /startPronunciationCoachRecognition\(/
+  );
+});
+
+test("only the selected translation mode prefetches the sentence currently entering playback", () => {
+  const scheduler = content.match(
+    /function scheduleSentenceTranslationPrefetch\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction formatTranscriptTime)/
+  );
+
+  assert.ok(scheduler, "translation prefetch scheduler was not found");
+  assert.match(
+    scheduler[0],
+    /isChunkTranslationVisible\s*\?\s*"chunk"\s*:\s*"normal"/s
+  );
+  assert.match(
+    scheduler[0],
+    /mode === "chunk"[\s\S]*?prefetchChunkedSentenceTranslation[\s\S]*?: prefetchNormalSentenceTranslation/s
+  );
+  assert.match(
+    content,
+    /isChunkTranslationVisible\s*=\s*!isChunkTranslationVisible;[\s\S]*?cancelSentenceTranslationPrefetch\(\)/s
+  );
+  assert.match(
+    content,
+    /function prefetchNormalSentenceTranslation[\s\S]*?cacheCueTranslation\(/s
+  );
+  assert.match(
+    content,
+    /function prefetchChunkedSentenceTranslation[\s\S]*?fetchSubtitleChunks\([\s\S]*?requestSubtitleChunkTranslation\(/s
+  );
+});
+
+test("prefetch lookahead assembles rolling cues and advances past the completed sentence", () => {
+  const helpers = content.match(
+    /function collectTranscriptSentence\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction cancelSentenceTranslationPrefetch)/
+  );
+
+  assert.ok(helpers, "prefetch sentence lookahead helpers were not found");
+
+  const cues = [
+    {
+      startTimeMs: 0,
+      endTimeMs: 900,
+      text: "I am"
+    },
+    {
+      startTimeMs: 800,
+      endTimeMs: 1800,
+      text: "I am ready."
+    },
+    {
+      startTimeMs: 1900,
+      endTimeMs: 3000,
+      text: "Next sentence."
+    }
+  ];
+  const sandbox = {
+    completedEndTimeMs: null,
+    getTranscriptCues: () => ({ cues }),
+    findTranscriptCueIndex: (items, timeMs) =>
+      items.findIndex(
+        (cue) =>
+          cue.startTimeMs <= timeMs &&
+          cue.endTimeMs >= timeMs
+      ),
+    removeSubtitleDescriptions: (value) =>
+      String(value || "").trim(),
+    cleanText: (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    endsSentence: (value) =>
+      /[.!?]$/.test(String(value || "").trim()),
+    mergeOverlappingSubtitleText: (current, incoming) =>
+      incoming.includes(current)
+        ? incoming
+        : `${current} ${incoming}`.trim(),
+    first: null,
+    second: null
+  };
+
+  vm.runInNewContext(
+    `${helpers[0]}\n` +
+      `first = getSentenceForTranslationPrefetch({ currentTime: 0.4 });\n` +
+      `completedEndTimeMs = 1800;\n` +
+      `second = getSentenceForTranslationPrefetch({ currentTime: 1.7 });`,
+    sandbox
+  );
+
+  assert.equal(sandbox.first.text, "I am ready.");
+  assert.equal(sandbox.second.text, "Next sentence.");
+});
+
+test("prefetched normal and chunk translations render from cache without another network wait", () => {
+  assert.match(
+    content,
+    /async function translateSentence[\s\S]*?getCachedCueTranslation\([\s\S]*?translationBox\.textContent\s*=\s*cachedTranslation/s
+  );
+  assert.match(
+    content,
+    /async function loadStudySegments[\s\S]*?getCachedSubtitleChunks\(sentence\)[\s\S]*?getCachedSubtitleChunkTranslations/s
+  );
+  assert.match(
+    content,
+    /async function loadSubtitleChunkTranslations[\s\S]*?if \(cachedTranslations\)[\s\S]*?renderChunkedSubtitle\(\);\s*return;/s
+  );
 });
 
 test("Netflix and YouTube both load the content and MAIN-world bridge", () => {
@@ -433,14 +557,15 @@ test("empty or failed AI chunking keeps the local fallback retryable", () => {
     /cachedChunks\.length > 0/
   );
 
-  const fallbackAssignments =
-    content.match(
-      /currentSubtitleChunks\s*=\s*createFallbackSubtitleChunks\(\s*sentence\s*\)/gs
-    ) || [];
-
-  assert.ok(
-    fallbackAssignments.length >= 2,
-    "fallback must cover initial render and request failure"
+  assert.match(
+    content,
+    /currentSubtitleChunks\s*=\s*cachedChunks\s*\|\|\s*createFallbackSubtitleChunks\(\s*sentence\s*\)/s,
+    "initial render must prefer a prepared result and retain the local fallback"
+  );
+  assert.match(
+    content,
+    /catch \(error\)[\s\S]*?currentSubtitleChunks\s*=\s*createFallbackSubtitleChunks\(\s*sentence\s*\)/s,
+    "request failure must retain the local fallback"
   );
 });
 
