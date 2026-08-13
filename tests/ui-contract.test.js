@@ -12,10 +12,176 @@ const content = read("content.js");
 const bridge = read("player-bridge.js");
 const css = read("pausespeak-ui.css");
 const popup = read("popup.html");
+const server = read("server/index.js");
+const usageStore = read("server/usage-store.js");
 const manifest = JSON.parse(read("manifest.json"));
 
 test("manifest uses the Netflix and YouTube release version", () => {
-  assert.equal(manifest.version, "1.1.11");
+  assert.equal(manifest.version, "1.1.13");
+});
+
+test("normal mode completes a subtitle without calling the chunk API", () => {
+  const finishSentence = content.match(
+    /function finishSentence\(video\)[\s\S]*?\r?\n  }\r?\n(?=\r?\nfunction setSubtitlePanelVisibility)/
+  );
+  const loadStudySegments = content.match(
+    /async function loadStudySegments\([\s\S]*?\r?\n}\r?\n(?=\s*async function requestSmartChunks)/
+  );
+
+  assert.ok(finishSentence, "finishSentence was not found");
+  assert.ok(loadStudySegments, "loadStudySegments was not found");
+  assert.match(
+    finishSentence[0],
+    /loadStudySegments\(\s*fullSentence\s*\)/s
+  );
+  assert.match(
+    finishSentence[0],
+    /isChunkTranslationVisible[\s\S]*?stopNormalTranslation\(\)[\s\S]*?else\s*\{[\s\S]*?translateSentence\(\s*fullSentence,\s*previousText\s*\)/s
+  );
+  assert.match(
+    loadStudySegments[0],
+    /createFallbackSubtitleChunks\(\s*sentence\s*\)[\s\S]*?renderChunkedSubtitle\(\)/s
+  );
+
+  const normalModeExit =
+    loadStudySegments[0].indexOf(
+      "if (!isChunkTranslationVisible)"
+    );
+  const chunkRequest =
+    loadStudySegments[0].indexOf(
+      "await requestSubtitleChunks"
+    );
+
+  assert.ok(
+    normalModeExit >= 0,
+    "normal mode exit was not found"
+  );
+  assert.ok(
+    chunkRequest > normalModeExit,
+    "chunk request must be after the normal mode exit"
+  );
+});
+
+test("opening chunk mode requests AI chunks before translating them", () => {
+  const handler = content.match(
+    /chunkPracticeButton\.addEventListener\([\s\S]*?\r?\n\);\r?\n(?=\s*function finishSentence)/
+  );
+
+  assert.ok(handler, "chunk mode handler was not found");
+  assert.match(
+    handler[0],
+    /if \(\s*!isChunkTranslationVisible\s*\)[\s\S]*?return;[\s\S]*?loadStudySegments\(\s*completedBox\.textContent\s*\)/s
+  );
+  assert.match(
+    content,
+    /async function fetchSubtitleChunks[\s\S]*?fetch\(\s*chunkApiUrl/s
+  );
+  assert.match(
+    content,
+    /async function requestSubtitleChunkTranslation[\s\S]*?fetch\(\s*translationApiUrl/s
+  );
+});
+
+test("the chunk loader skips the network in normal mode and uses it in chunk mode", async () => {
+  const helper = content.match(
+    /async function loadStudySegments\([\s\S]*?\r?\n}\r?\n(?=\s*async function requestSmartChunks)/
+  );
+
+  assert.ok(helper, "loadStudySegments was not found");
+
+  const sandbox = {
+    subtitleTranslationRequestNumber: 0,
+    subtitleTranslationAbortController: null,
+    subtitleChunkAbortController: null,
+    subtitleChunkRequestNumber: 0,
+    getCachedSubtitleChunks: () => null,
+    createFallbackSubtitleChunks: () => [
+      "Local safe chunks."
+    ],
+    currentSubtitleChunks: [],
+    currentSubtitleChunkTranslations: [],
+    isChunkTranslationVisible: false,
+    getCachedSubtitleChunkTranslations: () => null,
+    renderCount: 0,
+    renderChunkedSubtitle: () => {
+      sandbox.renderCount += 1;
+    },
+    chunkRequestCount: 0,
+    requestSubtitleChunks: async () => {
+      sandbox.chunkRequestCount += 1;
+      return ["AI chunks."];
+    },
+    translationLoadCount: 0,
+    loadSubtitleChunkTranslations: () => {
+      sandbox.translationLoadCount += 1;
+    },
+    completedBox: {
+      textContent: "A completed sentence."
+    },
+    console,
+    normalResult: null,
+    chunkResult: null
+  };
+
+  vm.runInNewContext(
+    `${helper[0]}\n` +
+      `normalResult = loadStudySegments("A completed sentence.");`,
+    sandbox
+  );
+  await sandbox.normalResult;
+
+  assert.equal(sandbox.chunkRequestCount, 0);
+  assert.equal(sandbox.translationLoadCount, 0);
+  assert.deepEqual(
+    Array.from(sandbox.currentSubtitleChunks),
+    ["Local safe chunks."]
+  );
+
+  sandbox.isChunkTranslationVisible = true;
+  vm.runInNewContext(
+    `chunkResult = loadStudySegments("A completed sentence.");`,
+    sandbox
+  );
+  await sandbox.chunkResult;
+
+  assert.equal(sandbox.chunkRequestCount, 1);
+  assert.equal(sandbox.translationLoadCount, 1);
+  assert.deepEqual(
+    Array.from(sandbox.currentSubtitleChunks),
+    ["AI chunks."]
+  );
+});
+
+test("every active OpenAI route records model and usage observability", () => {
+  for (const operation of [
+    "normal_translation",
+    "chunk_translation",
+    "improve_translation",
+    "improve_chunk",
+    "study_meaning",
+    "study_segments",
+    "chunk_split",
+    "tts_english",
+    "tts_turkish"
+  ]) {
+    assert.match(
+      server + usageStore,
+      new RegExp(`"${operation}"`)
+    );
+  }
+
+  assert.match(
+    server,
+    /cacheWriteTokens:[\s\S]*?retryCount:[\s\S]*?cacheMisses:[\s\S]*?errorCount:/s
+  );
+  assert.match(
+    server,
+    /operation:\s*"study_segments"[\s\S]*?model:\s*usageModel[\s\S]*?usage/s
+  );
+  assert.match(
+    content,
+    /recordTextUsage\(\s*"study_segments",\s*data\.model,\s*data\.usage\s*\)/s
+  );
 });
 
 test("the main microphone button closes the active inline coach on its second click", () => {

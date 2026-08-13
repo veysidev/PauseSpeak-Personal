@@ -2195,6 +2195,8 @@ const usageOperationLabels = {
     "Çeviri iyileştirme",
   improve_chunk:
     "Parça iyileştirme",
+  study_segments:
+    "Cümle ifade analizi",
   study_meaning:
     "Kelime / ifade anlamı",
   tts_english:
@@ -2207,11 +2209,13 @@ const usageModelPrices = {
   "gpt-5.6-luna": {
     input: 0.2,
     cachedInput: 0.02,
+    cacheWriteInput: 0.25,
     output: 1.2
   },
   "gpt-5.6-terra": {
     input: 2,
     cachedInput: 0.2,
+    cacheWriteInput: 2.5,
     output: 12
   }
 };
@@ -2641,8 +2645,13 @@ function addUsageRecord(
       requests: 0,
       inputTokens: 0,
       cachedInputTokens: 0,
+      cacheWriteTokens: 0,
       outputTokens: 0,
       reasoningTokens: 0,
+      retryCount: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      errorCount: 0,
       ttsCharacters: 0,
       ttsSeconds: 0,
       estimatedUsd: 0
@@ -2656,8 +2665,13 @@ function addUsageRecord(
     "requests",
     "inputTokens",
     "cachedInputTokens",
+    "cacheWriteTokens",
     "outputTokens",
     "reasoningTokens",
+    "retryCount",
+    "cacheHits",
+    "cacheMisses",
+    "errorCount",
     "ttsCharacters",
     "ttsSeconds",
     "estimatedUsd"
@@ -2757,6 +2771,27 @@ function recordTextUsage(
         usage?.cachedInputTokens
       ) || 0
     );
+  const cacheWriteTokens =
+    Math.max(
+      0,
+      Math.min(
+        Math.max(
+          0,
+          inputTokens -
+            cachedInputTokens
+        ),
+        Number(
+          usage?.cacheWriteTokens
+        ) || 0
+      )
+    );
+  const regularInputTokens =
+    Math.max(
+      0,
+      inputTokens -
+        cachedInputTokens -
+        cacheWriteTokens
+    );
   const outputTokens =
     Number(usage?.outputTokens) || 0;
   const prices =
@@ -2766,12 +2801,12 @@ function recordTextUsage(
 
   if (prices) {
     estimatedUsd = (
-      (
-        inputTokens -
-        cachedInputTokens
-      ) * prices.input +
+      regularInputTokens *
+        prices.input +
       cachedInputTokens *
         prices.cachedInput +
+      cacheWriteTokens *
+        prices.cacheWriteInput +
       outputTokens * prices.output
     ) / 1000000;
   }
@@ -2783,10 +2818,27 @@ function recordTextUsage(
       requests,
       inputTokens,
       cachedInputTokens,
+      cacheWriteTokens,
       outputTokens,
       reasoningTokens:
         Number(
           usage?.reasoningTokens
+        ) || 0,
+      retryCount:
+        Number(
+          usage?.retryCount
+        ) || 0,
+      cacheHits:
+        Number(
+          usage?.cacheHits
+        ) || 0,
+      cacheMisses:
+        Number(
+          usage?.cacheMisses
+        ) || 0,
+      errorCount:
+        Number(
+          usage?.errorCount
         ) || 0,
       estimatedUsd
     }
@@ -3007,7 +3059,11 @@ function appendUsageTable(
           ).toFixed(1)} sn`
         : `${formatUsageNumber(
             record.inputTokens
-          )} giriş / ${formatUsageNumber(
+          )} giriş (${formatUsageNumber(
+            record.cachedInputTokens
+          )} önbellek, ${formatUsageNumber(
+            record.cacheWriteTokens
+          )} yazım) / ${formatUsageNumber(
             record.outputTokens
           )} çıkış`;
 
@@ -10660,6 +10716,18 @@ async function requestStudySegments(
     }
 
     if (
+      response.ok &&
+      data?.success === true &&
+      Array.isArray(data.segments)
+    ) {
+      recordTextUsage(
+        "study_segments",
+        data.model,
+        data.usage
+      );
+    }
+
+    if (
       requestNumber !==
       studySegmentsRequestNumber
     ) {
@@ -12083,6 +12151,10 @@ async function loadStudySegments(
       : [];
 
   renderChunkedSubtitle();
+
+  if (!isChunkTranslationVisible) {
+    return;
+  }
 
   try {
     const chunks =
@@ -13615,9 +13687,7 @@ chunkPracticeButton.addEventListener(
       return;
     }
 
-    renderChunkedSubtitle();
-
-    void loadSubtitleChunkTranslations(
+    void loadStudySegments(
       completedBox.textContent
     );
 

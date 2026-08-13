@@ -7,6 +7,7 @@ const allowedOperations = new Set([
   "chunk_translation",
   "improve_translation",
   "improve_chunk",
+  "study_segments",
   "study_meaning",
   "tts_english",
   "tts_turkish"
@@ -16,8 +17,13 @@ const usageMetricKeys = [
   "requests",
   "inputTokens",
   "cachedInputTokens",
+  "cacheWriteTokens",
   "outputTokens",
   "reasoningTokens",
+  "retryCount",
+  "cacheHits",
+  "cacheMisses",
+  "errorCount",
   "ttsCharacters",
   "ttsSeconds",
   "estimatedUsd"
@@ -107,12 +113,37 @@ function normalizeUsageRecord(record) {
         record?.cachedInputTokens
       )
     ),
+    cacheWriteTokens: Math.round(
+      normalizeNumber(
+        record?.cacheWriteTokens
+      )
+    ),
     outputTokens: Math.round(
       normalizeNumber(record?.outputTokens)
     ),
     reasoningTokens: Math.round(
       normalizeNumber(
         record?.reasoningTokens
+      )
+    ),
+    retryCount: Math.round(
+      normalizeNumber(
+        record?.retryCount
+      )
+    ),
+    cacheHits: Math.round(
+      normalizeNumber(
+        record?.cacheHits
+      )
+    ),
+    cacheMisses: Math.round(
+      normalizeNumber(
+        record?.cacheMisses
+      )
+    ),
+    errorCount: Math.round(
+      normalizeNumber(
+        record?.errorCount
       )
     ),
     ttsCharacters: Math.round(
@@ -137,8 +168,13 @@ function emptyUsageRecord(model = "-") {
     requests: 0,
     inputTokens: 0,
     cachedInputTokens: 0,
+    cacheWriteTokens: 0,
     outputTokens: 0,
     reasoningTokens: 0,
+    retryCount: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    errorCount: 0,
     ttsCharacters: 0,
     ttsSeconds: 0,
     estimatedUsd: 0
@@ -172,9 +208,15 @@ function addSummaryRow(operations, row) {
       inputTokens: row.input_tokens,
       cachedInputTokens:
         row.cached_input_tokens,
+      cacheWriteTokens:
+        row.cache_write_tokens,
       outputTokens: row.output_tokens,
       reasoningTokens:
         row.reasoning_tokens,
+      retryCount: row.retry_count,
+      cacheHits: row.cache_hits,
+      cacheMisses: row.cache_misses,
+      errorCount: row.error_count,
       ttsCharacters: row.tts_characters,
       ttsSeconds: row.tts_seconds,
       estimatedUsd: row.estimated_usd
@@ -235,14 +277,34 @@ class UsageStore {
             requests BIGINT NOT NULL DEFAULT 0,
             input_tokens BIGINT NOT NULL DEFAULT 0,
             cached_input_tokens BIGINT NOT NULL DEFAULT 0,
+            cache_write_tokens BIGINT NOT NULL DEFAULT 0,
             output_tokens BIGINT NOT NULL DEFAULT 0,
             reasoning_tokens BIGINT NOT NULL DEFAULT 0,
+            retry_count BIGINT NOT NULL DEFAULT 0,
+            cache_hits BIGINT NOT NULL DEFAULT 0,
+            cache_misses BIGINT NOT NULL DEFAULT 0,
+            error_count BIGINT NOT NULL DEFAULT 0,
             tts_characters BIGINT NOT NULL DEFAULT 0,
             tts_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
             estimated_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
             is_legacy BOOLEAN NOT NULL DEFAULT FALSE,
             PRIMARY KEY (account_hash, event_id)
           );
+
+          ALTER TABLE pausespeak_usage_events
+            ADD COLUMN IF NOT EXISTS cache_write_tokens BIGINT NOT NULL DEFAULT 0;
+
+          ALTER TABLE pausespeak_usage_events
+            ADD COLUMN IF NOT EXISTS retry_count BIGINT NOT NULL DEFAULT 0;
+
+          ALTER TABLE pausespeak_usage_events
+            ADD COLUMN IF NOT EXISTS cache_hits BIGINT NOT NULL DEFAULT 0;
+
+          ALTER TABLE pausespeak_usage_events
+            ADD COLUMN IF NOT EXISTS cache_misses BIGINT NOT NULL DEFAULT 0;
+
+          ALTER TABLE pausespeak_usage_events
+            ADD COLUMN IF NOT EXISTS error_count BIGINT NOT NULL DEFAULT 0;
 
           CREATE INDEX IF NOT EXISTS pausespeak_usage_events_account_date_idx
             ON pausespeak_usage_events (account_hash, local_date);
@@ -303,15 +365,21 @@ class UsageStore {
           requests,
           input_tokens,
           cached_input_tokens,
+          cache_write_tokens,
           output_tokens,
           reasoning_tokens,
+          retry_count,
+          cache_hits,
+          cache_misses,
+          error_count,
           tts_characters,
           tts_seconds,
           estimated_usd
         ) VALUES (
           $1, $2, $3::date, $4, $5,
           $6, $7, $8, $9, $10,
-          $11, $12, $13
+          $11, $12, $13, $14, $15,
+          $16, $17, $18
         )
       `,
       [
@@ -323,8 +391,13 @@ class UsageStore {
         normalizedUsage.requests,
         normalizedUsage.inputTokens,
         normalizedUsage.cachedInputTokens,
+        normalizedUsage.cacheWriteTokens,
         normalizedUsage.outputTokens,
         normalizedUsage.reasoningTokens,
+        normalizedUsage.retryCount,
+        normalizedUsage.cacheHits,
+        normalizedUsage.cacheMisses,
+        normalizedUsage.errorCount,
         normalizedUsage.ttsCharacters,
         normalizedUsage.ttsSeconds,
         normalizedUsage.estimatedUsd
@@ -476,16 +549,22 @@ class UsageStore {
               requests,
               input_tokens,
               cached_input_tokens,
+              cache_write_tokens,
               output_tokens,
               reasoning_tokens,
+              retry_count,
+              cache_hits,
+              cache_misses,
+              error_count,
               tts_characters,
               tts_seconds,
               estimated_usd,
               is_legacy
             ) VALUES (
               $1, $2, $3::timestamptz,
-              $4::date, $5, $6, $7, $8, $9, $10, $11,
-              $12, $13, $14, TRUE
+              $4::date, $5, $6, $7, $8, $9, $10,
+              $11, $12, $13, $14, $15, $16,
+              $17, $18, $19, TRUE
             )
             ON CONFLICT (account_hash, event_id)
             DO NOTHING
@@ -500,8 +579,13 @@ class UsageStore {
             entry.usage.requests,
             entry.usage.inputTokens,
             entry.usage.cachedInputTokens,
+            entry.usage.cacheWriteTokens,
             entry.usage.outputTokens,
             entry.usage.reasoningTokens,
+            entry.usage.retryCount,
+            entry.usage.cacheHits,
+            entry.usage.cacheMisses,
+            entry.usage.errorCount,
             entry.usage.ttsCharacters,
             entry.usage.ttsSeconds,
             entry.usage.estimatedUsd
@@ -543,8 +627,13 @@ class UsageStore {
               SUM(requests) AS requests,
               SUM(input_tokens) AS input_tokens,
               SUM(cached_input_tokens) AS cached_input_tokens,
+              SUM(cache_write_tokens) AS cache_write_tokens,
               SUM(output_tokens) AS output_tokens,
               SUM(reasoning_tokens) AS reasoning_tokens,
+              SUM(retry_count) AS retry_count,
+              SUM(cache_hits) AS cache_hits,
+              SUM(cache_misses) AS cache_misses,
+              SUM(error_count) AS error_count,
               SUM(tts_characters) AS tts_characters,
               SUM(tts_seconds) AS tts_seconds,
               SUM(estimated_usd) AS estimated_usd
@@ -568,8 +657,13 @@ class UsageStore {
               COALESCE(SUM(event.requests), 0) AS requests,
               COALESCE(SUM(event.input_tokens), 0) AS input_tokens,
               COALESCE(SUM(event.cached_input_tokens), 0) AS cached_input_tokens,
+              COALESCE(SUM(event.cache_write_tokens), 0) AS cache_write_tokens,
               COALESCE(SUM(event.output_tokens), 0) AS output_tokens,
               COALESCE(SUM(event.reasoning_tokens), 0) AS reasoning_tokens,
+              COALESCE(SUM(event.retry_count), 0) AS retry_count,
+              COALESCE(SUM(event.cache_hits), 0) AS cache_hits,
+              COALESCE(SUM(event.cache_misses), 0) AS cache_misses,
+              COALESCE(SUM(event.error_count), 0) AS error_count,
               COALESCE(SUM(event.tts_characters), 0) AS tts_characters,
               COALESCE(SUM(event.tts_seconds), 0) AS tts_seconds,
               COALESCE(SUM(event.estimated_usd), 0) AS estimated_usd

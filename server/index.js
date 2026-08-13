@@ -7,6 +7,13 @@ const {
   normalizeDate,
   normalizeSyncCode
 } = require("./usage-store");
+const {
+  emptyOpenAIUsage,
+  estimateTextUsageCost,
+  finalizeOpenAIUsage,
+  mergeOpenAIUsage,
+  normalizeOpenAIUsage
+} = require("./usage-metrics");
 require("dotenv").config();
 
 const app = express();
@@ -195,97 +202,26 @@ function cleanText(text) {
     .trim();
 }
 
-function normalizeOpenAIUsage(usage) {
-  return {
-    requests: 1,
-    inputTokens:
-      Number(usage?.input_tokens) || 0,
-    cachedInputTokens:
-      Number(
-        usage?.input_tokens_details
-          ?.cached_tokens
-      ) || 0,
-    outputTokens:
-      Number(usage?.output_tokens) || 0,
-    reasoningTokens:
-      Number(
-        usage?.output_tokens_details
-          ?.reasoning_tokens
-      ) || 0
-  };
-}
-
-function emptyOpenAIUsage() {
-  return {
-    requests: 0,
-    inputTokens: 0,
-    cachedInputTokens: 0,
-    outputTokens: 0,
-    reasoningTokens: 0
-  };
-}
-
-function mergeOpenAIUsage(
-  total,
-  usage
+function parseOpenAIResponse(
+  openAIResponse,
+  parser
 ) {
-  const merged = {
-    ...emptyOpenAIUsage()
-  };
-
-  Object.keys(merged).forEach(
-    (key) => {
-      merged[key] =
-        (Number(total?.[key]) || 0) +
-        (Number(usage?.[key]) || 0);
-    }
+  const usage = normalizeOpenAIUsage(
+    openAIResponse?.usage
   );
 
-  return merged;
-}
-
-const usageModelPrices = {
-  "gpt-5.6-luna": {
-    input: 0.2,
-    cachedInput: 0.02,
-    output: 1.2
-  },
-  "gpt-5.6-terra": {
-    input: 2,
-    cachedInput: 0.2,
-    output: 12
+  try {
+    return {
+      value: parser(
+        openAIResponse?.output_text
+      ),
+      usage
+    };
+  } catch (error) {
+    error.openAIUsage = usage;
+    throw error;
   }
-};
-
-function estimateTextUsageCost(
-  model,
-  usage
-) {
-  const prices = usageModelPrices[model];
-
-  if (!prices) {
-    return 0;
-  }
-
-  const inputTokens =
-    Number(usage?.inputTokens) || 0;
-  const cachedInputTokens = Math.min(
-    inputTokens,
-    Number(usage?.cachedInputTokens) || 0
-  );
-  const outputTokens =
-    Number(usage?.outputTokens) || 0;
-
-  return (
-    (
-      inputTokens - cachedInputTokens
-    ) * prices.input +
-    cachedInputTokens *
-      prices.cachedInput +
-    outputTokens * prices.output
-  ) / 1000000;
 }
-
 function getUsageAccountHash(request) {
   return hashSyncCode(
     request.get(
@@ -328,6 +264,55 @@ async function recordSynchronizedUsage(
     ttsCharacters = 0
   }
 ) {
+  const finalizedUsage =
+    finalizeOpenAIUsage(usage, {
+      errorCount:
+        Number(usage?.errorCount) || 0
+    });
+  const normalizedUsage = {
+    ...finalizedUsage,
+    ttsCharacters,
+    estimatedUsd:
+      operation.startsWith("tts_")
+        ? (
+            ttsCharacters / 4 * 0.6
+          ) / 1000000
+        : estimateTextUsageCost(
+            model,
+            finalizedUsage
+          )
+  };
+
+  console.info(
+    "PauseSpeak OpenAI kullanım gözlemi:",
+    {
+      operation,
+      model,
+      requests:
+        normalizedUsage.requests,
+      inputTokens:
+        normalizedUsage.inputTokens,
+      cachedInputTokens:
+        normalizedUsage.cachedInputTokens,
+      cacheWriteTokens:
+        normalizedUsage.cacheWriteTokens,
+      outputTokens:
+        normalizedUsage.outputTokens,
+      reasoningTokens:
+        normalizedUsage.reasoningTokens,
+      retryCount:
+        normalizedUsage.retryCount,
+      cacheHits:
+        normalizedUsage.cacheHits,
+      cacheMisses:
+        normalizedUsage.cacheMisses,
+      errorCount:
+        normalizedUsage.errorCount,
+      estimatedUsd:
+        normalizedUsage.estimatedUsd
+    }
+  );
+
   const accountHash =
     getUsageAccountHash(request);
 
@@ -337,20 +322,6 @@ async function recordSynchronizedUsage(
   ) {
     return "";
   }
-
-  const normalizedUsage = {
-    ...usage,
-    ttsCharacters,
-    estimatedUsd:
-      operation.startsWith("tts_")
-        ? (
-            ttsCharacters / 4 * 0.6
-          ) / 1000000
-        : estimateTextUsageCost(
-            model,
-            usage
-          )
-  };
 
   try {
     return await usageStore.recordEvent(
@@ -1312,13 +1283,14 @@ reasoning: {
   max_output_tokens: 4096
 });
 
+const parsed = parseOpenAIResponse(
+  openAIResponse,
+  parseChunkDecision
+);
+
 return {
-  decision: parseChunkDecision(
-    openAIResponse.output_text
-  ),
-  usage: normalizeOpenAIUsage(
-    openAIResponse.usage
-  )
+  decision: parsed.value,
+  usage: parsed.usage
 };
 }
 async function generateStudyMeaning(
@@ -1503,13 +1475,14 @@ async function generateStudyMeaning(
       max_output_tokens: 300
     });
 
+  const parsed = parseOpenAIResponse(
+    openAIResponse,
+    parseStudyMeaning
+  );
+
   return {
-    meaning: parseStudyMeaning(
-      openAIResponse.output_text
-    ),
-    usage: normalizeOpenAIUsage(
-      openAIResponse.usage
-    )
+    meaning: parsed.value,
+    usage: parsed.usage
   };
 }
 async function generateStudySegments(
@@ -1703,10 +1676,19 @@ const openAIResponse =
     : 700
     });
 
-return parseStudySegments(
-  openAIResponse.output_text,
-  analysisMode
+const parsed = parseOpenAIResponse(
+  openAIResponse,
+  (outputText) =>
+    parseStudySegments(
+      outputText,
+      analysisMode
+    )
 );
+
+return {
+  segments: parsed.value.segments,
+  usage: parsed.usage
+};
 }
 app.get(
   "/health",
@@ -2190,6 +2172,10 @@ const analysisMode =
 const usesContextExpressionMode =
   analysisMode ===
   "context-expression-v1";
+    const usageModel =
+      usesContextExpressionMode
+        ? openAITerraModel
+        : openAIModel;
     if (
       cleanedSelectedText.length >
         200 ||
@@ -2319,6 +2305,11 @@ if (
             candidate
           );
         } catch (error) {
+          usage = mergeOpenAIUsage(
+            usage,
+            error?.openAIUsage
+          );
+
           if (error?.status) {
             throw error;
           }
@@ -2333,7 +2324,23 @@ if (
         }
       }
 
+      usage = finalizeOpenAIUsage(
+        usage,
+        {
+          errorCount: meaning ? 0 : 1
+        }
+      );
+
       if (!meaning) {
+        await recordSynchronizedUsage(
+          request,
+          {
+            operation: "study_meaning",
+            model: usageModel,
+            usage
+          }
+        );
+
         return response
           .status(422)
           .json({
@@ -2344,11 +2351,6 @@ if (
               "bir anlam alınamadı."
           });
       }
-
-  const usageModel =
-    usesContextExpressionMode
-      ? openAITerraModel
-      : openAIModel;
 
   await recordSynchronizedUsage(
     request,
@@ -2573,6 +2575,10 @@ const analysisMode =
       const usesContextExpressionMode =
   analysisMode ===
   "context-expression-v1";
+      const usageModel =
+        usesContextExpressionMode
+          ? openAITerraModel
+          : openAIModel;
 
     if (
       cleanedText.length > 1000
@@ -2593,6 +2599,8 @@ const analysisMode =
         await getOpenAIClient();
 
       let segments = null;
+      let usage =
+        emptyOpenAIUsage();
 
       for (
         let attempt = 1;
@@ -2606,6 +2614,10 @@ const analysisMode =
     cleanedText,
     analysisMode
   );
+          usage = mergeOpenAIUsage(
+            usage,
+            candidate.usage
+          );
 
           if (
             validateStudySegments(
@@ -2627,6 +2639,11 @@ const analysisMode =
             candidate
           );
         } catch (error) {
+          usage = mergeOpenAIUsage(
+            usage,
+            error?.openAIUsage
+          );
+
           if (error?.status) {
             throw error;
           }
@@ -2641,7 +2658,23 @@ const analysisMode =
         }
       }
 
+      usage = finalizeOpenAIUsage(
+        usage,
+        {
+          errorCount: segments ? 0 : 1
+        }
+      );
+
       if (!segments) {
+        await recordSynchronizedUsage(
+          request,
+          {
+            operation: "study_segments",
+            model: usageModel,
+            usage
+          }
+        );
+
         return response
           .status(422)
           .json({
@@ -2654,6 +2687,15 @@ const analysisMode =
           });
       }
 
+      await recordSynchronizedUsage(
+        request,
+        {
+          operation: "study_segments",
+          model: usageModel,
+          usage
+        }
+      );
+
       return response.json({
         success: true,
 
@@ -2661,7 +2703,9 @@ const analysisMode =
 
         provider: "openai",
 
-        model: openAIModel
+        model: usageModel,
+
+        usage
       });
     } catch (error) {
       console.error(
@@ -2786,7 +2830,23 @@ app.post(
         );
       }
 
+      usage = finalizeOpenAIUsage(
+        usage,
+        {
+          errorCount: decision ? 0 : 1
+        }
+      );
+
       if (!decision) {
+        await recordSynchronizedUsage(
+          request,
+          {
+            operation: "chunk_split",
+            model: openAIChunkModel,
+            usage
+          }
+        );
+
         return response
           .status(422)
           .json({
@@ -2823,6 +2883,20 @@ app.post(
     usage
   });
     } catch (error) {
+      if (error?.openAIUsage) {
+        await recordSynchronizedUsage(
+          request,
+          {
+            operation: "chunk_split",
+            model: openAIChunkModel,
+            usage: finalizeOpenAIUsage(
+              error.openAIUsage,
+              { errorCount: 1 }
+            )
+          }
+        );
+      }
+
       console.error(
         "PauseSpeak chunk hatası:",
         {
