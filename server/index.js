@@ -973,10 +973,92 @@ async function generateSmartChunkDecision(
   {
     model = openAIModel,
     improve = false,
+    improvementType = "segmentation",
     correctionNotes = [],
     previousParts = []
   } = {}
 ) {
+  const improvesTranslationsOnly =
+    improve &&
+    improvementType === "translation";
+
+  if (improvesTranslationsOnly) {
+    const openAIResponse =
+      await openAI.responses.create({
+        model,
+        reasoning: {
+          effort: "none"
+        },
+        instructions: [
+          "Sen profesyonel bir İngilizce-Türkçe altyazı çevirmenisin.",
+          "Kullanıcı yalnızca mevcut parçaların Türkçe çevirilerini iyileştirmek istiyor.",
+          "Parça sayısını, sırasını, english alanlarını ve parça sınırlarını kesinlikle değiştirme.",
+          "Her turkish alanını yalnızca kendi english parçasının bütün cümle bağlamındaki doğal, akıcı ve güncel Türkçe karşılığıyla yeniden yaz.",
+          "Anlam ekleme, çıkarma, açıklama, başlık, alternatif veya Markdown ekleme.",
+          "suitable değeri parça sayısı birden fazlaysa true, tek parçaysa false olmalıdır.",
+          "Yalnızca geçerli JSON nesnesi döndür."
+        ].join(" "),
+        input: [
+          `Cümle: ${sentence}`,
+          `Aynen korunacak parçalar: ${JSON.stringify(
+            previousParts
+          )}`,
+          "Yalnızca turkish alanlarını iyileştir."
+        ].join("\n"),
+        text: {
+          format: {
+            type: "json_schema",
+            name:
+              "chunk_translation_improvement",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                suitable: {
+                  type: "boolean"
+                },
+                parts: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      english: {
+                        type: "string"
+                      },
+                      turkish: {
+                        type: "string"
+                      }
+                    },
+                    required: [
+                      "english",
+                      "turkish"
+                    ],
+                    additionalProperties:
+                      false
+                  }
+                }
+              },
+              required: [
+                "suitable",
+                "parts"
+              ],
+              additionalProperties: false
+            }
+          }
+        },
+        max_output_tokens: 1200
+      });
+    const parsed = parseOpenAIResponse(
+      openAIResponse,
+      parseChunkDecision
+    );
+
+    return {
+      decision: parsed.value,
+      usage: parsed.usage
+    };
+  }
+
   const openAIResponse =
     await openAI.responses.create({
       model,
@@ -992,12 +1074,14 @@ reasoning: {
         "bunları doğal Türkçeye çeviren",
         "bir uzmansın.",
 
-        improve
-          ? "Kullanıcı önceki parçalamayı yetersiz buldu. Parça sınırlarını ve Türkçe karşılıkları daha dikkatli yeniden değerlendir."
-          : "",
+        improvesTranslationsOnly
+          ? "Kullanıcı yalnızca Türkçe çevirileri iyileştirmeyi istedi. Önceki parçaların sayısını, sırasını ve english alanlarını kesinlikle değiştirme; yalnızca turkish alanlarını yeniden yaz."
+          : improve
+            ? "Kullanıcı yalnızca parça sınırlarını iyileştirmeyi açıkça istedi. En doğal konuşma sınırlarını yeniden değerlendir. Yeni parçalara ekranda gösterilmesi için gerekli, sadık Türkçe karşılıkları ver; ayrıca çeviri iyileştirmesi yapma."
+            : "",
 
         correctionNotes.length > 0
-          ? "Önceki yanıt sunucu doğrulamasından geçmedi. Aşağıdaki ihlalleri düzelterek yeni ve eksiksiz bir sonuç üret."
+          ? "Önceki cevap sunucu doğrulamasından geçmedi. Bildirilen ihlalleri düzelt ve eksiksiz yeni bir sonuç üret."
           : "",
 
         "Önce verilen cümlenin doğal",
@@ -1263,6 +1347,10 @@ reasoning: {
         "cümle bağlamındaki doğal Türkçe",
         "karşılığını ver.",
 
+        improvesTranslationsOnly
+          ? "Önceki parçaları birebir koru. suitable değeri önceki parça sayısı birden fazlaysa true, tek parçaysa false olmalıdır."
+          : "",
+
         "Türkçe çeviriler doğal, akıcı ve",
         "film altyazısına uygun olsun.",
 
@@ -1282,6 +1370,14 @@ reasoning: {
 
   input: [
     `Cümle: ${sentence}`,
+
+    ...(improve
+      ? [
+          improvesTranslationsOnly
+            ? "İyileştirme türü: yalnızca Türkçe çeviriler"
+            : "İyileştirme türü: parça sınırları ve bunlara bağlı çeviriler"
+        ]
+      : []),
 
     ...(previousParts.length > 0
       ? [
@@ -1776,6 +1872,44 @@ function getChunkBoundaryWord(
     : words[0] || "";
 }
 
+function isNaturalSingleWordChunk(text) {
+  const cleanedText = cleanText(text);
+  const words = getChunkWordTokens(
+    cleanedText
+  );
+
+  if (words.length !== 1) {
+    return false;
+  }
+
+  if (/[?!…]["'’”\)\]]*$/.test(cleanedText)) {
+    return true;
+  }
+
+  const discourseWords = new Set([
+    "actually",
+    "anyway",
+    "however",
+    "instead",
+    "meanwhile",
+    "no",
+    "okay",
+    "otherwise",
+    "please",
+    "sorry",
+    "therefore",
+    "well",
+    "yes"
+  ]);
+  const normalizedWord =
+    words[0].toLowerCase();
+
+  return (
+    discourseWords.has(normalizedWord) &&
+    /[,;:]["'’”\)\]]*$/.test(cleanedText)
+  );
+}
+
 function getChunkDecisionValidationErrors(
   originalSentence,
   decision
@@ -1799,7 +1933,7 @@ function getChunkDecisionValidationErrors(
     )
   ) {
     return [
-      "1-8 parça bulunmalı ve her İngilizce/Türkçe alan dolu olmalı"
+      "parts 1-8 öğe içermeli ve her english/turkish alanı dolu olmalı"
     ];
   }
 
@@ -1817,7 +1951,7 @@ function getChunkDecisionValidationErrors(
     decision.parts.length !== 1
   ) {
     errors.push(
-      "suitable false için cümlenin tamamı tek parça olmalı"
+      "suitable false için özgün cümle tek parça olmalı"
     );
   }
 
@@ -1842,17 +1976,22 @@ function getChunkDecisionValidationErrors(
   }
 
   if (decision.suitable) {
-    const hasSingleWordPart =
-      decision.parts.some(
+    const unnecessarySingleWord =
+      decision.parts.find(
         (part) =>
           getChunkWordTokens(
             part.english
-          ).length < 2
+          ).length === 1 &&
+          !isNaturalSingleWordChunk(
+            part.english
+          )
       );
 
-    if (hasSingleWordPart) {
+    if (unnecessarySingleWord) {
       errors.push(
-        "gereksiz tek kelimelik parça oluşturuldu"
+        `gereksiz tek kelimelik parça: ${cleanText(
+          unnecessarySingleWord.english
+        )}`
       );
     }
 
@@ -1864,20 +2003,22 @@ function getChunkDecisionValidationErrors(
       "supposed", "try", "used", "want"
     ]);
     const protectedPairs = new Set([
-      "break down", "break up", "bring up",
-      "carry on", "come back", "come on",
-      "end up", "figure out", "find out",
-      "get away", "get back", "get over",
-      "get up", "give in", "give up",
-      "go back", "go on", "go out",
-      "hold on", "keep on", "look after",
+      "because of", "break down", "break up",
+      "bring up", "carry on", "come back",
+      "come on", "end up", "figure out",
+      "find out", "get away", "get back",
+      "get over", "get up", "give in",
+      "give up", "go back", "go on",
+      "go out", "hold on", "in order",
+      "keep on", "kind of", "look after",
       "look at", "look for", "make up",
-      "pick out", "pick up", "put off",
-      "put on", "put up", "run away",
-      "run out", "set up", "show up",
-      "take care", "take off", "take over",
-      "turn down", "turn off", "turn on",
-      "turn up", "work out"
+      "out of", "pick out", "pick up",
+      "put off", "put on", "put up",
+      "run away", "run out", "set up",
+      "show up", "sort of", "take care",
+      "take off", "take over", "turn down",
+      "turn off", "turn on", "turn up",
+      "work out"
     ]);
 
     for (
@@ -1896,15 +2037,25 @@ function getChunkDecisionValidationErrors(
         );
       const boundaryPair =
         `${previousWord} ${nextWord}`;
+      const previousChunkEndsThought =
+        /[.!?…]["'’”\)\]]*$/.test(
+          cleanText(
+            decision.parts[index].english
+          )
+        );
+      const splitsNegation =
+        previousWord === "not" ||
+        (
+          nextWord === "not" &&
+          !previousChunkEndsThought
+        );
+      const splitsProtectedTo =
+        nextWord === "to" &&
+        protectedBeforeTo.has(previousWord);
 
       if (
-        previousWord === "not" ||
-        nextWord === "not" ||
-        previousWord === "to" ||
-        (
-          nextWord === "to" &&
-          protectedBeforeTo.has(previousWord)
-        ) ||
+        splitsNegation ||
+        splitsProtectedTo ||
         protectedPairs.has(boundaryPair)
       ) {
         errors.push(
@@ -1925,6 +2076,186 @@ function validateChunkDecision(
     originalSentence,
     decision
   ).length === 0;
+}
+
+function getChunkTranslationValidationErrors(
+  originalSentence,
+  decision,
+  expectedEnglishParts
+) {
+  if (
+    !decision ||
+    typeof decision.suitable !==
+      "boolean" ||
+    !Array.isArray(decision.parts) ||
+    decision.parts.length !==
+      expectedEnglishParts.length ||
+    decision.parts.some(
+      (part) =>
+        !part ||
+        typeof part.english !== "string" ||
+        typeof part.turkish !== "string" ||
+        !cleanText(part.english) ||
+        !cleanText(part.turkish)
+    )
+  ) {
+    return [
+      "çeviri iyileştirmesi bütün mevcut parçaları ve dolu çevirileri içermeli"
+    ];
+  }
+
+  const errors = [];
+  const expectedSuitable =
+    expectedEnglishParts.length > 1;
+
+  if (
+    decision.suitable !==
+    expectedSuitable
+  ) {
+    errors.push(
+      "suitable değeri mevcut parça sayısıyla uyumlu değil"
+    );
+  }
+
+  if (
+    !validateChunks(
+      originalSentence,
+      decision.parts.map(
+        (part) => part.english
+      )
+    )
+  ) {
+    errors.push(
+      "İngilizce parçalar özgün cümleyi oluşturmuyor"
+    );
+  }
+
+  const preservesEnglishParts =
+    expectedEnglishParts.every(
+      (part, index) =>
+        cleanText(part) ===
+        cleanText(
+          decision.parts[index].english
+        )
+    );
+
+  if (!preservesEnglishParts) {
+    errors.push(
+      "yalnızca çeviri iyileştirmesinde İngilizce parça sınırları değiştirilemez"
+    );
+  }
+
+  return errors;
+}
+
+async function generateValidatedChunkDecision(
+  openAI,
+  sentence,
+  {
+    model = openAIModel,
+    improve = false,
+    improvementType = "segmentation",
+    previousParts = []
+  } = {}
+) {
+  const maximumAttempts = improve
+    ? 1
+    : 2;
+  let decision = null;
+  let validationErrors = [];
+  let correctionParts =
+    previousParts;
+  let usage = emptyOpenAIUsage();
+
+  for (
+    let attempt = 1;
+    attempt <= maximumAttempts;
+    attempt += 1
+  ) {
+    try {
+      const generated =
+        await generateSmartChunkDecision(
+          openAI,
+          sentence,
+          {
+            model,
+            improve,
+            improvementType,
+            correctionNotes:
+              validationErrors,
+            previousParts:
+              correctionParts
+          }
+        );
+
+      usage = mergeOpenAIUsage(
+        usage,
+        generated.usage
+      );
+      validationErrors =
+        improve &&
+        improvementType === "translation"
+          ? getChunkTranslationValidationErrors(
+              sentence,
+              generated.decision,
+              previousParts.map(
+                (part) => part.english
+              )
+            )
+          : getChunkDecisionValidationErrors(
+              sentence,
+              generated.decision
+            );
+
+      if (validationErrors.length === 0) {
+        decision = generated.decision;
+        break;
+      }
+
+      correctionParts =
+        generated.decision.parts;
+
+      console.warn(
+        `PauseSpeak chunk kararı ${attempt}. denemede doğrulanamadı.`,
+        {
+          validationErrors
+        }
+      );
+    } catch (error) {
+      usage = mergeOpenAIUsage(
+        usage,
+        error?.openAIUsage
+      );
+
+      if (error?.status) {
+        error.openAIUsage = usage;
+        throw error;
+      }
+
+      validationErrors = [
+        "cevap geçerli yapılandırılmış JSON değil"
+      ];
+      correctionParts = [];
+
+      console.warn(
+        `PauseSpeak chunk kararı ${attempt}. denemede ayrıştırılamadı.`,
+        {
+          validationErrors
+        }
+      );
+    }
+  }
+
+  return {
+    decision,
+    validationErrors,
+    usage: finalizeOpenAIUsage(
+      usage,
+      {
+        errorCount: decision ? 0 : 1
+      }
+    )
+  };
 }
 app.get(
   "/health",
@@ -2337,6 +2668,23 @@ return response.json({
   usage
 });
     } catch (error) {
+      await recordSynchronizedUsage(
+        request,
+        {
+          operation:
+            getTranslationUsageOperation(
+              translationMode,
+              improve
+            ),
+          model: selectedModel,
+          usage: finalizeOpenAIUsage(
+            error?.openAIUsage ||
+              emptyOpenAIUsage(),
+            { errorCount: 1 }
+          )
+        }
+      );
+
       console.error(
         "PauseSpeak çeviri hatası:",
         {
@@ -2976,7 +3324,13 @@ app.post(
       request.body?.text;
     const improve =
       request.body?.improve === true;
-    const requestedPreviousParts =
+    const improvementType =
+      improve &&
+      request.body?.improvementType ===
+        "translation"
+        ? "translation"
+        : "segmentation";
+    const currentParts =
       Array.isArray(
         request.body?.currentParts
       )
@@ -2998,9 +3352,10 @@ app.post(
       ? openAITerraModel
       : openAIModel;
     const usageOperation = improve
-      ? "improve_chunk"
+      ? improvementType === "translation"
+        ? "improve_translation"
+        : "improve_chunk"
       : "chunk_translation";
-    let usage = emptyOpenAIUsage();
 
     if (
       typeof text !== "string" ||
@@ -3034,98 +3389,46 @@ app.post(
         });
     }
 
+    if (
+      improve &&
+      improvementType === "translation" &&
+      (
+        currentParts.length === 0 ||
+        !validateChunks(
+          cleanedText,
+          currentParts.map(
+            (part) => part.english
+          )
+        )
+      )
+    ) {
+      return response
+        .status(400)
+        .json({
+          success: false,
+          error:
+            "Çeviri iyileştirmesi için geçerli mevcut parçalar gönderilmedi."
+        });
+    }
+
     try {
       const openAI =
         await getOpenAIClient();
-
-      let decision = null;
-      let correctionNotes = [];
-      let previousParts =
-        requestedPreviousParts;
-      const maximumAttempts = improve
-        ? 1
-        : 2;
-
-      for (
-        let attempt = 1;
-        attempt <= maximumAttempts;
-        attempt += 1
-      ) {
-        try {
-          const generatedDecision =
-            await generateSmartChunkDecision(
-              openAI,
-              cleanedText,
-              {
-                model: selectedModel,
-                improve,
-                correctionNotes,
-                previousParts
-              }
-            );
-
-          usage = mergeOpenAIUsage(
-            usage,
-            generatedDecision.usage
-          );
-
-          const candidateDecision =
-            generatedDecision.decision;
-          const validationErrors =
-            getChunkDecisionValidationErrors(
-              cleanedText,
-              candidateDecision
-            );
-
-          if (validationErrors.length === 0) {
-            decision = candidateDecision;
-
-            break;
+      const generated =
+        await generateValidatedChunkDecision(
+          openAI,
+          cleanedText,
+          {
+            model: selectedModel,
+            improve,
+            improvementType,
+            previousParts:
+              currentParts
           }
-
-          correctionNotes = validationErrors;
-          previousParts =
-            candidateDecision.parts;
-
-          console.warn(
-            `PauseSpeak chunk kararı ` +
-              `${attempt}. denemede ` +
-              "doğrulanamadı.",
-            {
-              errors: validationErrors,
-              candidate: candidateDecision
-            }
-          );
-        } catch (error) {
-          usage = mergeOpenAIUsage(
-            usage,
-            error?.openAIUsage
-          );
-
-          if (error?.status) {
-            throw error;
-          }
-
-          correctionNotes = [
-            "yanıt geçerli yapılandırılmış JSON biçiminde değil"
-          ];
-          previousParts = [];
-
-          console.warn(
-            `PauseSpeak chunk kararı ` +
-              `${attempt}. denemede ` +
-              "geçersiz cevap verdi.",
-            error?.message
-          );
-        }
-      }
-
-      usage = finalizeOpenAIUsage(
-        usage,
-        {
-          errorCount: decision ? 0 : 1
-        }
-      );
+        );
+      const decision =
+        generated.decision;
+      const usage = generated.usage;
 
       if (!decision) {
         await recordSynchronizedUsage(
@@ -3144,8 +3447,8 @@ app.post(
 
             error:
               improve
-                ? "Terra güvenli bir iyileştirilmiş parçalama üretemedi."
-                : "Luna güvenli bir parçalama üretemedi; yerel tek parça kullanılacak."
+                ? "İyileştirme sonucu güvenli doğrulamadan geçmedi."
+                : "Luna sonucu iki denemede de güvenli doğrulamadan geçmedi."
           });
       }
 
@@ -3159,48 +3462,47 @@ app.post(
       );
 
       return response.json({
-    success: true,
+        success: true,
 
-    suitable:
-      decision.suitable,
+        suitable:
+          decision.suitable,
 
-    chunks:
-      decision.parts.map(
-        (part) => part.english
-      ),
+        chunks:
+          decision.parts.map(
+            (part) => part.english
+          ),
 
-    translations:
-      decision.parts.map(
-        (part) => part.turkish
-      ),
+        translations:
+          decision.parts.map(
+            (part) => part.turkish
+          ),
 
-    provider: "openai",
+        provider: "openai",
 
-    model: selectedModel,
+        model: selectedModel,
 
-    improved: improve,
+        improved: improve,
 
-    usage
-  });
+        improvementType:
+          improve
+            ? improvementType
+            : null,
+
+        usage
+      });
     } catch (error) {
-      usage = mergeOpenAIUsage(
-        usage,
-        error?.openAIUsage
+      await recordSynchronizedUsage(
+        request,
+        {
+          operation: usageOperation,
+          model: selectedModel,
+          usage: finalizeOpenAIUsage(
+            error?.openAIUsage ||
+              emptyOpenAIUsage(),
+            { errorCount: 1 }
+          )
+        }
       );
-
-      if (usage.requests > 0) {
-        await recordSynchronizedUsage(
-          request,
-          {
-            operation: usageOperation,
-            model: selectedModel,
-            usage: finalizeOpenAIUsage(
-              usage,
-              { errorCount: 1 }
-            )
-          }
-        );
-      }
 
       console.error(
         "PauseSpeak chunk hatası:",
@@ -3222,7 +3524,10 @@ app.post(
             getOpenAIErrorMessage(
               error,
               improve
-                ? "Parçalama iyileştirme"
+                ? improvementType ===
+                    "translation"
+                  ? "Parça çevirilerini iyileştirme"
+                  : "Parçalama iyileştirme"
                 : "Parçalama"
             )
         });

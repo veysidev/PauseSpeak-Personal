@@ -269,11 +269,11 @@
 }
 
 #pausespeak-improve-button {
-  position: absolute !important;
-  right: 17px !important;
-  bottom: 15px !important;
+  position: static !important;
+  right: auto !important;
+  bottom: auto !important;
   top: auto !important;
-  z-index: 4 !important;
+  z-index: auto !important;
   width: 42px !important;
   min-width: 42px !important;
   height: 42px !important;
@@ -3008,11 +3008,11 @@
 }
 
 #pausespeak-pronunciation-coach-button {
-  position: absolute !important;
-  right: 66px !important;
-  bottom: 13px !important;
+  position: static !important;
+  right: auto !important;
+  bottom: auto !important;
   top: auto !important;
-  z-index: 4 !important;
+  z-index: auto !important;
   width: 42px !important;
   min-width: 42px !important;
   height: 38px !important;
@@ -3419,8 +3419,8 @@
   }
 
   #pausespeak-pronunciation-coach-button {
-    right: 62px !important;
-    bottom: 11px !important;
+    right: auto !important;
+    bottom: auto !important;
     width: 38px !important;
     min-width: 38px !important;
     height: 36px !important;
@@ -3914,6 +3914,175 @@ button.ps-coach-word:focus-visible,
   -webkit-user-select: none !important;
 }
 
+/* Improvement and microphone actions stay in document flow so long subtitle
+   lines can never render underneath any control. */
+#pausespeak-status-panel .ps-subtitle-actions {
+  position: static !important;
+  inset: auto !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 40px !important;
+  margin: 14px 0 0 !important;
+  padding: 0 !important;
+  display: flex !important;
+  flex-flow: row wrap !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 8px !important;
+  box-sizing: border-box !important;
+}
+
+#pausespeak-status-panel #pausespeak-subtitle-english,
+#pausespeak-status-panel #pausespeak-subtitle-turkish {
+  width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+  padding-right: clamp(8px, 1.8vw, 22px) !important;
+  padding-left: clamp(8px, 1.8vw, 22px) !important;
+}
+
+#pausespeak-status-panel .ps-subtitle-actions
+  .ps-terra-action,
+#pausespeak-status-panel .ps-subtitle-actions
+  #pausespeak-pronunciation-coach-button {
+  position: static !important;
+  inset: auto !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  z-index: auto !important;
+  margin: 0 !important;
+  transform: none !important;
+  flex: 0 1 auto !important;
+}
+
+#pausespeak-status-panel .ps-subtitle-actions
+  .ps-terra-action {
+  appearance: none !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: auto !important;
+  min-width: 148px !important;
+  max-width: 100% !important;
+  height: 40px !important;
+  min-height: 40px !important;
+  padding: 0 12px !important;
+  gap: 7px !important;
+  font-size: 13px !important;
+  font-weight: 650 !important;
+  line-height: 1 !important;
+  color: var(--ps-blue-strong) !important;
+  background: rgba(38, 56, 64, calc(var(--ps-ui-opacity) * 0.9)) !important;
+  border: 1px solid rgba(88, 199, 229, 0.34) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 6px 18px rgba(3, 11, 15, 0.28) !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+}
+
+#pausespeak-status-panel .ps-subtitle-actions
+  .ps-terra-action span {
+  display: inline-block !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#pausespeak-status-panel .ps-subtitle-actions
+  .ps-terra-action svg {
+  width: 22px !important;
+  min-width: 22px !important;
+  height: 22px !important;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 1.7 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+#pausespeak-status-panel .ps-subtitle-actions
+  .ps-terra-action:disabled {
+  cursor: default !important;
+  opacity: 0.42 !important;
+}
+
+#pausespeak-status-panel .ps-subtitle-actions
+  .ps-terra-action:not(:disabled):hover,
+#pausespeak-status-panel .ps-subtitle-actions
+  .ps-terra-action:not(:disabled):focus-visible {
+  color: #f7fdff !important;
+  background: #237e99 !important;
+  border-color: #58c7e5 !important;
+  outline: none !important;
+}
+
+#pausespeak-status-panel .ps-subtitle-actions
+  .ps-terra-action.ps-loading svg {
+  animation: ps-wave-breathe 800ms ease-in-out infinite alternate;
+}
+
+#pausespeak-status-panel .ps-subtitle-actions
+  .ps-terra-action.ps-action-hidden {
+  display: none !important;
+}
+
+#pausespeak-status-panel .ps-subtitle-actions
+  #pausespeak-pronunciation-coach-button {
+  width: 42px !important;
+  min-width: 42px !important;
+  height: 40px !important;
+  min-height: 40px !important;
+}
+
+#pausespeak-controls-panel.ps-controls-hidden
+  .ps-subtitle-actions {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+#pausespeak-controls-panel.ps-controls-hidden
+  #pausespeak-status-panel,
+#pausespeak-controls-panel.ps-controls-hidden
+  #pausespeak-status-panel.ps-panel-shifted,
+#pausespeak-controls-panel.ps-player-shell-collapsed
+  #pausespeak-status-panel,
+#pausespeak-controls-panel.ps-player-shell-collapsed
+  #pausespeak-status-panel.ps-panel-shifted {
+  bottom: calc(
+    env(safe-area-inset-bottom, 0px) +
+      clamp(16px, 2.8vh, 40px)
+  ) !important;
+}
+
+@media (max-width: 900px) {
+  #pausespeak-status-panel .ps-subtitle-actions {
+    min-height: 36px !important;
+    margin-top: 10px !important;
+    gap: 8px !important;
+    flex-wrap: wrap !important;
+  }
+
+  #pausespeak-status-panel .ps-subtitle-actions
+    .ps-terra-action {
+    min-width: 136px !important;
+    height: 36px !important;
+    min-height: 36px !important;
+    padding: 0 9px !important;
+    font-size: 12px !important;
+  }
+
+  #pausespeak-status-panel .ps-subtitle-actions
+    #pausespeak-pronunciation-coach-button {
+    width: 38px !important;
+    min-width: 38px !important;
+    height: 36px !important;
+    min-height: 36px !important;
+  }
+}
+
 #pausespeak-privacy-curtain.ps-open {
   display: block !important;
   pointer-events: auto !important;
@@ -3954,72 +4123,5 @@ button.ps-coach-word:focus-visible,
 
   .ps-coach-chunk-card-words {
     font-size: clamp(17px, 5.2vw, 23px);
-  }
-}
-
-/* User-controlled Terra chunk improvement -------------------------- */
-#pausespeak-improve-chunking-button {
-  position: absolute !important;
-  right: 66px !important;
-  bottom: 13px !important;
-  top: auto !important;
-  z-index: 4 !important;
-  min-width: 86px !important;
-  height: 38px !important;
-  min-height: 38px !important;
-  margin: 0 !important;
-  padding: 0 10px !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 6px !important;
-  color: var(--ps-blue-strong) !important;
-  background-color: rgba(29, 42, 48, var(--ps-ui-opacity)) !important;
-  border: 1px solid rgba(88, 199, 229, 0.34) !important;
-  border-radius: 12px !important;
-  box-shadow: 0 6px 18px rgba(3, 11, 15, 0.28) !important;
-  cursor: pointer;
-  font-size: 11px !important;
-  font-weight: 700 !important;
-  line-height: 1 !important;
-  white-space: nowrap;
-}
-
-#pausespeak-improve-chunking-button svg {
-  width: 20px;
-  height: 20px;
-  flex: 0 0 auto;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-#pausespeak-improve-chunking-button:not(:disabled):hover,
-#pausespeak-improve-chunking-button:not(:disabled):focus-visible {
-  color: #f7fdff !important;
-  background-color: rgba(35, 126, 153, var(--ps-ui-opacity)) !important;
-  border-color: #58c7e5 !important;
-  outline: none;
-}
-
-#pausespeak-improve-chunking-button:disabled {
-  cursor: default;
-  opacity: 0.42;
-}
-
-#pausespeak-improve-chunking-button.ps-loading svg {
-  animation: ps-wave-breathe 800ms ease-in-out infinite alternate;
-}
-
-#pausespeak-controls-panel.ps-controls-hidden
-  #pausespeak-improve-chunking-button {
-  opacity: 0 !important;
-  pointer-events: none !important;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  #pausespeak-improve-chunking-button.ps-loading svg {
-    animation: none;
   }
 }

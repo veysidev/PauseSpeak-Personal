@@ -17,7 +17,7 @@ const usageStore = read("server/usage-store.js");
 const manifest = JSON.parse(read("manifest.json"));
 
 test("manifest uses the Netflix and YouTube release version", () => {
-  assert.equal(manifest.version, "1.1.15");
+  assert.equal(manifest.version, "1.1.20");
 });
 
 test("normal mode completes a subtitle without calling the chunk API", () => {
@@ -162,10 +162,8 @@ test("chunk endpoint uses one Luna structured response for English and Turkish p
 
   assert.ok(generator, "combined chunk generator was not found");
   assert.ok(route, "chunk endpoint was not found");
-  assert.match(
-    generator[0],
-    /model\s*=\s*openAIModel[\s\S]*?responses\.create\(\{[\s\S]*?model,/s
-  );
+  assert.match(generator[0], /model\s*=\s*openAIModel/);
+  assert.match(generator[0], /responses\.create\(\{[\s\S]*?model,/s);
   assert.match(generator[0], /effort:\s*"none"/);
   assert.match(generator[0], /parts:[\s\S]*?english:[\s\S]*?turkish:/s);
   assert.doesNotMatch(generator[0], /openAIChunkModel|effort:\s*"medium"/);
@@ -175,11 +173,23 @@ test("chunk endpoint uses one Luna structured response for English and Turkish p
   );
   assert.match(
     route[0],
-    /const selectedModel\s*=\s*improve\s*\?\s*openAITerraModel\s*:\s*openAIModel/s
+    /selectedModel\s*=\s*improve\s*\?\s*openAITerraModel\s*:\s*openAIModel/s
+  );
+  assert.match(
+    server,
+    /maximumAttempts\s*=\s*improve\s*\?\s*1\s*:\s*2/s
   );
   assert.match(
     route[0],
-    /const maximumAttempts\s*=\s*improve\s*\?\s*1\s*:\s*2/s
+    /improvementType === "translation"[\s\S]*?"improve_translation"[\s\S]*?"improve_chunk"/s
+  );
+  assert.match(
+    generator[0],
+    /yalnızca mevcut parçaların Türkçe çevirilerini iyileştirmek[\s\S]*?parça sınırlarını kesinlikle değiştirme/s
+  );
+  assert.match(
+    generator[0],
+    /yalnızca parça sınırlarını iyileştirmeyi[\s\S]*?ayrıca çeviri iyileştirmesi yapma/s
   );
 });
 
@@ -191,7 +201,7 @@ test("combined chunk decisions preserve the full sentence and every translation"
     /function normalizeForChunkValidation\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction parseChunkArray)/
   );
   const validator = server.match(
-    /function getChunkWordTokens\([\s\S]*?\r?\n}\r?\n(?=app\.get)/
+    /function getChunkWordTokens\([\s\S]*?\r?\n}\r?\n(?=\r?\nasync function generateValidatedChunkDecision)/
   );
 
   assert.ok(parser, "chunk decision parser was not found");
@@ -207,11 +217,21 @@ test("combined chunk decisions preserve the full sentence and every translation"
       String(value || "")
         .replace(/\s+/g, " ")
         .trim(),
+    validateChunks: (sentence, chunks) =>
+      chunks.join(" ") === sentence,
     valid: null,
     single: null,
     invalid: null,
-    splitPhrasalVerb: null,
-    singleWordPart: null
+    missing: null,
+    added: null,
+    repeated: null,
+    negation: null,
+    phrasalVerb: null,
+    naturalSingles: null,
+    unnecessarySingle: null,
+    preservedTranslationParts: null,
+    changedTranslationParts: null,
+    malformedJsonRejected: false
   };
 
   vm.runInNewContext(
@@ -219,16 +239,389 @@ test("combined chunk decisions preserve the full sentence and every translation"
       `valid = validateChunkDecision("I am ready, but I need time.", parseChunkDecision(${JSON.stringify(JSON.stringify({ suitable: true, parts: [{ english: "I am ready,", turkish: "Hazırım," }, { english: "but I need time.", turkish: "ama zamana ihtiyacım var." }] }))}));\n` +
       `single = validateChunkDecision("Give it up.", parseChunkDecision(${JSON.stringify(JSON.stringify({ suitable: false, parts: [{ english: "Give it up.", turkish: "Vazgeç." }] }))}));\n` +
       `invalid = validateChunkDecision("Give it up.", parseChunkDecision(${JSON.stringify(JSON.stringify({ suitable: false, parts: [{ english: "Give it up.", turkish: "" }] }))}));\n` +
-      `splitPhrasalVerb = validateChunkDecision("Please give up this fight.", parseChunkDecision(${JSON.stringify(JSON.stringify({ suitable: true, parts: [{ english: "Please give", turkish: "Lütfen" }, { english: "up this fight.", turkish: "bu kavgadan vazgeç." }] }))}));\n` +
-      `singleWordPart = validateChunkDecision("However, I need more time.", parseChunkDecision(${JSON.stringify(JSON.stringify({ suitable: true, parts: [{ english: "However,", turkish: "Ancak," }, { english: "I need more time.", turkish: "Daha fazla zamana ihtiyacım var." }] }))}));`,
+      `missing = validateChunkDecision("I am ready, but I need time.", ${JSON.stringify({ suitable: true, parts: [{ english: "I am ready,", turkish: "Hazırım," }, { english: "but need time.", turkish: "ama zamana ihtiyacım var." }] })});\n` +
+      `added = validateChunkDecision("I am ready, but I need time.", ${JSON.stringify({ suitable: true, parts: [{ english: "I am really ready,", turkish: "Gerçekten hazırım," }, { english: "but I need time.", turkish: "ama zamana ihtiyacım var." }] })});\n` +
+      `repeated = validateChunkDecision("I am ready, but I need time.", ${JSON.stringify({ suitable: true, parts: [{ english: "I am ready,", turkish: "Hazırım," }, { english: "ready, but I need time.", turkish: "ama zamana ihtiyacım var." }] })});\n` +
+      `negation = validateChunkDecision("I do not know.", ${JSON.stringify({ suitable: true, parts: [{ english: "I do", turkish: "Ben" }, { english: "not know.", turkish: "bilmiyorum." }] })});\n` +
+      `phrasalVerb = validateChunkDecision("Please give up now.", ${JSON.stringify({ suitable: true, parts: [{ english: "Please give", turkish: "Lütfen" }, { english: "up now.", turkish: "şimdi vazgeç." }] })});\n` +
+      `naturalSingles = validateChunkDecision("Why? Stop!", ${JSON.stringify({ suitable: true, parts: [{ english: "Why?", turkish: "Neden?" }, { english: "Stop!", turkish: "Dur!" }] })});\n` +
+      `unnecessarySingle = validateChunkDecision("Today we leave.", ${JSON.stringify({ suitable: true, parts: [{ english: "Today", turkish: "Bugün" }, { english: "we leave.", turkish: "gidiyoruz." }] })});\n` +
+      `preservedTranslationParts = getChunkTranslationValidationErrors("I am ready, but I need time.", ${JSON.stringify({ suitable: true, parts: [{ english: "I am ready,", turkish: "Ben hazırım," }, { english: "but I need time.", turkish: "ancak zamana ihtiyacım var." }] })}, ["I am ready,", "but I need time."]).length === 0;\n` +
+      `changedTranslationParts = getChunkTranslationValidationErrors("I am ready, but I need time.", ${JSON.stringify({ suitable: true, parts: [{ english: "I am ready, but", turkish: "Hazırım ama" }, { english: "I need time.", turkish: "zamana ihtiyacım var." }] })}, ["I am ready,", "but I need time."]).length > 0;\n` +
+      `try { parseChunkDecision("{broken json"); } catch (error) { malformedJsonRejected = true; }`,
     sandbox
   );
 
   assert.equal(sandbox.valid, true);
   assert.equal(sandbox.single, true);
   assert.equal(sandbox.invalid, false);
-  assert.equal(sandbox.splitPhrasalVerb, false);
-  assert.equal(sandbox.singleWordPart, false);
+  assert.equal(sandbox.missing, false);
+  assert.equal(sandbox.added, false);
+  assert.equal(sandbox.repeated, false);
+  assert.equal(sandbox.negation, false);
+  assert.equal(sandbox.phrasalVerb, false);
+  assert.equal(sandbox.naturalSingles, true);
+  assert.equal(sandbox.unnecessarySingle, false);
+  assert.equal(
+    sandbox.preservedTranslationParts,
+    true
+  );
+  assert.equal(
+    sandbox.changedTranslationParts,
+    true
+  );
+  assert.equal(sandbox.malformedJsonRejected, true);
+});
+
+test("Luna chunk validation retries once and never falls through to the improvement model", async () => {
+  const helper = server.match(
+    /async function generateValidatedChunkDecision\([\s\S]*?\r?\n}\r?\n(?=app\.get)/
+  );
+
+  assert.ok(helper, "validated chunk flow was not found");
+
+  const sandbox = {
+    openAIModel: "gpt-5.6-luna",
+    calls: [],
+    queue: [],
+    emptyOpenAIUsage: () => ({ requests: 0 }),
+    mergeOpenAIUsage: (total, usage) => ({
+      requests:
+        Number(total?.requests || 0) +
+        Number(usage?.requests || 0)
+    }),
+    finalizeOpenAIUsage: (usage, extra) => ({
+      ...usage,
+      retryCount: Math.max(
+        0,
+        Number(usage?.requests || 0) - 1
+      ),
+      errorCount: extra?.errorCount || 0
+    }),
+    getChunkDecisionValidationErrors: (sentence, decision) =>
+      decision?.valid ? [] : ["invalid parts"],
+    generateSmartChunkDecision: async (
+      openAI,
+      sentence,
+      options
+    ) => {
+      sandbox.calls.push({
+        model: options.model,
+        correctionNotes: [
+          ...options.correctionNotes
+        ]
+      });
+      return {
+        decision: sandbox.queue.shift(),
+        usage: { requests: 1 }
+      };
+    },
+    console: {
+      warn() {}
+    },
+    first: null,
+    corrected: null,
+    safe: null,
+    terra: null
+  };
+
+  vm.runInNewContext(helper[0], sandbox);
+
+  sandbox.queue = [
+    { valid: true, parts: [{ english: "Ready.", turkish: "Hazır." }] }
+  ];
+  sandbox.first = await sandbox.generateValidatedChunkDecision(
+    {},
+    "Ready.",
+    { model: "gpt-5.6-luna" }
+  );
+  assert.equal(sandbox.calls.length, 1);
+  assert.equal(sandbox.first.usage.requests, 1);
+
+  sandbox.calls = [];
+  sandbox.queue = [
+    { valid: false, parts: [{ english: "Bad", turkish: "Kötü" }] },
+    { valid: true, parts: [{ english: "Ready.", turkish: "Hazır." }] }
+  ];
+  sandbox.corrected = await sandbox.generateValidatedChunkDecision(
+    {},
+    "Ready.",
+    { model: "gpt-5.6-luna" }
+  );
+  assert.equal(sandbox.calls.length, 2);
+  assert.deepEqual(
+    Array.from(sandbox.calls[1].correctionNotes),
+    ["invalid parts"]
+  );
+  assert.equal(sandbox.corrected.usage.retryCount, 1);
+
+  sandbox.calls = [];
+  sandbox.queue = [
+    { valid: false, parts: [{ english: "Bad", turkish: "Kötü" }] },
+    { valid: false, parts: [{ english: "Bad", turkish: "Kötü" }] }
+  ];
+  sandbox.safe = await sandbox.generateValidatedChunkDecision(
+    {},
+    "Ready.",
+    { model: "gpt-5.6-luna" }
+  );
+  assert.equal(sandbox.calls.length, 2);
+  assert.deepEqual(
+    sandbox.calls.map((call) => call.model),
+    ["gpt-5.6-luna", "gpt-5.6-luna"]
+  );
+  assert.equal(sandbox.safe.decision, null);
+
+  sandbox.calls = [];
+  sandbox.queue = [
+    { valid: false, parts: [{ english: "Bad", turkish: "Kötü" }] }
+  ];
+  sandbox.terra = await sandbox.generateValidatedChunkDecision(
+    {},
+    "Ready.",
+    {
+      model: "gpt-5.6-terra",
+      improve: true
+    }
+  );
+  assert.equal(sandbox.calls.length, 1);
+  assert.equal(sandbox.calls[0].model, "gpt-5.6-terra");
+  assert.equal(sandbox.terra.decision, null);
+});
+
+test("separate improvement actions update translation or segmentation with one request", async () => {
+  const helper = content.match(
+    /async function requestTerraImprovement\([\s\S]*?\r?\n}\r?\n(?=\r?\nasync function improveCurrentWithTerra)/
+  );
+
+  assert.ok(helper, "Terra request helper was not found");
+
+  const sandbox = {
+    translationApiUrl: "https://example.test/translate",
+    chunkApiUrl: "https://example.test/chunk",
+    cleanText: (value) =>
+      String(value || "").replace(/\s+/g, " ").trim(),
+    getUsageSyncHeaders: () => ({
+      "Content-Type": "application/json"
+    }),
+    validateSubtitleChunks: (sentence, chunks) =>
+      chunks.join(" ") === sentence,
+    requests: [],
+    usageOperations: [],
+    fetch: async (url, options) => {
+      sandbox.requests.push({
+        url,
+        body: JSON.parse(options.body)
+      });
+
+      return {
+        ok: true,
+        async json() {
+          if (
+            url.endsWith("/chunk") &&
+            sandbox.requests.at(-1).body
+              .improvementType ===
+                "translation"
+          ) {
+            return {
+              success: true,
+              chunks: ["I am ready,", "but I need time."],
+              translations: ["Ben hazırım,", "ancak biraz zamana ihtiyacım var."],
+              model: "gpt-5.6-terra",
+              usage: { requests: 1 }
+            };
+          }
+
+          if (url.endsWith("/chunk")) {
+            return {
+              success: true,
+              chunks: ["I am ready, but", "I need time."],
+              translations: ["Hazırım ama", "zamana ihtiyacım var."],
+              model: "gpt-5.6-terra",
+              usage: { requests: 1 }
+            };
+          }
+
+          return {
+            success: true,
+            translation: "Geliştirilmiş çeviri.",
+            model: "gpt-5.6-terra",
+            usage: { requests: 1 }
+          };
+        }
+      };
+    },
+    recordTextUsage: (operation) => {
+      sandbox.usageOperations.push(operation);
+    },
+    normalTranslation: null,
+    chunkTranslation: null,
+    segmentation: null
+  };
+
+  vm.runInNewContext(helper[0], sandbox);
+
+  sandbox.normalTranslation = await sandbox.requestTerraImprovement(
+    "translation",
+    "normal",
+    "I am ready.",
+    "",
+    [],
+    [],
+    undefined
+  );
+  assert.equal(sandbox.requests.length, 1);
+  assert.equal(
+    sandbox.requests[0].url,
+    "https://example.test/translate"
+  );
+  assert.equal(sandbox.requests[0].body.improve, true);
+  assert.equal(sandbox.usageOperations[0], "improve_translation");
+
+  sandbox.requests = [];
+  sandbox.usageOperations = [];
+  sandbox.chunkTranslation = await sandbox.requestTerraImprovement(
+    "translation",
+    "chunk",
+    "I am ready, but I need time.",
+    "",
+    ["I am ready,", "but I need time."],
+    ["Hazırım,", "ama zamana ihtiyacım var."],
+    undefined
+  );
+  assert.equal(sandbox.requests.length, 1);
+  assert.equal(
+    sandbox.requests[0].url,
+    "https://example.test/chunk"
+  );
+  assert.equal(sandbox.requests[0].body.improve, true);
+  assert.equal(
+    sandbox.requests[0].body.improvementType,
+    "translation"
+  );
+  assert.equal(sandbox.requests[0].body.currentParts.length, 2);
+  assert.equal(sandbox.usageOperations[0], "improve_translation");
+  assert.deepEqual(
+    Array.from(sandbox.chunkTranslation.chunks),
+    ["I am ready,", "but I need time."]
+  );
+
+  sandbox.requests = [];
+  sandbox.usageOperations = [];
+  sandbox.segmentation = await sandbox.requestTerraImprovement(
+    "segmentation",
+    "chunk",
+    "I am ready, but I need time.",
+    "",
+    ["I am ready,", "but I need time."],
+    ["Hazırım,", "ama zamana ihtiyacım var."],
+    undefined
+  );
+  assert.equal(sandbox.requests.length, 1);
+  assert.equal(
+    sandbox.requests[0].url,
+    "https://example.test/chunk"
+  );
+  assert.equal(
+    sandbox.requests[0].body.improvementType,
+    "segmentation"
+  );
+  assert.equal(sandbox.usageOperations[0], "improve_chunk");
+  assert.ok(
+    sandbox.requests.every(
+      (request) => !request.url.endsWith("/translate")
+    ),
+    "chunk improvement must not translate each part separately"
+  );
+});
+
+test("improvement controls are mode-aware, guarded and ignore stale results", () => {
+  const controller = content.match(
+    /async function improveCurrentWithTerra\([\s\S]*?\r?\n}\r?\n(?=\s*function normalizeSpeechText)/
+  );
+  const buttonState = content.match(
+    /function updateTerraImproveButtonState\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction cancelTerraImprovement)/
+  );
+
+  assert.ok(controller, "Terra controller was not found");
+  assert.ok(buttonState, "Terra button state helper was not found");
+  assert.match(
+    buttonState[0],
+    /AI Çeviri\+[\s\S]*?AI Parçalama\+/s
+  );
+  assert.match(controller[0], /if \(isTerraImprovePending\)\s*\{\s*return;/s);
+  assert.match(
+    controller[0],
+    /requestNumber !==\s*terraImproveRequestNumber[\s\S]*?completedBox\.textContent[\s\S]*?isChunkTranslationVisible/s
+  );
+  assert.match(
+    controller[0],
+    /catch \(error\)[\s\S]*?console\.error[\s\S]*?finally/s
+  );
+  const catchSection = controller[0].match(
+    /catch \(error\) \{[\s\S]*?\n  } finally/
+  );
+  assert.ok(catchSection);
+  assert.doesNotMatch(
+    catchSection[0],
+    /translationBox\.textContent|currentSubtitleChunkTranslations\s*=/
+  );
+  assert.equal(
+    (content.match(/\brequestTerraImprovement\(/g) || []).length,
+    2,
+    "Terra helper must only be declared and called by the click controller"
+  );
+  assert.match(
+    content,
+    /improveTranslationButton\.addEventListener\([\s\S]*?improveCurrentWithTerra\(\s*"translation"\s*\)[\s\S]*?improveSegmentationButton\.addEventListener\([\s\S]*?improveCurrentWithTerra\(\s*"segmentation"\s*\)/s
+  );
+  assert.match(
+    controller[0],
+    /action === "segmentation"[\s\S]*?mode !== "chunk"[\s\S]*?return;/s
+  );
+  assert.doesNotMatch(
+    controller[0],
+    /action === "segmentation"[\s\S]*?isChunkTranslationVisible = true/s
+  );
+  assert.match(
+    buttonState[0],
+    /action !== "segmentation" \|\|[\s\S]*?mode === "chunk"[\s\S]*?ps-action-hidden/s
+  );
+  assert.match(
+    css,
+    /\.ps-terra-action\.ps-action-hidden\s*\{[^}]*display:\s*none !important/s
+  );
+});
+
+test("both improvement actions and microphone occupy a responsive action row", () => {
+  assert.match(
+    content,
+    /panel\.replaceChildren\([\s\S]*?translationBox,\s*subtitleActionsRow/s
+  );
+  assert.match(
+    content,
+    /subtitleActionsRow\.replaceChildren\(\s*improveTranslationButton,\s*improveSegmentationButton,\s*pronunciationCoachButton\s*\)/s
+  );
+  assert.match(
+    content,
+    /improveSegmentationButton\.className\s*=\s*"ps-terra-action ps-action-hidden"/s
+  );
+  assert.match(
+    css,
+    /#pausespeak-status-panel \.ps-subtitle-actions\s*\{[^}]*position:\s*static !important[^}]*display:\s*flex !important[^}]*gap:\s*8px !important/s
+  );
+  assert.match(
+    css,
+    /\.ps-subtitle-actions[\s\S]*?\.ps-terra-action,[\s\S]*?#pausespeak-pronunciation-coach-button\s*\{[^}]*position:\s*static !important/s
+  );
+  assert.match(
+    css,
+    /@media \(max-width:\s*900px\)[\s\S]*?\.ps-subtitle-actions\s*\{[^}]*gap:\s*8px !important[^}]*flex-wrap:\s*wrap !important/s
+  );
+  assert.match(
+    css,
+    /#pausespeak-subtitle-english,[\s\S]*?#pausespeak-subtitle-turkish\s*\{[^}]*padding-right:\s*clamp\(/s
+  );
 });
 
 test("combined chunk response fills translation cache without extra translate fetches", async () => {
@@ -324,133 +717,6 @@ test("combined chunk response fills translation cache without extra translate fe
   );
 });
 
-test("Terra improves chunk boundaries only after the dedicated button request", async () => {
-  const helper = content.match(
-    /async function requestImprovedSubtitleChunks\([\s\S]*?\r?\n}\r?\n(?=\r?\nasync function improveCurrentChunking)/
-  );
-
-  assert.ok(
-    helper,
-    "Terra chunk improvement request helper was not found"
-  );
-
-  const sandbox = {
-    cleanText: (value) =>
-      String(value || "")
-        .replace(/\s+/g, " ")
-        .trim(),
-    chunkApiUrl: "https://example.test/chunk",
-    getUsageSyncHeaders: () => ({
-      "Content-Type": "application/json"
-    }),
-    requestBody: null,
-    fetch: async (url, options) => {
-      sandbox.requestBody = JSON.parse(
-        options.body
-      );
-      return {
-        ok: true,
-        async json() {
-          return {
-            success: true,
-            chunks: [
-              "I understand what you mean,",
-              "but I do not agree."
-            ],
-            translations: [
-              "Ne demek istediğini anlıyorum,",
-              "ama aynı fikirde değilim."
-            ],
-            model: "gpt-5.6-terra",
-            usage: { requests: 1 }
-          };
-        }
-      };
-    },
-    validateSubtitleChunks: () => true,
-    cacheSubtitleChunks: () => {
-      sandbox.chunkCacheWrites += 1;
-    },
-    cacheSubtitleChunkTranslations: () => {
-      sandbox.translationCacheWrites += 1;
-    },
-    recordTextUsage: (operation, model) => {
-      sandbox.usageOperation = operation;
-      sandbox.usageModel = model;
-    },
-    chunkCacheWrites: 0,
-    translationCacheWrites: 0,
-    usageOperation: "",
-    usageModel: "",
-    result: null
-  };
-
-  vm.runInNewContext(
-    `${helper[0]}\n` +
-      `result = requestImprovedSubtitleChunks("I understand what you mean, but I do not agree.", ["I understand what you mean,", "but I do not agree."], ["Seni anlıyorum,", "ama katılmıyorum."], undefined);`,
-    sandbox
-  );
-  const result = await sandbox.result;
-
-  assert.equal(sandbox.requestBody.improve, true);
-  assert.equal(
-    sandbox.requestBody.currentParts.length,
-    2
-  );
-  assert.equal(
-    sandbox.usageOperation,
-    "improve_chunk"
-  );
-  assert.equal(
-    sandbox.usageModel,
-    "gpt-5.6-terra"
-  );
-  assert.equal(sandbox.chunkCacheWrites, 1);
-  assert.equal(
-    sandbox.translationCacheWrites,
-    1
-  );
-  assert.deepEqual(
-    Array.from(result.chunks),
-    [
-      "I understand what you mean,",
-      "but I do not agree."
-    ]
-  );
-});
-
-test("the Terra chunk button is visible only in chunk mode and does not create an automatic fallback", () => {
-  const route = server.match(
-    /app\.post\(\s*"\/chunk"[\s\S]*?\r?\n\);\r?\n(?=\r?\napp\.listen)/
-  );
-
-  assert.ok(route, "chunk endpoint was not found");
-  assert.match(
-    content,
-    /improveChunkingButton\.title\s*=\s*"Parçalamayı Terra ile iyileştir"/
-  );
-  assert.match(
-    content,
-    /improveChunkingButton\.style\.display\s*=\s*isChunkTranslationVisible\s*\?\s*"inline-flex"\s*:\s*"none"/s
-  );
-  assert.match(
-    content,
-    /improveChunkingButton\.addEventListener\([\s\S]*?improveCurrentChunking\(\)/s
-  );
-  assert.match(
-    css,
-    /#pausespeak-improve-chunking-button[\s\S]*?#pausespeak-controls-panel\.ps-controls-hidden/s
-  );
-  assert.match(
-    route[0],
-    /const maximumAttempts\s*=\s*improve\s*\?\s*1\s*:\s*2/s
-  );
-  assert.doesNotMatch(
-    route[0],
-    /generateSmartChunkDecision\([\s\S]*?model:\s*openAITerraModel/s
-  );
-});
-
 test("every active OpenAI route records model and usage observability", () => {
   for (const operation of [
     "normal_translation",
@@ -483,6 +749,14 @@ test("every active OpenAI route records model and usage observability", () => {
   assert.match(
     server,
     /operation:\s*usageOperation[\s\S]*?model:\s*selectedModel[\s\S]*?usage/s
+  );
+  assert.match(
+    server,
+    /getTranslationUsageOperation\(\s*translationMode,\s*improve\s*\)[\s\S]*?model:\s*selectedModel[\s\S]*?errorCount:\s*1/s
+  );
+  assert.match(
+    server,
+    /operation:\s*usageOperation,[\s\S]*?model:\s*selectedModel,[\s\S]*?error\?\.openAIUsage[\s\S]*?errorCount:\s*1/s
   );
 });
 
@@ -1066,10 +1340,10 @@ test("local fallback creates natural chunks for the photographed subtitles", () 
   );
 });
 
-test("empty or failed AI chunking uses a retryable safe fallback", () => {
+test("failed AI chunking falls back to one safe full-sentence translation", () => {
   assert.match(
     content,
-    /const fallbackChunks\s*=\s*createFallbackSubtitleChunks\(\s*sentence\s*\)/s
+    /const fallbackChunks\s*=\s*\[\s*cleanText\(sentence\)\s*\]\.filter\(Boolean\)/s
   );
   assert.match(
     content,
@@ -1087,16 +1361,46 @@ test("empty or failed AI chunking uses a retryable safe fallback", () => {
   );
   assert.match(
     content,
-    /catch \(error\)[\s\S]*?currentSubtitleChunks\s*=\s*\[\s*cleanText\(sentence\)\s*\]/s,
-    "request failure must use the full sentence as one safe part"
+    /catch \(error\)[\s\S]*?currentSubtitleChunks\s*=\s*safeChunk\s*\?\s*\[safeChunk\]\s*:\s*\[\][\s\S]*?cachedFullTranslation/s,
+    "request failure must use one full sentence and reuse a verified translation"
+  );
+  assert.match(
+    content,
+    /if \(!cachedFullTranslation\)[\s\S]*?loadSubtitleChunkTranslations\(\s*sentence\s*\)/s,
+    "a missing full translation must be requested instead of fabricated"
   );
 });
 
-test("playing video hides navigation and controls while translations remain", () => {
+test("fullscreen playback hides controls after five seconds while translations remain", () => {
+  const showControlsFunction = content.match(
+    /function showInterfaceControls\(\) \{[\s\S]*?\r?\n\}/
+  );
   const hiddenControls = css.match(
     /#pausespeak-controls-panel\.ps-controls-hidden \.ps-topbar,[\s\S]*?#pausespeak-controls-panel\.ps-controls-hidden \.ps-player-shell\s*\{[^}]*\}/s
   );
+  const hiddenSubtitleActions = css.match(
+    /#pausespeak-controls-panel\.ps-controls-hidden\s+\.ps-subtitle-actions\s*\{[^}]*\}/s
+  );
+  const bottomDockedSubtitles = css.match(
+    /#pausespeak-controls-panel\.ps-controls-hidden\s+#pausespeak-status-panel,[\s\S]*?#pausespeak-controls-panel\.ps-player-shell-collapsed\s+#pausespeak-status-panel\.ps-panel-shifted\s*\{[^}]*\}/s
+  );
 
+  assert.ok(showControlsFunction, "controls visibility function was not found");
+  assert.match(
+    showControlsFunction[0],
+    /if \(!document\.fullscreenElement\) \{\s*return;\s*\}/,
+    "controls must not auto-hide outside fullscreen"
+  );
+  assert.match(
+    content,
+    /const fullscreenControlsHideDelayMs\s*=\s*5000;/,
+    "fullscreen controls must wait five seconds"
+  );
+  assert.match(
+    showControlsFunction[0],
+    /document\.fullscreenElement\s*&&[\s\S]*?!video\.paused[\s\S]*?classList\.add\(\s*"ps-controls-hidden"/,
+    "only active fullscreen playback may hide the controls"
+  );
   assert.ok(hiddenControls, "hidden controls rule was not found");
   assert.match(
     hiddenControls[0],
@@ -1113,6 +1417,60 @@ test("playing video hides navigation and controls while translations remain", ()
   assert.doesNotMatch(
     hiddenControls[0],
     /pausespeak-status-panel/
+  );
+  assert.ok(
+    hiddenSubtitleActions,
+    "subtitle action buttons must hide with the other controls"
+  );
+  assert.match(
+    hiddenSubtitleActions[0],
+    /opacity:\s*0 !important/
+  );
+  assert.match(
+    hiddenSubtitleActions[0],
+    /pointer-events:\s*none !important/
+  );
+  assert.match(
+    hiddenSubtitleActions[0],
+    /display:\s*none !important/,
+    "hidden actions must not leave empty space in the subtitle card"
+  );
+  assert.ok(
+    bottomDockedSubtitles,
+    "fullscreen-only subtitles must move to the bottom edge"
+  );
+  assert.match(
+    bottomDockedSubtitles[0],
+    /bottom:\s*calc\([\s\S]*?env\(safe-area-inset-bottom,\s*0px\)[\s\S]*?clamp\(16px,\s*2\.8vh,\s*40px\)[\s\S]*?\)\s*!important/,
+    "bottom spacing must adapt to screen height and safe areas"
+  );
+});
+
+test("manually collapsing the player also docks subtitles at the bottom", () => {
+  const playerShellToggleHandler = content.match(
+    /playerShellToggleButton\.addEventListener\([\s\S]*?\r?\n\);/
+  );
+  const collapsedSubtitleDock = css.match(
+    /#pausespeak-controls-panel\.ps-player-shell-collapsed\s+#pausespeak-status-panel,[\s\S]*?#pausespeak-status-panel\.ps-panel-shifted\s*\{[^}]*\}/s
+  );
+
+  assert.ok(
+    playerShellToggleHandler,
+    "player collapse handler was not found"
+  );
+  assert.match(
+    playerShellToggleHandler[0],
+    /controlsPanel\.classList\.toggle\(\s*"ps-player-shell-collapsed",\s*isPlayerShellCollapsed\s*\)/,
+    "manual player state must also be exposed to subtitle layout"
+  );
+  assert.ok(
+    collapsedSubtitleDock,
+    "collapsed player must share the bottom subtitle position"
+  );
+  assert.match(
+    collapsedSubtitleDock[0],
+    /bottom:\s*calc\([\s\S]*?safe-area-inset-bottom[\s\S]*?clamp\(16px,\s*2\.8vh,\s*40px\)/,
+    "manual collapse must use the adaptive safe bottom spacing"
   );
 });
 
@@ -1610,7 +1968,11 @@ test("Pronunciation Coach replaces the old two-control pronunciation UI", () => 
   );
   assert.match(
     panelChildren[0],
-    /pronunciationCoachButton/
+    /subtitleActionsRow/
+  );
+  assert.match(
+    content,
+    /subtitleActionsRow\.replaceChildren\(\s*improveTranslationButton,\s*improveSegmentationButton,\s*pronunciationCoachButton\s*\)/s
   );
   assert.match(
     content,
@@ -2242,11 +2604,11 @@ test("clicking the middle of a phrase selects its full contiguous range", () => 
   );
 });
 
-test("translation improvement icon survives loading", () => {
+test("both improvement icons survive their loading state", () => {
   assert.match(content, /aria-busy/);
   assert.match(
     content,
-    /setPauseSpeakButton\(\s*improveTranslationButton,\s*"waveSpark"\s*\)/s
+    /buttonSettings[\s\S]*?icon:\s*"waveSpark"[\s\S]*?icon:\s*"parts"[\s\S]*?setPauseSpeakButton\(\s*button,\s*icon,[\s\S]*?"Yükleniyor"/s
   );
 });
 

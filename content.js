@@ -337,6 +337,10 @@ let subtitleChunkAbortController = null;
 
 let subtitleTranslationRequestNumber = 0;
 let subtitleTranslationAbortController = null;
+let terraImproveRequestNumber = 0;
+let terraImproveAbortController = null;
+let isTerraImprovePending = false;
+let terraImprovePendingAction = "";
 
 let sentenceTranslationPrefetchRequestNumber = 0;
 let sentenceTranslationPrefetchAbortController = null;
@@ -345,7 +349,6 @@ let sentenceTranslationPrefetchPromise = null;
 
 let currentSubtitleChunks = [];
 let currentSubtitleChunkTranslations = [];
-let isChunkImprovementRunning = false;
 
 let isChunkTranslationVisible = false;
 let isSubtitlePanelHidden = false;
@@ -456,11 +459,14 @@ const improveTranslationButton =
 improveTranslationButton.type =
   "button";
 
+improveTranslationButton.className =
+  "ps-terra-action";
+
 improveTranslationButton.textContent =
-  "✦ Çeviriyi İyileştir";
+  "AI Çeviri+";
 
 improveTranslationButton.title =
-  "Çeviriyi Terra ile iyileştir";
+  "Türkçe çeviriyi daha doğal ve akıcı hale getir";
 improveTranslationButton.setAttribute(
   "aria-label",
   improveTranslationButton.title
@@ -469,20 +475,33 @@ improveTranslationButton.setAttribute(
 improveTranslationButton.disabled =
   true;
 
-const improveChunkingButton =
+const improveSegmentationButton =
   document.createElement("button");
 
-improveChunkingButton.type =
+improveSegmentationButton.type =
   "button";
-improveChunkingButton.title =
-  "Parçalamayı Terra ile iyileştir";
-improveChunkingButton.setAttribute(
+
+improveSegmentationButton.className =
+  "ps-terra-action ps-action-hidden";
+
+improveSegmentationButton.textContent =
+  "AI Parçalama+";
+
+improveSegmentationButton.title =
+  "Cümleyi daha doğal konuşma parçalarına ayır";
+
+improveSegmentationButton.setAttribute(
   "aria-label",
-  improveChunkingButton.title
+  improveSegmentationButton.title
 );
-improveChunkingButton.disabled = true;
-improveChunkingButton.style.display =
-  "none";
+
+improveSegmentationButton.setAttribute(
+  "aria-hidden",
+  "true"
+);
+
+improveSegmentationButton.disabled =
+  true;
 
 const pronunciationCoachButton =
   document.createElement("button");
@@ -500,6 +519,22 @@ pronunciationCoachButton.setAttribute(
 
 pronunciationCoachButton.disabled =
   true;
+
+const subtitleActionsRow =
+  document.createElement("div");
+
+subtitleActionsRow.className =
+  "ps-subtitle-actions";
+
+subtitleActionsRow.setAttribute(
+  "role",
+  "group"
+);
+
+subtitleActionsRow.setAttribute(
+  "aria-label",
+  "Altyazı eylemleri"
+);
 
 const subtitleOpenButton =
   document.createElement("button");
@@ -1035,8 +1070,8 @@ chunkPracticeButton.disabled = true;
     "pausespeak-subtitle-turkish";
   improveTranslationButton.id =
     "pausespeak-improve-button";
-  improveChunkingButton.id =
-    "pausespeak-improve-chunking-button";
+  improveSegmentationButton.id =
+    "pausespeak-improve-segmentation-button";
   pronunciationCoachButton.id =
     "pausespeak-pronunciation-coach-button";
   subtitleCloseButton.id =
@@ -1454,6 +1489,8 @@ chunkPracticeButton.disabled = true;
   let isInterfaceHidden = false;
   let isPlayerShellCollapsed = false;
   let controlsHideTimeout = null;
+  const fullscreenControlsHideDelayMs =
+    5000;
   const playbackRates = [
     0.75,
     1,
@@ -1770,10 +1807,7 @@ Object.assign(
 Object.assign(
   improveTranslationButton.style,
   {
-    position: "absolute",
-    top: "-38px",
-    right: "34px",
-    zIndex: "2",
+    position: "static",
     minHeight: "34px",
     padding: "6px 12px",
     border:
@@ -6137,11 +6171,265 @@ function stopNormalTranslation() {
       }
     }
   }
-async function improveCurrentTranslation() {
-  const text =
-    cleanText(
-      completedBox.textContent
+function updateTerraImproveButtonState() {
+  const completedText =
+    cleanText(completedBox.textContent);
+  const hasCompletedSentence =
+    completedStartTimeMs !== null &&
+    completedText !== "" &&
+    completedText !==
+      "Henüz tamamlanan cümle yok.";
+
+  const mode = isChunkTranslationVisible
+    ? "chunk"
+    : "normal";
+  const buttonSettings = [
+    {
+      action: "translation",
+      button: improveTranslationButton,
+      icon: "waveSpark",
+      label: "AI Çeviri+",
+      accessibleName:
+        mode === "chunk"
+          ? "Parça çevirilerini daha doğal ve akıcı hale getir"
+          : "Türkçe çeviriyi daha doğal ve akıcı hale getir"
+    },
+    {
+      action: "segmentation",
+      button: improveSegmentationButton,
+      icon: "parts",
+      label: "AI Parçalama+",
+      accessibleName:
+        mode === "chunk"
+          ? "Cümlenin konuşma parçası sınırlarını iyileştir"
+          : "Cümleyi doğal konuşma parçalarına ayır ve sonucu göster"
+    }
+  ];
+
+  buttonSettings.forEach(
+    ({
+      action,
+      button,
+      icon,
+      label,
+      accessibleName
+    }) => {
+      const isActiveRequest =
+        isTerraImprovePending &&
+        terraImprovePendingAction ===
+          action;
+      const isVisible =
+        action !== "segmentation" ||
+        mode === "chunk";
+
+      button.title = accessibleName;
+      button.setAttribute(
+        "aria-label",
+        accessibleName
+      );
+      button.dataset.mode = mode;
+      button.dataset.action = action;
+      button.classList.toggle(
+        "ps-action-hidden",
+        !isVisible
+      );
+      button.setAttribute(
+        "aria-hidden",
+        String(!isVisible)
+      );
+      button.disabled =
+        !isVisible ||
+        isTerraImprovePending ||
+        !hasCompletedSentence;
+      button.classList.toggle(
+        "ps-loading",
+        isActiveRequest
+      );
+
+      if (isActiveRequest) {
+        button.setAttribute(
+          "aria-busy",
+          "true"
+        );
+      } else {
+        button.removeAttribute(
+          "aria-busy"
+        );
+      }
+
+      setPauseSpeakButton(
+        button,
+        icon,
+        isActiveRequest
+          ? "Yükleniyor"
+          : label
+      );
+    }
+  );
+}
+
+function cancelTerraImprovement() {
+  terraImproveRequestNumber += 1;
+
+  if (terraImproveAbortController) {
+    terraImproveAbortController.abort();
+    terraImproveAbortController = null;
+  }
+
+  isTerraImprovePending = false;
+  terraImprovePendingAction = "";
+  updateTerraImproveButtonState();
+}
+
+async function requestTerraImprovement(
+  action,
+  mode,
+  text,
+  previousText,
+  chunks,
+  translations,
+  signal
+) {
+  if (
+    action === "translation" &&
+    mode === "normal"
+  ) {
+    const response = await fetch(
+      translationApiUrl,
+      {
+        method: "POST",
+        headers: getUsageSyncHeaders(),
+        body: JSON.stringify({
+          text,
+          previousText,
+          improve: true
+        }),
+        signal
+      }
     );
+    const data = await response.json();
+    const translation =
+      cleanText(data?.translation);
+
+    if (
+      !response.ok ||
+      !data?.success ||
+      !translation
+    ) {
+      throw new Error(
+        data?.error ||
+          "İyileştirilmiş çeviri alınamadı."
+      );
+    }
+
+    recordTextUsage(
+      "improve_translation",
+      data.model,
+      data.usage
+    );
+
+    return {
+      action,
+      mode,
+      translation
+    };
+  }
+
+  const response = await fetch(
+    chunkApiUrl,
+    {
+      method: "POST",
+      headers: getUsageSyncHeaders(),
+      body: JSON.stringify({
+        text,
+        improve: true,
+        improvementType: action,
+        currentParts: chunks.map(
+          (english, index) => ({
+            english,
+            turkish:
+              cleanText(
+                translations[index]
+              )
+          })
+        )
+      }),
+      signal
+    }
+  );
+  const data = await response.json();
+  const improvedChunks =
+    Array.isArray(data?.chunks)
+      ? data.chunks.map(cleanText)
+      : [];
+  const improvedTranslations =
+    Array.isArray(data?.translations)
+      ? data.translations.map(cleanText)
+      : [];
+  const preservesCurrentChunks =
+    action !== "translation" ||
+    (
+      improvedChunks.length ===
+        chunks.length &&
+      chunks.every(
+        (chunk, index) =>
+          cleanText(chunk) ===
+          improvedChunks[index]
+      )
+    );
+
+  if (
+    !response.ok ||
+    !data?.success ||
+    !validateSubtitleChunks(
+      text,
+      improvedChunks
+    ) ||
+    improvedTranslations.length !==
+      improvedChunks.length ||
+    !preservesCurrentChunks ||
+    improvedTranslations.some(
+      (translation) => !translation
+    )
+  ) {
+    throw new Error(
+      data?.error ||
+        "İyileştirilmiş parça sonucu doğrulanamadı."
+    );
+  }
+
+  recordTextUsage(
+    action === "translation"
+      ? "improve_translation"
+      : "improve_chunk",
+    data.model,
+    data.usage
+  );
+
+  return {
+    action,
+    mode,
+    chunks: improvedChunks,
+    translations: improvedTranslations
+  };
+}
+
+async function improveCurrentWithTerra(
+  action
+) {
+  if (isTerraImprovePending) {
+    return;
+  }
+
+  if (
+    action !== "translation" &&
+    action !== "segmentation"
+  ) {
+    return;
+  }
+
+  const text =
+    cleanText(completedBox.textContent);
 
   if (
     !text ||
@@ -6151,182 +6439,130 @@ async function improveCurrentTranslation() {
     return;
   }
 
-  const previousText =
-    cleanText(
-      currentTranslationPreviousText
-    );
+  const mode =
+    isChunkTranslationVisible
+      ? "chunk"
+      : "normal";
 
-  const isImprovingChunks =
-    isChunkTranslationVisible;
+  if (
+    action === "segmentation" &&
+    mode !== "chunk"
+  ) {
+    return;
+  }
 
   const chunks =
     [...currentSubtitleChunks];
+  const translations =
+    [...currentSubtitleChunkTranslations];
 
   if (
-    isImprovingChunks &&
+    action === "translation" &&
+    mode === "chunk" &&
     chunks.length === 0
   ) {
     return;
   }
 
-  improveTranslationButton.disabled =
-    true;
-  improveTranslationButton.classList.add(
-    "ps-loading"
-  );
-  improveTranslationButton.setAttribute(
-    "aria-busy",
-    "true"
-  );
+  if (
+    mode === "normal" &&
+    action === "translation"
+  ) {
+    stopNormalTranslation();
+  } else if (mode === "chunk") {
+    subtitleChunkRequestNumber += 1;
+    subtitleTranslationRequestNumber += 1;
 
-  const controller =
-    new AbortController();
+    if (subtitleChunkAbortController) {
+      subtitleChunkAbortController.abort();
+      subtitleChunkAbortController = null;
+    }
 
-  let requestNumber = null;
-
-  if (isImprovingChunks) {
     if (
       subtitleTranslationAbortController
     ) {
       subtitleTranslationAbortController
         .abort();
+      subtitleTranslationAbortController =
+        null;
     }
-
-    requestNumber =
-      ++subtitleTranslationRequestNumber;
-
-    subtitleTranslationAbortController =
-      controller;
-  } else {
-    stopNormalTranslation();
-
-    requestNumber =
-      translationRequestNumber;
-
-    translationAbortController =
-      controller;
   }
 
-  const timeoutId =
-    setTimeout(() => {
-      controller.abort();
-    }, translationTimeoutMs);
+  const requestNumber =
+    ++terraImproveRequestNumber;
+  const controller =
+    new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    translationTimeoutMs
+  );
+
+  terraImproveAbortController =
+    controller;
+  isTerraImprovePending = true;
+  terraImprovePendingAction = action;
+  updateTerraImproveButtonState();
 
   try {
-    if (isImprovingChunks) {
-      let previousChunkText = "";
-
-      for (
-        let index = 0;
-        index < chunks.length;
-        index += 1
-      ) {
-        const translation =
-          await requestSubtitleChunkTranslation(
-            chunks[index],
-            previousChunkText,
-            text,
-            controller.signal,
-            true
-          );
-
-        if (
-          requestNumber !==
-            subtitleTranslationRequestNumber ||
-          !isChunkTranslationVisible ||
-          cleanText(
-            completedBox.textContent
-          ) !== text
-        ) {
-          return;
-        }
-
-        currentSubtitleChunkTranslations[
-          index
-        ] = translation;
-
-        previousChunkText =
-          chunks[index];
-
-        renderChunkedSubtitle();
-      }
-
-      return;
-    }
-
-    const response =
-      await fetch(
-        translationApiUrl,
-        {
-          method: "POST",
-
-          headers:
-            getUsageSyncHeaders(),
-
-          body: JSON.stringify({
-            text,
-            previousText,
-            improve: true
-          }),
-
-          signal:
-            controller.signal
-        }
+    const result =
+      await requestTerraImprovement(
+        action,
+        mode,
+        text,
+        cleanText(
+          currentTranslationPreviousText
+        ),
+        chunks,
+        translations,
+        controller.signal
       );
-
-    const data =
-      await response.json();
-
-    if (
-      response.ok &&
-      data?.success &&
-      typeof data.translation ===
-        "string"
-    ) {
-      recordTextUsage(
-        "improve_translation",
-        data.model,
-        data.usage
-      );
-    }
-
-    if (
-      !response.ok ||
-      !data?.success ||
-      typeof data.translation !==
-        "string"
-    ) {
-      throw new Error(
-        data?.error ||
-          "İyileştirilmiş çeviri alınamadı."
-      );
-    }
 
     if (
       requestNumber !==
-        translationRequestNumber ||
-      isChunkTranslationVisible ||
-      cleanText(
-        completedBox.textContent
-      ) !== text
+        terraImproveRequestNumber ||
+      cleanText(completedBox.textContent) !==
+        text ||
+      (
+        isChunkTranslationVisible
+          ? "chunk"
+          : "normal"
+      ) !== mode
     ) {
       return;
     }
 
-    translationBox.textContent =
-      data.translation;
-
-    cacheCueTranslation(
-      text,
-      data.translation
-    );
-  } catch (error) {
     if (
-      error.name !==
-        "AbortError"
+      action === "translation" &&
+      mode === "normal"
     ) {
+      translationBox.textContent =
+        result.translation;
+      cacheCueTranslation(
+        text,
+        result.translation
+      );
+      return;
+    }
+
+    cacheSubtitleChunks(
+      text,
+      result.chunks
+    );
+    cacheSubtitleChunkTranslations(
+      text,
+      result.chunks,
+      result.translations
+    );
+    currentSubtitleChunks =
+      [...result.chunks];
+    currentSubtitleChunkTranslations =
+      [...result.translations];
+    renderChunkedSubtitle();
+    scheduleSentenceTranslationPrefetch();
+  } catch (error) {
+    if (error.name !== "AbortError") {
       console.error(
-        "PauseSpeak çeviri iyileştirme hatası:",
+        "PauseSpeak iyileştirme hatası:",
         error
       );
     }
@@ -6334,36 +6570,14 @@ async function improveCurrentTranslation() {
     clearTimeout(timeoutId);
 
     if (
-      isImprovingChunks &&
-      subtitleTranslationAbortController ===
-        controller
+      requestNumber ===
+        terraImproveRequestNumber
     ) {
-      subtitleTranslationAbortController =
-        null;
+      terraImproveAbortController = null;
+      isTerraImprovePending = false;
+      terraImprovePendingAction = "";
+      updateTerraImproveButtonState();
     }
-
-    if (
-      !isImprovingChunks &&
-      translationAbortController ===
-        controller
-    ) {
-      translationAbortController =
-        null;
-    }
-
-    improveTranslationButton.classList.remove(
-      "ps-loading"
-    );
-    improveTranslationButton.removeAttribute(
-      "aria-busy"
-    );
-    setPauseSpeakButton(
-      improveTranslationButton,
-      "waveSpark"
-    );
-
-    improveTranslationButton.disabled =
-      completedStartTimeMs === null;
   }
 }
   function normalizeSpeechText(text) {
@@ -10005,16 +10219,6 @@ function renderChunkedSubtitle() {
       ? "none"
       : "block";
 
-  improveChunkingButton.style.display =
-    isChunkTranslationVisible
-      ? "inline-flex"
-      : "none";
-  improveChunkingButton.disabled =
-    isChunkImprovementRunning ||
-    !isChunkTranslationVisible ||
-    completedStartTimeMs === null ||
-    currentSubtitleChunks.length === 0;
-
   remoteStudyButtonIndex = -1;
   Object.assign(
     subtitleBox.style,
@@ -11715,10 +11919,9 @@ async function fetchSubtitleChunks(
     return cachedChunks;
   }
 
-  const fallbackChunks =
-    createFallbackSubtitleChunks(
-      sentence
-    );
+  const fallbackChunks = [
+    cleanText(sentence)
+  ].filter(Boolean);
 
   const response = await fetch(
     chunkApiUrl,
@@ -11805,248 +12008,6 @@ async function fetchSubtitleChunks(
   }
 
   return fallbackChunks;
-}
-
-async function requestImprovedSubtitleChunks(
-  sentence,
-  currentChunks,
-  currentTranslations,
-  signal
-) {
-  const currentParts = currentChunks.map(
-    (chunk, index) => ({
-      english: chunk,
-      turkish:
-        currentTranslations[index] || ""
-    })
-  );
-  const response = await fetch(
-    chunkApiUrl,
-    {
-      method: "POST",
-      headers: getUsageSyncHeaders(),
-      body: JSON.stringify({
-        text: sentence,
-        improve: true,
-        currentParts
-      }),
-      signal
-    }
-  );
-  const data = await response.json();
-
-  if (
-    response.ok &&
-    data?.success &&
-    Array.isArray(data.chunks) &&
-    Array.isArray(data.translations)
-  ) {
-    recordTextUsage(
-      "improve_chunk",
-      data.model,
-      data.usage
-    );
-  }
-
-  if (
-    !response.ok ||
-    !data?.success ||
-    !Array.isArray(data.chunks) ||
-    !Array.isArray(data.translations)
-  ) {
-    throw new Error(
-      data?.error ||
-        "İyileştirilmiş parçalama alınamadı."
-    );
-  }
-
-  const chunks = data.chunks.map(
-    (chunk) =>
-      typeof chunk === "string"
-        ? cleanText(chunk)
-        : ""
-  );
-  const translations =
-    data.translations.map(
-      (translation) =>
-        typeof translation === "string"
-          ? cleanText(translation)
-          : ""
-    );
-
-  if (
-    !validateSubtitleChunks(
-      sentence,
-      chunks
-    ) ||
-    translations.length !== chunks.length ||
-    chunks.some((chunk) => !chunk) ||
-    translations.some(
-      (translation) => !translation
-    )
-  ) {
-    throw new Error(
-      "Terra sonucu güvenli doğrulamadan geçmedi."
-    );
-  }
-
-  cacheSubtitleChunks(
-    sentence,
-    chunks
-  );
-  cacheSubtitleChunkTranslations(
-    sentence,
-    chunks,
-    translations
-  );
-
-  return {
-    chunks,
-    translations
-  };
-}
-
-async function improveCurrentChunking() {
-  const sentence = cleanText(
-    completedBox.textContent
-  );
-
-  if (
-    isChunkImprovementRunning ||
-    !isChunkTranslationVisible ||
-    !sentence ||
-    sentence ===
-      "Henüz tamamlanan cümle yok." ||
-    currentSubtitleChunks.length === 0
-  ) {
-    return;
-  }
-
-  cancelSentenceTranslationPrefetch();
-
-  if (subtitleChunkAbortController) {
-    subtitleChunkAbortController.abort();
-  }
-
-  if (subtitleTranslationAbortController) {
-    subtitleTranslationAbortController
-      .abort();
-    subtitleTranslationAbortController =
-      null;
-  }
-
-  subtitleTranslationRequestNumber += 1;
-
-  const requestNumber =
-    ++subtitleChunkRequestNumber;
-  const controller =
-    new AbortController();
-  const previousChunks =
-    [...currentSubtitleChunks];
-  const previousTranslations =
-    [...currentSubtitleChunkTranslations];
-
-  subtitleChunkAbortController =
-    controller;
-  isChunkImprovementRunning = true;
-  improveChunkingButton.disabled = true;
-  improveTranslationButton.disabled = true;
-  improveChunkingButton.classList.add(
-    "ps-loading"
-  );
-  improveChunkingButton.setAttribute(
-    "aria-busy",
-    "true"
-  );
-  setPauseSpeakButton(
-    improveChunkingButton,
-    "parts",
-    "İyileştiriliyor"
-  );
-
-  const timeoutId = setTimeout(() => {
-    controller.abort();
-  }, chunkTimeoutMs);
-
-  try {
-    const improved =
-      await requestImprovedSubtitleChunks(
-        sentence,
-        previousChunks,
-        previousTranslations,
-        controller.signal
-      );
-
-    if (
-      requestNumber !==
-        subtitleChunkRequestNumber ||
-      !isChunkTranslationVisible ||
-      cleanText(
-        completedBox.textContent
-      ) !== sentence
-    ) {
-      return;
-    }
-
-    currentSubtitleChunks =
-      improved.chunks;
-    currentSubtitleChunkTranslations =
-      improved.translations;
-    improveChunkingButton.title =
-      "Terra ile iyileştirildi; yeniden değerlendirmek için bas";
-    improveChunkingButton.setAttribute(
-      "aria-label",
-      improveChunkingButton.title
-    );
-    renderChunkedSubtitle();
-  } catch (error) {
-    if (
-      error.name !== "AbortError" &&
-      requestNumber ===
-        subtitleChunkRequestNumber
-    ) {
-      improveChunkingButton.title =
-        error.message ||
-        "Terra iyileştirmesi başarısız oldu";
-      improveChunkingButton.setAttribute(
-        "aria-label",
-        improveChunkingButton.title
-      );
-
-      console.error(
-        "PauseSpeak Terra parçalama iyileştirme hatası:",
-        error
-      );
-    }
-  } finally {
-    clearTimeout(timeoutId);
-
-    if (
-      subtitleChunkAbortController ===
-      controller
-    ) {
-      subtitleChunkAbortController = null;
-    }
-
-    isChunkImprovementRunning = false;
-    improveChunkingButton.classList.remove(
-      "ps-loading"
-    );
-    improveChunkingButton.removeAttribute(
-      "aria-busy"
-    );
-    setPauseSpeakButton(
-      improveChunkingButton,
-      "parts",
-      "Terra"
-    );
-    improveChunkingButton.disabled =
-      !isChunkTranslationVisible ||
-      completedStartTimeMs === null;
-    improveTranslationButton.disabled =
-      completedStartTimeMs === null;
-    scheduleSentenceTranslationPrefetch();
-  }
 }
 
 async function requestSubtitleChunks(
@@ -12412,6 +12373,22 @@ async function loadSubtitleChunkTranslations(
       "PauseSpeak parça çevirisi hatası:",
       error
     );
+
+    if (
+      isChunkTranslationVisible &&
+      cleanText(completedBox.textContent) ===
+        cleanText(sentence)
+    ) {
+      currentSubtitleChunkTranslations =
+        chunks.map(
+          (chunk, index) =>
+            currentSubtitleChunkTranslations[
+              index
+            ] ||
+            "Çeviri alınamadı; yeniden deneyin."
+        );
+      renderChunkedSubtitle();
+    }
   } finally {
     clearTimeout(timeoutId);
 
@@ -12519,21 +12496,44 @@ async function loadStudySegments(
       return;
     }
 
-    currentSubtitleChunks = [
-      cleanText(sentence)
-    ];
+    const safeChunk =
+      cleanText(sentence);
+    const cachedFullTranslation =
+      getCachedCueTranslation(sentence);
+
+    currentSubtitleChunks =
+      safeChunk ? [safeChunk] : [];
 
     currentSubtitleChunkTranslations =
-      [];
+      cachedFullTranslation
+        ? [cachedFullTranslation]
+        : [];
+
+    if (
+      safeChunk &&
+      cachedFullTranslation
+    ) {
+      cacheSubtitleChunks(
+        sentence,
+        currentSubtitleChunks
+      );
+      cacheSubtitleChunkTranslations(
+        sentence,
+        currentSubtitleChunks,
+        currentSubtitleChunkTranslations
+      );
+    }
 
     renderChunkedSubtitle();
 
     if (
       isChunkTranslationVisible
     ) {
-      void loadSubtitleChunkTranslations(
-        sentence
-      );
+      if (!cachedFullTranslation) {
+        void loadSubtitleChunkTranslations(
+          sentence
+        );
+      }
     }
 
     if (
@@ -13945,8 +13945,12 @@ automaticPauseToggleButton.addEventListener(
 chunkPracticeButton.addEventListener(
   "click",
   () => {
+    cancelTerraImprovement();
+
     isChunkTranslationVisible =
       !isChunkTranslationVisible;
+
+    updateTerraImproveButtonState();
 
     cancelSentenceTranslationPrefetch();
 
@@ -14020,6 +14024,8 @@ chunkPracticeButton.addEventListener(
     if (!fullSentence) {
       return;
     }
+
+    cancelTerraImprovement();
 
     if (
       !isReplayPlaybackActive &&
@@ -14116,8 +14122,7 @@ if (
 chunkPracticeButton.disabled =
   false;
 
-improveTranslationButton.disabled =
-  false;
+updateTerraImproveButtonState();
 
 pronunciationCoachButton.disabled =
   false;
@@ -14498,10 +14503,16 @@ function showInterfaceControls() {
 
   if (controlsHideTimeout) {
     clearTimeout(controlsHideTimeout);
+    controlsHideTimeout = null;
+  }
+
+  if (!document.fullscreenElement) {
+    return;
   }
 
   controlsHideTimeout =
     window.setTimeout(() => {
+      controlsHideTimeout = null;
       const video = getNetflixVideo();
       const hasOpenMenu = [
         settingsMenu,
@@ -14514,6 +14525,7 @@ function showInterfaceControls() {
       );
 
       if (
+        document.fullscreenElement &&
         video &&
         !video.paused &&
         !hasOpenMenu &&
@@ -14526,7 +14538,7 @@ function showInterfaceControls() {
           "ps-controls-hidden"
         );
       }
-    }, 3200);
+    }, fullscreenControlsHideDelayMs);
 }
 
 function updateVideoStatus() {
@@ -15015,12 +15027,13 @@ panelVisibilityButton.setAttribute(
 );
 setPauseSpeakButton(
   improveTranslationButton,
-  "waveSpark"
+  "waveSpark",
+  "AI Çeviri+"
 );
 setPauseSpeakButton(
-  improveChunkingButton,
+  improveSegmentationButton,
   "parts",
-  "Terra"
+  "AI Parçalama+"
 );
 setPauseSpeakButton(
   pronunciationCoachButton,
@@ -15207,15 +15220,19 @@ panel.replaceChildren(
   subtitleCloseButton,
   subtitleBox,
   translationBox,
-  pronunciationCoachButton,
-  improveChunkingButton,
-  improveTranslationButton,
+  subtitleActionsRow,
   title,
   status,
   subtitleTitle,
   completedTitle,
   completedBox,
   translationTitle
+);
+
+subtitleActionsRow.replaceChildren(
+  improveTranslationButton,
+  improveSegmentationButton,
+  pronunciationCoachButton
 );
 
 const translationRevealObserver =
@@ -15345,16 +15362,18 @@ controlsPanel.replaceChildren(
 improveTranslationButton.addEventListener(
   "click",
   () => {
-    void improveCurrentTranslation();
+    void improveCurrentWithTerra(
+      "translation"
+    );
   }
 );
 
-improveChunkingButton.addEventListener(
+improveSegmentationButton.addEventListener(
   "click",
-  (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    void improveCurrentChunking();
+  () => {
+    void improveCurrentWithTerra(
+      "segmentation"
+    );
   }
 );
 
@@ -15590,6 +15609,10 @@ playerShellToggleButton.addEventListener(
       !isPlayerShellCollapsed;
     playerShell.classList.toggle(
       "ps-collapsed",
+      isPlayerShellCollapsed
+    );
+    controlsPanel.classList.toggle(
+      "ps-player-shell-collapsed",
       isPlayerShellCollapsed
     );
     setPauseSpeakButton(
@@ -16308,6 +16331,7 @@ function resetPlaybackMediaContext(
 
   stopTranslationSpeech();
   stopNormalTranslation();
+  cancelTerraImprovement();
   cancelSentenceTranslationPrefetch();
   stopSpeechRecognition();
   closeStudyMeaningPanel(false);
@@ -16324,10 +16348,6 @@ function resetPlaybackMediaContext(
   replayButton.disabled = true;
   previousSentenceButton.disabled = true;
   pronunciationCoachButton.disabled = true;
-  isChunkImprovementRunning = false;
-  improveChunkingButton.disabled = true;
-  improveChunkingButton.style.display =
-    "none";
 
   if (
     transcriptOverlay.style.display !==
