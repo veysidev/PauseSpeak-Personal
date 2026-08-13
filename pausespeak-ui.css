@@ -60,8 +60,8 @@
 #pausespeak-controls-panel.ps-controls-hidden .ps-topbar,
 #pausespeak-controls-panel.ps-controls-hidden .ps-side-nav,
 #pausespeak-controls-panel.ps-controls-hidden .ps-player-shell {
-  opacity: 0;
-  pointer-events: none;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 #pausespeak-controls-panel.ps-controls-hidden .ps-topbar {
@@ -238,6 +238,8 @@
   color: inherit !important;
   font: inherit !important;
   line-height: inherit !important;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.55);
 }
 
@@ -1689,6 +1691,7 @@
   justify-content: center;
   padding: clamp(16px, 4vw, 48px);
   background: rgba(2, 14, 18, 0.76);
+  touch-action: manipulation;
   font-family: Inter, "Segoe UI", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }

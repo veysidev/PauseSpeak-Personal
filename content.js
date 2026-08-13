@@ -4,9 +4,68 @@
   const keyboardStudyMeaningDelayMs =
     1800;
 
+  function getPauseSpeakRemoteKey(event) {
+    const key = String(event?.key || "");
+    const keyCode = Number(
+      event?.keyCode || event?.which || 0
+    );
+
+    if (key === "ArrowUp" || key === "Up" || keyCode === 38) {
+      return "ArrowUp";
+    }
+
+    if (key === "ArrowDown" || key === "Down" || keyCode === 40) {
+      return "ArrowDown";
+    }
+
+    if (key === "ArrowLeft" || key === "Left" || keyCode === 37) {
+      return "ArrowLeft";
+    }
+
+    if (key === "ArrowRight" || key === "Right" || keyCode === 39) {
+      return "ArrowRight";
+    }
+
+    if (
+      key === "Enter" ||
+      key === "Select" ||
+      key === "Accept" ||
+      keyCode === 13 ||
+      keyCode === 23
+    ) {
+      return "Confirm";
+    }
+
+    if (key === "Escape" || keyCode === 27) {
+      return "Escape";
+    }
+
+    return key;
+  }
+
 window.addEventListener(
   "keydown",
   (event) => {
+    const remoteKey =
+      getPauseSpeakRemoteKey(event);
+    const isMeaningOpen =
+      studyMeaningOverlay.classList
+        .contains("ps-open");
+
+    if (
+      isMeaningOpen &&
+      (
+        remoteKey === "Confirm" ||
+        remoteKey === "Escape"
+      )
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      closeStudyMeaningPanel(false);
+      return;
+    }
+
     if (event.repeat) {
       return;
     }
@@ -19,7 +78,7 @@ window.addEventListener(
       event.target instanceof HTMLElement &&
       (
         event.target.matches(
-          "input, textarea, select, button"
+          "input, textarea, select"
         ) ||
         event.target.isContentEditable
       )
@@ -28,29 +87,34 @@ window.addEventListener(
     }
 
   const isPreviousWordKey =
-  event.key === "ArrowDown";
+  remoteKey === "ArrowUp";
 
 const isNextWordKey =
-  event.key === "ArrowUp";
+  remoteKey === "ArrowDown";
 
-    if (event.key === "ArrowLeft") {
+    if (remoteKey === "ArrowLeft") {
       clearKeyboardStudyMeaningTimer();
       clearStudySelection();
       event.preventDefault();
       event.stopPropagation();
 
-      seekBackwardButton.click();
+      navigateToAdjacentSentence(-1);
 
       return;
     }
 
-    if (event.key === "ArrowRight") {
+    if (remoteKey === "ArrowRight") {
       clearKeyboardStudyMeaningTimer();
       clearStudySelection();
       event.preventDefault();
       event.stopPropagation();
 
-      seekForwardButton.click();
+      if (replayButton.disabled) {
+        status.textContent =
+          "Tekrar oynatılacak cümle bulunamadı";
+      } else {
+        replayButton.click();
+      }
 
       return;
     }
@@ -147,7 +211,7 @@ const isNextWordKey =
       return;
     }
 
-    if (event.key === "Enter") {
+    if (remoteKey === "Confirm") {
       clearKeyboardStudyMeaningTimer();
       clearStudySelection();
       event.preventDefault();
@@ -3649,6 +3713,276 @@ function collectTranscriptSentence(
   }
 
   return null;
+}
+
+function findTranscriptSentenceStartIndex(
+  cues,
+  cueIndex
+) {
+  if (
+    !Array.isArray(cues) ||
+    cueIndex < 0 ||
+    cueIndex >= cues.length
+  ) {
+    return -1;
+  }
+
+  let startIndex = cueIndex;
+  const minimumStartIndex = Math.max(
+    0,
+    cueIndex - 40
+  );
+
+  while (
+    startIndex > minimumStartIndex &&
+    !endsSentence(
+      removeSubtitleDescriptions(
+        cues[startIndex - 1]?.text
+      )
+    )
+  ) {
+    startIndex -= 1;
+  }
+
+  return startIndex;
+}
+
+function collectNavigableTranscriptSentence(
+  cues,
+  startIndex
+) {
+  const completeSentence =
+    collectTranscriptSentence(
+      cues,
+      startIndex
+    );
+
+  if (completeSentence) {
+    return completeSentence;
+  }
+
+  if (
+    !Array.isArray(cues) ||
+    startIndex < 0 ||
+    startIndex >= cues.length
+  ) {
+    return null;
+  }
+
+  let sentence = "";
+  let endIndex = startIndex - 1;
+  const maximumEndIndex = Math.min(
+    cues.length - 1,
+    startIndex + 39
+  );
+
+  for (
+    let index = startIndex;
+    index <= maximumEndIndex;
+    index += 1
+  ) {
+    const cueText =
+      removeSubtitleDescriptions(
+        cues[index]?.text
+      );
+
+    if (!cueText) {
+      continue;
+    }
+
+    sentence =
+      mergeOverlappingSubtitleText(
+        sentence,
+        cueText
+      );
+    endIndex = index;
+  }
+
+  if (!sentence || endIndex < startIndex) {
+    return null;
+  }
+
+  return {
+    text: cleanText(sentence),
+    startIndex,
+    endIndex,
+    startTimeMs:
+      Number(
+        cues[startIndex]?.startTimeMs
+      ) || 0,
+    endTimeMs:
+      Number(
+        cues[endIndex]?.endTimeMs
+      ) || 0
+  };
+}
+
+function getTranscriptSentenceAtTime(
+  cues,
+  timeMs
+) {
+  if (
+    !Array.isArray(cues) ||
+    cues.length === 0 ||
+    !Number.isFinite(timeMs)
+  ) {
+    return null;
+  }
+
+  let cueIndex = findTranscriptCueIndex(
+    cues,
+    timeMs
+  );
+
+  if (cueIndex < 0) {
+    cueIndex = cues.findIndex(
+      (cue) =>
+        Number(cue?.startTimeMs) >=
+        timeMs - 300
+    );
+  }
+
+  if (cueIndex < 0) {
+    cueIndex = cues.length - 1;
+  }
+
+  const startIndex =
+    findTranscriptSentenceStartIndex(
+      cues,
+      cueIndex
+    );
+
+  return collectNavigableTranscriptSentence(
+    cues,
+    startIndex
+  );
+}
+
+function getAdjacentTranscriptSentence(
+  cues,
+  referenceTimeMs,
+  direction
+) {
+  const normalizedDirection =
+    direction < 0 ? -1 : 1;
+  const currentSentence =
+    getTranscriptSentenceAtTime(
+      cues,
+      referenceTimeMs
+    );
+
+  if (!currentSentence) {
+    return null;
+  }
+
+  let targetStartIndex =
+    currentSentence.endIndex + 1;
+
+  if (normalizedDirection < 0) {
+    const previousEndIndex =
+      currentSentence.startIndex - 1;
+
+    if (previousEndIndex < 0) {
+      return null;
+    }
+
+    targetStartIndex =
+      findTranscriptSentenceStartIndex(
+        cues,
+        previousEndIndex
+      );
+  }
+
+  return collectNavigableTranscriptSentence(
+    cues,
+    targetStartIndex
+  );
+}
+
+function getSentenceNavigationReferenceTimeMs(
+  video
+) {
+  const currentTimeMs =
+    Number(video?.currentTime) * 1000;
+  const canUseCompletedSentence =
+    Boolean(video?.paused) &&
+    completedStartTimeMs !== null &&
+    completedEndTimeMs !== null &&
+    currentTimeMs >=
+      completedStartTimeMs - 1000 &&
+    currentTimeMs <=
+      completedEndTimeMs + 2500;
+
+  return canUseCompletedSentence
+    ? completedStartTimeMs + 300
+    : currentTimeMs;
+}
+
+function navigateToAdjacentSentence(
+  direction
+) {
+  const video = getNetflixVideo();
+  const cues = getTranscriptCues().cues;
+  const normalizedDirection =
+    direction < 0 ? -1 : 1;
+
+  if (!video) {
+    status.textContent =
+      "Video bulunamadı";
+    return false;
+  }
+
+  const referenceTimeMs =
+    getSentenceNavigationReferenceTimeMs(
+      video
+    );
+  const targetSentence =
+    getAdjacentTranscriptSentence(
+      cues,
+      referenceTimeMs,
+      normalizedDirection
+    );
+
+  if (!targetSentence) {
+    if (
+      normalizedDirection < 0 &&
+      previousSentenceText &&
+      previousSentenceStartTimeMs !== null
+    ) {
+      playStoredPreviousSentence();
+      return true;
+    }
+
+    status.textContent =
+      normalizedDirection < 0
+        ? "Önceki cümle bulunamadı"
+        : "Sonraki cümle bulunamadı";
+    return false;
+  }
+
+  closeStudyMeaningPanel(false);
+  stopSpeechRecognition();
+  currentSubtitle = "";
+  sentenceParts = [];
+  sentenceStartTime = null;
+  replayGuardUntilVideoTime = null;
+
+  status.textContent =
+    normalizedDirection < 0
+      ? "◀ Önceki cümle oynatılıyor"
+      : "Sonraki cümle oynatılıyor ▶";
+
+  requestNetflixSeek(
+    Math.max(
+      0,
+      targetSentence.startTimeMs - 150
+    ),
+    normalizedDirection < 0
+      ? "Önceki cümleye gidiliyor…"
+      : "Sonraki cümleye gidiliyor…"
+  );
+  showInterfaceControls();
+  return true;
 }
 
 function getSentenceForTranslationPrefetch(
@@ -9522,6 +9856,29 @@ Object.assign(
     verticalAlign: "baseline"
   }
 );
+    let lastDirectPointerActivationAt = 0;
+
+    segmentButton.addEventListener(
+      "pointerup",
+      (event) => {
+        if (
+          event.pointerType === "mouse" ||
+          event.isPrimary === false
+        ) {
+          return;
+        }
+
+        lastDirectPointerActivationAt =
+          Date.now();
+        event.preventDefault();
+        event.stopPropagation();
+        openStudyMeaningForButton(
+          segmentButton,
+          "pointer"
+        );
+      }
+    );
+
     segmentButton.addEventListener(
       "mouseenter",
       () => {
@@ -9548,6 +9905,14 @@ Object.assign(
       (event) => {
         event.preventDefault();
         event.stopPropagation();
+
+        if (
+          Date.now() -
+            lastDirectPointerActivationAt <
+          700
+        ) {
+          return;
+        }
 
         openStudyMeaningForButton(
           segmentButton,
@@ -10015,22 +10380,12 @@ function closeStudyMeaningWithoutPlaying(
   }
 
   if (
-    event.target instanceof Node &&
-    studyMeaningPanel.contains(
-      event.target
+    event.isPrimary === false ||
+    (
+      event.pointerType === "mouse" &&
+      event.button !== 0
     )
   ) {
-    return;
-  }
-
-  const clickedStudyButton =
-    event.target instanceof Element
-      ? event.target.closest(
-          "button[data-study-text]"
-        )
-      : null;
-
-  if (clickedStudyButton) {
     return;
   }
 
@@ -13596,6 +13951,7 @@ function updatePlayerChrome() {
     playPauseButton.disabled = true;
     seekBackwardButton.disabled = true;
     seekForwardButton.disabled = true;
+    previousSentenceButton.disabled = true;
     nextSentenceButton.disabled = true;
     return;
   }
@@ -13680,18 +14036,31 @@ function updatePlayerChrome() {
     duration > 0 &&
     currentTime >= duration - 0.05;
 
-  const currentIndex =
-    findTranscriptCueIndex(
+  const navigationReferenceTimeMs =
+    getSentenceNavigationReferenceTimeMs(
+      video
+    );
+  const previousTranscriptSentence =
+    getAdjacentTranscriptSentence(
       cues,
-      currentTime * 1000
+      navigationReferenceTimeMs,
+      -1
+    );
+  const nextTranscriptSentence =
+    getAdjacentTranscriptSentence(
+      cues,
+      navigationReferenceTimeMs,
+      1
     );
 
-  nextSentenceButton.disabled =
-    cues.length === 0 ||
-    (
-      currentIndex >= 0 &&
-      currentIndex >= cues.length - 1
+  previousSentenceButton.disabled =
+    !previousTranscriptSentence &&
+    !(
+      previousSentenceText &&
+      previousSentenceStartTimeMs !== null
     );
+  nextSentenceButton.disabled =
+    !nextTranscriptSentence;
 }
 
 function seekVideoRelative(seconds) {
@@ -13729,44 +14098,6 @@ function seekVideoRelative(seconds) {
       ? "↶ 10 saniye geri gidiliyor"
       : "↷ 10 saniye ileri gidiliyor";
   updatePlayerChrome();
-}
-
-function seekToNextSentence() {
-  const video = getNetflixVideo();
-  const cues = getTranscriptCues().cues;
-
-  if (!video || cues.length === 0) {
-    status.textContent =
-      "Sonraki altyazı henüz bulunamadı";
-    return;
-  }
-
-  const currentTimeMs =
-    Number(video.currentTime) * 1000;
-  let nextIndex =
-    findTranscriptCueIndex(
-      cues,
-      currentTimeMs
-    ) + 1;
-
-  if (nextIndex <= 0) {
-    nextIndex = cues.findIndex(
-      (cue) =>
-        cue.startTimeMs >
-        currentTimeMs + 150
-    );
-  }
-
-  const cue = cues[nextIndex];
-
-  if (!cue) {
-    status.textContent =
-      "Sonraki altyazı bulunamadı";
-    return;
-  }
-
-  seekToTranscriptCue(cue);
-  void video.play().catch(() => {});
 }
 
 function showInterfaceControls() {
@@ -13912,6 +14243,7 @@ if (isReplayStarting) {
 
     const previousSubtitle =
       currentSubtitle;
+    let didFinishSentence = false;
 
     currentSubtitle =
       newSubtitle;
@@ -13948,6 +14280,7 @@ if (isReplayStarting) {
         )
       ) {
         finishSentence(video);
+        didFinishSentence = true;
       }
     }
 
@@ -13966,8 +14299,14 @@ if (isReplayStarting) {
             : null;
       }
 
-      subtitleBox.textContent =
-        newSubtitle;
+      const shouldKeepCompletedSentence =
+        didFinishSentence &&
+        Boolean(video?.paused);
+
+      if (!shouldKeepCompletedSentence) {
+        subtitleBox.textContent =
+          newSubtitle;
+      }
     } else if (
       !previousSubtitle
     ) {
@@ -14050,9 +14389,7 @@ if (isReplayStarting) {
     status.textContent =
       "🔁 Cümle tekrar oynatılıyor";
   }
-previousSentenceButton.addEventListener(
-  "click",
-  () => {
+function playStoredPreviousSentence() {
     if (
       !previousSentenceText ||
       previousSentenceStartTimeMs ===
@@ -14109,6 +14446,12 @@ previousSentenceButton.addEventListener(
     }
 
     replayButton.click();
+}
+
+previousSentenceButton.addEventListener(
+  "click",
+  () => {
+    navigateToAdjacentSentence(-1);
   }
 );
 
@@ -14940,7 +15283,7 @@ speedButton.addEventListener(
 nextSentenceButton.addEventListener(
   "click",
   () => {
-    seekToNextSentence();
+    navigateToAdjacentSentence(1);
   }
 );
 
@@ -15499,6 +15842,9 @@ function movePauseSpeakPanelsForFullscreen() {
   );
   targetContainer.appendChild(
     transcriptOverlay
+  );
+  targetContainer.appendChild(
+    studyMeaningOverlay
   );
   targetContainer.appendChild(
     pronunciationCoachOverlay

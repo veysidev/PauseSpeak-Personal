@@ -15,7 +15,7 @@ const popup = read("popup.html");
 const manifest = JSON.parse(read("manifest.json"));
 
 test("manifest uses the Netflix and YouTube release version", () => {
-  assert.equal(manifest.version, "1.1.9");
+  assert.equal(manifest.version, "1.1.11");
 });
 
 test("the main microphone button closes the active inline coach on its second click", () => {
@@ -125,6 +125,55 @@ test("prefetch lookahead assembles rolling cues and advances past the completed 
 
   assert.equal(sandbox.first.text, "I am ready.");
   assert.equal(sandbox.second.text, "Next sentence.");
+});
+
+test("sentence navigation moves by complete sentences in both directions", () => {
+  const helpers = content.match(
+    /function collectTranscriptSentence\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction getSentenceForTranslationPrefetch)/
+  );
+
+  assert.ok(helpers, "sentence navigation helpers were not found");
+
+  const cues = [
+    { startTimeMs: 0, endTimeMs: 900, text: "I am" },
+    { startTimeMs: 800, endTimeMs: 1800, text: "I am ready." },
+    { startTimeMs: 1900, endTimeMs: 3000, text: "Next sentence." },
+    { startTimeMs: 3100, endTimeMs: 4000, text: "Last line." }
+  ];
+  const sandbox = {
+    findTranscriptCueIndex: (items, timeMs) =>
+      items.findIndex(
+        (cue) =>
+          cue.startTimeMs <= timeMs &&
+          cue.endTimeMs >= timeMs
+      ),
+    removeSubtitleDescriptions: (value) =>
+      String(value || "").trim(),
+    cleanText: (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    endsSentence: (value) =>
+      /[.!?]$/.test(String(value || "").trim()),
+    mergeOverlappingSubtitleText: (current, incoming) =>
+      incoming.includes(current)
+        ? incoming
+        : `${current} ${incoming}`.trim(),
+    next: null,
+    previous: null
+  };
+
+  vm.runInNewContext(
+    `${helpers[0]}\n` +
+      `next = getAdjacentTranscriptSentence(${JSON.stringify(cues)}, 1000, 1);\n` +
+      `previous = getAdjacentTranscriptSentence(${JSON.stringify(cues)}, 2200, -1);`,
+    sandbox
+  );
+
+  assert.equal(sandbox.next.text, "Next sentence.");
+  assert.equal(sandbox.next.startTimeMs, 1900);
+  assert.equal(sandbox.previous.text, "I am ready.");
+  assert.equal(sandbox.previous.startTimeMs, 0);
 });
 
 test("prefetched normal and chunk translations render from cache without another network wait", () => {
@@ -569,6 +618,30 @@ test("empty or failed AI chunking keeps the local fallback retryable", () => {
   );
 });
 
+test("playing video hides navigation and controls while translations remain", () => {
+  const hiddenControls = css.match(
+    /#pausespeak-controls-panel\.ps-controls-hidden \.ps-topbar,[\s\S]*?#pausespeak-controls-panel\.ps-controls-hidden \.ps-player-shell\s*\{[^}]*\}/s
+  );
+
+  assert.ok(hiddenControls, "hidden controls rule was not found");
+  assert.match(
+    hiddenControls[0],
+    /\.ps-side-nav/
+  );
+  assert.match(
+    hiddenControls[0],
+    /opacity:\s*0 !important/
+  );
+  assert.match(
+    hiddenControls[0],
+    /pointer-events:\s*none !important/
+  );
+  assert.doesNotMatch(
+    hiddenControls[0],
+    /pausespeak-status-panel/
+  );
+});
+
 test("rolling Netflix captions merge their shared suffix and prefix once", () => {
   const helper = content.match(
     /function mergeOverlappingSubtitleText\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function addSentencePart)/
@@ -862,6 +935,18 @@ test("word and phrase details use a centered dismissible panel", () => {
   assert.match(content, /pausespeak-study-meaning-overlay/);
   assert.match(content, /renderStudyMeaningLoading/);
   assert.match(content, /closeStudyMeaningPanel/);
+  assert.match(
+    content,
+    /targetContainer\.appendChild\(\s*studyMeaningOverlay\s*\)/s
+  );
+  assert.match(
+    content,
+    /function closeStudyMeaningWithoutPlaying\([\s\S]*?closeStudyMeaningPanel\(true\)/s
+  );
+  assert.doesNotMatch(
+    content,
+    /function closeStudyMeaningWithoutPlaying\([\s\S]*?studyMeaningPanel\.contains/s
+  );
   assert.match(css, /#pausespeak-study-meaning-panel/);
   assert.match(css, /align-items:\s*center/);
   assert.match(css, /justify-content:\s*center/);
@@ -907,6 +992,79 @@ test("mouse and arrow-key word interactions stay intentionally different", () =>
   assert.match(css, /\.ps-study-hovered/);
   assert.match(css, /\.ps-study-keyboard-target/);
   assert.match(css, /ps-study-keyboard-dwell 1800ms/);
+});
+
+test("remote keeps the original previous, play-pause and replay layout", () => {
+  const remoteHandler = content.match(
+    /window\.addEventListener\(\s*"keydown",[\s\S]*?\r?\n\);\r?\n(?=\s*const panelId)/
+  );
+
+  assert.ok(remoteHandler, "remote key handler was not found");
+  assert.match(
+    remoteHandler[0],
+    /isPreviousWordKey\s*=\s*remoteKey === "ArrowUp"/s
+  );
+  assert.match(
+    remoteHandler[0],
+    /isNextWordKey\s*=\s*remoteKey === "ArrowDown"/s
+  );
+  assert.match(
+    remoteHandler[0],
+    /remoteKey === "ArrowLeft"[\s\S]*?navigateToAdjacentSentence\(-1\)/s
+  );
+  assert.match(
+    remoteHandler[0],
+    /remoteKey === "ArrowRight"[\s\S]*?replayButton\.click\(\)/s
+  );
+  assert.match(
+    remoteHandler[0],
+    /isMeaningOpen[\s\S]*?remoteKey === "Confirm"[\s\S]*?closeStudyMeaningPanel\(false\)/s
+  );
+  assert.match(
+    remoteHandler[0],
+    /remoteKey === "Confirm"[\s\S]*?if \(video\.paused\)[\s\S]*?video\.play\(\)[\s\S]*?video\.pause\(\)/s
+  );
+  assert.doesNotMatch(
+    remoteHandler[0],
+    /openStudyMeaningForButton\(\s*selectedButton,\s*"keyboard"\s*\)/s
+  );
+  assert.doesNotMatch(
+    remoteHandler[0],
+    /input, textarea, select, button/
+  );
+});
+
+test("touching a study word opens its detail panel without waiting for click", () => {
+  const segmentBuilder = content.match(
+    /function appendStudySegments\([\s\S]*?\r?\n}\r?\n(?=\r?\n\r?\nfunction renderChunkedSubtitle)/
+  );
+
+  assert.ok(segmentBuilder, "study segment builder was not found");
+  assert.match(
+    segmentBuilder[0],
+    /"pointerup"[\s\S]*?event\.pointerType === "mouse"[\s\S]*?openStudyMeaningForButton\(\s*segmentButton,\s*"pointer"\s*\)/s
+  );
+  assert.match(css, /touch-action:\s*manipulation/);
+});
+
+test("a newly completed paused sentence keeps its interactive word buttons", () => {
+  const updater = content.match(
+    /function updateSubtitle\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function finishReplay)/
+  );
+
+  assert.ok(updater, "subtitle updater was not found");
+  assert.match(
+    updater[0],
+    /finishSentence\(video\);\s*didFinishSentence = true;/s
+  );
+  assert.match(
+    updater[0],
+    /shouldKeepCompletedSentence\s*=\s*didFinishSentence\s*&&\s*Boolean\(video\?\.paused\)/s
+  );
+  assert.match(
+    updater[0],
+    /if \(!shouldKeepCompletedSentence\) \{\s*subtitleBox\.textContent\s*=\s*newSubtitle;/s
+  );
 });
 
 test("interface opacity controls every PauseSpeak glass surface", () => {
