@@ -17,7 +17,7 @@ const usageStore = read("server/usage-store.js");
 const manifest = JSON.parse(read("manifest.json"));
 
 test("manifest uses the Netflix and YouTube release version", () => {
-  assert.equal(manifest.version, "1.1.14");
+  assert.equal(manifest.version, "1.1.15");
 });
 
 test("normal mode completes a subtitle without calling the chunk API", () => {
@@ -162,7 +162,10 @@ test("chunk endpoint uses one Luna structured response for English and Turkish p
 
   assert.ok(generator, "combined chunk generator was not found");
   assert.ok(route, "chunk endpoint was not found");
-  assert.match(generator[0], /model:\s*openAIModel/);
+  assert.match(
+    generator[0],
+    /model\s*=\s*openAIModel[\s\S]*?responses\.create\(\{[\s\S]*?model,/s
+  );
   assert.match(generator[0], /effort:\s*"none"/);
   assert.match(generator[0], /parts:[\s\S]*?english:[\s\S]*?turkish:/s);
   assert.doesNotMatch(generator[0], /openAIChunkModel|effort:\s*"medium"/);
@@ -170,7 +173,14 @@ test("chunk endpoint uses one Luna structured response for English and Turkish p
     route[0],
     /chunks:[\s\S]*?part\.english[\s\S]*?translations:[\s\S]*?part\.turkish/s
   );
-  assert.doesNotMatch(route[0], /model:\s*openAITerraModel/);
+  assert.match(
+    route[0],
+    /const selectedModel\s*=\s*improve\s*\?\s*openAITerraModel\s*:\s*openAIModel/s
+  );
+  assert.match(
+    route[0],
+    /const maximumAttempts\s*=\s*improve\s*\?\s*1\s*:\s*2/s
+  );
 });
 
 test("combined chunk decisions preserve the full sentence and every translation", () => {
@@ -181,7 +191,7 @@ test("combined chunk decisions preserve the full sentence and every translation"
     /function normalizeForChunkValidation\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction parseChunkArray)/
   );
   const validator = server.match(
-    /function validateChunkDecision\([\s\S]*?\r?\n}\r?\n(?=app\.get)/
+    /function getChunkWordTokens\([\s\S]*?\r?\n}\r?\n(?=app\.get)/
   );
 
   assert.ok(parser, "chunk decision parser was not found");
@@ -199,20 +209,26 @@ test("combined chunk decisions preserve the full sentence and every translation"
         .trim(),
     valid: null,
     single: null,
-    invalid: null
+    invalid: null,
+    splitPhrasalVerb: null,
+    singleWordPart: null
   };
 
   vm.runInNewContext(
     `${normalizer[0]}\n${parser[0]}\n${validator[0]}\n` +
       `valid = validateChunkDecision("I am ready, but I need time.", parseChunkDecision(${JSON.stringify(JSON.stringify({ suitable: true, parts: [{ english: "I am ready,", turkish: "Hazırım," }, { english: "but I need time.", turkish: "ama zamana ihtiyacım var." }] }))}));\n` +
       `single = validateChunkDecision("Give it up.", parseChunkDecision(${JSON.stringify(JSON.stringify({ suitable: false, parts: [{ english: "Give it up.", turkish: "Vazgeç." }] }))}));\n` +
-      `invalid = validateChunkDecision("Give it up.", parseChunkDecision(${JSON.stringify(JSON.stringify({ suitable: false, parts: [{ english: "Give it up.", turkish: "" }] }))}));`,
+      `invalid = validateChunkDecision("Give it up.", parseChunkDecision(${JSON.stringify(JSON.stringify({ suitable: false, parts: [{ english: "Give it up.", turkish: "" }] }))}));\n` +
+      `splitPhrasalVerb = validateChunkDecision("Please give up this fight.", parseChunkDecision(${JSON.stringify(JSON.stringify({ suitable: true, parts: [{ english: "Please give", turkish: "Lütfen" }, { english: "up this fight.", turkish: "bu kavgadan vazgeç." }] }))}));\n` +
+      `singleWordPart = validateChunkDecision("However, I need more time.", parseChunkDecision(${JSON.stringify(JSON.stringify({ suitable: true, parts: [{ english: "However,", turkish: "Ancak," }, { english: "I need more time.", turkish: "Daha fazla zamana ihtiyacım var." }] }))}));`,
     sandbox
   );
 
   assert.equal(sandbox.valid, true);
   assert.equal(sandbox.single, true);
   assert.equal(sandbox.invalid, false);
+  assert.equal(sandbox.splitPhrasalVerb, false);
+  assert.equal(sandbox.singleWordPart, false);
 });
 
 test("combined chunk response fills translation cache without extra translate fetches", async () => {
@@ -308,6 +324,133 @@ test("combined chunk response fills translation cache without extra translate fe
   );
 });
 
+test("Terra improves chunk boundaries only after the dedicated button request", async () => {
+  const helper = content.match(
+    /async function requestImprovedSubtitleChunks\([\s\S]*?\r?\n}\r?\n(?=\r?\nasync function improveCurrentChunking)/
+  );
+
+  assert.ok(
+    helper,
+    "Terra chunk improvement request helper was not found"
+  );
+
+  const sandbox = {
+    cleanText: (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    chunkApiUrl: "https://example.test/chunk",
+    getUsageSyncHeaders: () => ({
+      "Content-Type": "application/json"
+    }),
+    requestBody: null,
+    fetch: async (url, options) => {
+      sandbox.requestBody = JSON.parse(
+        options.body
+      );
+      return {
+        ok: true,
+        async json() {
+          return {
+            success: true,
+            chunks: [
+              "I understand what you mean,",
+              "but I do not agree."
+            ],
+            translations: [
+              "Ne demek istediğini anlıyorum,",
+              "ama aynı fikirde değilim."
+            ],
+            model: "gpt-5.6-terra",
+            usage: { requests: 1 }
+          };
+        }
+      };
+    },
+    validateSubtitleChunks: () => true,
+    cacheSubtitleChunks: () => {
+      sandbox.chunkCacheWrites += 1;
+    },
+    cacheSubtitleChunkTranslations: () => {
+      sandbox.translationCacheWrites += 1;
+    },
+    recordTextUsage: (operation, model) => {
+      sandbox.usageOperation = operation;
+      sandbox.usageModel = model;
+    },
+    chunkCacheWrites: 0,
+    translationCacheWrites: 0,
+    usageOperation: "",
+    usageModel: "",
+    result: null
+  };
+
+  vm.runInNewContext(
+    `${helper[0]}\n` +
+      `result = requestImprovedSubtitleChunks("I understand what you mean, but I do not agree.", ["I understand what you mean,", "but I do not agree."], ["Seni anlıyorum,", "ama katılmıyorum."], undefined);`,
+    sandbox
+  );
+  const result = await sandbox.result;
+
+  assert.equal(sandbox.requestBody.improve, true);
+  assert.equal(
+    sandbox.requestBody.currentParts.length,
+    2
+  );
+  assert.equal(
+    sandbox.usageOperation,
+    "improve_chunk"
+  );
+  assert.equal(
+    sandbox.usageModel,
+    "gpt-5.6-terra"
+  );
+  assert.equal(sandbox.chunkCacheWrites, 1);
+  assert.equal(
+    sandbox.translationCacheWrites,
+    1
+  );
+  assert.deepEqual(
+    Array.from(result.chunks),
+    [
+      "I understand what you mean,",
+      "but I do not agree."
+    ]
+  );
+});
+
+test("the Terra chunk button is visible only in chunk mode and does not create an automatic fallback", () => {
+  const route = server.match(
+    /app\.post\(\s*"\/chunk"[\s\S]*?\r?\n\);\r?\n(?=\r?\napp\.listen)/
+  );
+
+  assert.ok(route, "chunk endpoint was not found");
+  assert.match(
+    content,
+    /improveChunkingButton\.title\s*=\s*"Parçalamayı Terra ile iyileştir"/
+  );
+  assert.match(
+    content,
+    /improveChunkingButton\.style\.display\s*=\s*isChunkTranslationVisible\s*\?\s*"inline-flex"\s*:\s*"none"/s
+  );
+  assert.match(
+    content,
+    /improveChunkingButton\.addEventListener\([\s\S]*?improveCurrentChunking\(\)/s
+  );
+  assert.match(
+    css,
+    /#pausespeak-improve-chunking-button[\s\S]*?#pausespeak-controls-panel\.ps-controls-hidden/s
+  );
+  assert.match(
+    route[0],
+    /const maximumAttempts\s*=\s*improve\s*\?\s*1\s*:\s*2/s
+  );
+  assert.doesNotMatch(
+    route[0],
+    /generateSmartChunkDecision\([\s\S]*?model:\s*openAITerraModel/s
+  );
+});
+
 test("every active OpenAI route records model and usage observability", () => {
   for (const operation of [
     "normal_translation",
@@ -339,7 +482,7 @@ test("every active OpenAI route records model and usage observability", () => {
   );
   assert.match(
     server,
-    /operation:\s*"chunk_translation"[\s\S]*?model:\s*openAIModel[\s\S]*?usage/s
+    /operation:\s*usageOperation[\s\S]*?model:\s*selectedModel[\s\S]*?usage/s
   );
 });
 
@@ -923,7 +1066,7 @@ test("local fallback creates natural chunks for the photographed subtitles", () 
   );
 });
 
-test("empty or failed AI chunking keeps the local fallback retryable", () => {
+test("empty or failed AI chunking uses a retryable safe fallback", () => {
   assert.match(
     content,
     /const fallbackChunks\s*=\s*createFallbackSubtitleChunks\(\s*sentence\s*\)/s
@@ -944,8 +1087,8 @@ test("empty or failed AI chunking keeps the local fallback retryable", () => {
   );
   assert.match(
     content,
-    /catch \(error\)[\s\S]*?currentSubtitleChunks\s*=\s*createFallbackSubtitleChunks\(\s*sentence\s*\)/s,
-    "request failure must retain the local fallback"
+    /catch \(error\)[\s\S]*?currentSubtitleChunks\s*=\s*\[\s*cleanText\(sentence\)\s*\]/s,
+    "request failure must use the full sentence as one safe part"
   );
 });
 

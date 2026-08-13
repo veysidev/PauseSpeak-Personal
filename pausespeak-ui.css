@@ -3956,3 +3956,70 @@ button.ps-coach-word:focus-visible,
     font-size: clamp(17px, 5.2vw, 23px);
   }
 }
+
+/* User-controlled Terra chunk improvement -------------------------- */
+#pausespeak-improve-chunking-button {
+  position: absolute !important;
+  right: 66px !important;
+  bottom: 13px !important;
+  top: auto !important;
+  z-index: 4 !important;
+  min-width: 86px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  margin: 0 !important;
+  padding: 0 10px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  color: var(--ps-blue-strong) !important;
+  background-color: rgba(29, 42, 48, var(--ps-ui-opacity)) !important;
+  border: 1px solid rgba(88, 199, 229, 0.34) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 6px 18px rgba(3, 11, 15, 0.28) !important;
+  cursor: pointer;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  white-space: nowrap;
+}
+
+#pausespeak-improve-chunking-button svg {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#pausespeak-improve-chunking-button:not(:disabled):hover,
+#pausespeak-improve-chunking-button:not(:disabled):focus-visible {
+  color: #f7fdff !important;
+  background-color: rgba(35, 126, 153, var(--ps-ui-opacity)) !important;
+  border-color: #58c7e5 !important;
+  outline: none;
+}
+
+#pausespeak-improve-chunking-button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+#pausespeak-improve-chunking-button.ps-loading svg {
+  animation: ps-wave-breathe 800ms ease-in-out infinite alternate;
+}
+
+#pausespeak-controls-panel.ps-controls-hidden
+  #pausespeak-improve-chunking-button {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #pausespeak-improve-chunking-button.ps-loading svg {
+    animation: none;
+  }
+}
