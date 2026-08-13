@@ -17,7 +17,7 @@ const usageStore = read("server/usage-store.js");
 const manifest = JSON.parse(read("manifest.json"));
 
 test("manifest uses the Netflix and YouTube release version", () => {
-  assert.equal(manifest.version, "1.1.13");
+  assert.equal(manifest.version, "1.1.14");
 });
 
 test("normal mode completes a subtitle without calling the chunk API", () => {
@@ -62,7 +62,7 @@ test("normal mode completes a subtitle without calling the chunk API", () => {
   );
 });
 
-test("opening chunk mode requests AI chunks before translating them", () => {
+test("opening chunk mode requests combined AI chunks and translations", () => {
   const handler = content.match(
     /chunkPracticeButton\.addEventListener\([\s\S]*?\r?\n\);\r?\n(?=\s*function finishSentence)/
   );
@@ -78,7 +78,7 @@ test("opening chunk mode requests AI chunks before translating them", () => {
   );
   assert.match(
     content,
-    /async function requestSubtitleChunkTranslation[\s\S]*?fetch\(\s*translationApiUrl/s
+    /async function fetchSubtitleChunks[\s\S]*?data\.translations[\s\S]*?cacheSubtitleChunkTranslations/s
   );
 });
 
@@ -152,6 +152,162 @@ test("the chunk loader skips the network in normal mode and uses it in chunk mod
   );
 });
 
+test("chunk endpoint uses one Luna structured response for English and Turkish parts", () => {
+  const generator = server.match(
+    /async function generateSmartChunkDecision\([\s\S]*?\r?\n}\r?\n(?=async function generateStudyMeaning)/
+  );
+  const route = server.match(
+    /app\.post\(\s*"\/chunk"[\s\S]*?\r?\n\);\r?\n(?=\r?\napp\.listen)/
+  );
+
+  assert.ok(generator, "combined chunk generator was not found");
+  assert.ok(route, "chunk endpoint was not found");
+  assert.match(generator[0], /model:\s*openAIModel/);
+  assert.match(generator[0], /effort:\s*"none"/);
+  assert.match(generator[0], /parts:[\s\S]*?english:[\s\S]*?turkish:/s);
+  assert.doesNotMatch(generator[0], /openAIChunkModel|effort:\s*"medium"/);
+  assert.match(
+    route[0],
+    /chunks:[\s\S]*?part\.english[\s\S]*?translations:[\s\S]*?part\.turkish/s
+  );
+  assert.doesNotMatch(route[0], /model:\s*openAITerraModel/);
+});
+
+test("combined chunk decisions preserve the full sentence and every translation", () => {
+  const parser = server.match(
+    /function parseChunkDecision\([\s\S]*?\r?\n}\r?\n(?=function parseStudyMeaning)/
+  );
+  const normalizer = server.match(
+    /function normalizeForChunkValidation\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction parseChunkArray)/
+  );
+  const validator = server.match(
+    /function validateChunkDecision\([\s\S]*?\r?\n}\r?\n(?=app\.get)/
+  );
+
+  assert.ok(parser, "chunk decision parser was not found");
+  assert.ok(normalizer, "server chunk normalizer was not found");
+  assert.ok(validator, "combined chunk validator was not found");
+
+  const sandbox = {
+    cleanText: (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    removeSubtitleDescriptions: (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    valid: null,
+    single: null,
+    invalid: null
+  };
+
+  vm.runInNewContext(
+    `${normalizer[0]}\n${parser[0]}\n${validator[0]}\n` +
+      `valid = validateChunkDecision("I am ready, but I need time.", parseChunkDecision(${JSON.stringify(JSON.stringify({ suitable: true, parts: [{ english: "I am ready,", turkish: "Hazırım," }, { english: "but I need time.", turkish: "ama zamana ihtiyacım var." }] }))}));\n` +
+      `single = validateChunkDecision("Give it up.", parseChunkDecision(${JSON.stringify(JSON.stringify({ suitable: false, parts: [{ english: "Give it up.", turkish: "Vazgeç." }] }))}));\n` +
+      `invalid = validateChunkDecision("Give it up.", parseChunkDecision(${JSON.stringify(JSON.stringify({ suitable: false, parts: [{ english: "Give it up.", turkish: "" }] }))}));`,
+    sandbox
+  );
+
+  assert.equal(sandbox.valid, true);
+  assert.equal(sandbox.single, true);
+  assert.equal(sandbox.invalid, false);
+});
+
+test("combined chunk response fills translation cache without extra translate fetches", async () => {
+  const normalizer = content.match(
+    /function normalizeSubtitleChunkValidationText\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction validateSubtitleChunks)/
+  );
+  const validator = content.match(
+    /function validateSubtitleChunks\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction createFallbackSubtitleChunks)/
+  );
+  const cacheHelpers = content.match(
+    /function getSubtitleChunkCache\([\s\S]*?\r?\n}\r?\n(?=\r?\nasync function loadSubtitleChunkTranslations)/
+  );
+
+  assert.ok(normalizer, "client chunk normalizer was not found");
+  assert.ok(validator, "client chunk validator was not found");
+  assert.ok(cacheHelpers, "combined chunk cache helpers were not found");
+
+  const sentence =
+    "I am ready, but I need time.";
+  const sandbox = {
+    cleanText: (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    removeSubtitleDescriptions: (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    createFallbackSubtitleChunks: (value) => [value],
+    chunkApiUrl: "https://example.test/chunk",
+    translationApiUrl: "https://example.test/translate",
+    getUsageSyncHeaders: () => ({
+      "Content-Type": "application/json"
+    }),
+    fetchCount: 0,
+    fetch: async () => {
+      sandbox.fetchCount += 1;
+      return {
+        ok: true,
+        async json() {
+          return {
+            success: true,
+            chunks: [
+              "I am ready,",
+              "but I need time."
+            ],
+            translations: [
+              "Hazırım,",
+              "ama zamana ihtiyacım var."
+            ],
+            model: "gpt-5.6-luna",
+            usage: { requests: 1 }
+          };
+        }
+      };
+    },
+    usageOperation: "",
+    recordTextUsage: (operation) => {
+      sandbox.usageOperation = operation;
+    },
+    chunkTimeoutMs: 20000,
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    console,
+    chunksResult: null,
+    cachedTranslationResult: null
+  };
+
+  vm.runInNewContext(
+    `${normalizer[0]}\n${validator[0]}\n${cacheHelpers[0]}\n` +
+      `chunksResult = fetchSubtitleChunks(${JSON.stringify(sentence)});`,
+    sandbox
+  );
+  const chunks = await sandbox.chunksResult;
+
+  vm.runInNewContext(
+    `cachedTranslationResult = requestSubtitleChunkTranslation("I am ready,", "", ${JSON.stringify(sentence)}, undefined);`,
+    sandbox
+  );
+  const translation =
+    await sandbox.cachedTranslationResult;
+
+  assert.deepEqual(
+    Array.from(chunks),
+    ["I am ready,", "but I need time."]
+  );
+  assert.equal(translation, "Hazırım,");
+  assert.equal(sandbox.fetchCount, 1);
+  assert.equal(
+    sandbox.usageOperation,
+    "chunk_translation"
+  );
+});
+
 test("every active OpenAI route records model and usage observability", () => {
   for (const operation of [
     "normal_translation",
@@ -160,7 +316,6 @@ test("every active OpenAI route records model and usage observability", () => {
     "improve_chunk",
     "study_meaning",
     "study_segments",
-    "chunk_split",
     "tts_english",
     "tts_turkish"
   ]) {
@@ -181,6 +336,10 @@ test("every active OpenAI route records model and usage observability", () => {
   assert.match(
     content,
     /recordTextUsage\(\s*"study_segments",\s*data\.model,\s*data\.usage\s*\)/s
+  );
+  assert.match(
+    server,
+    /operation:\s*"chunk_translation"[\s\S]*?model:\s*openAIModel[\s\S]*?usage/s
   );
 });
 
@@ -228,7 +387,13 @@ test("only the selected translation mode prefetches the sentence currently enter
   );
   assert.match(
     content,
-    /function prefetchChunkedSentenceTranslation[\s\S]*?fetchSubtitleChunks\([\s\S]*?requestSubtitleChunkTranslation\(/s
+    /function prefetchChunkedSentenceTranslation[\s\S]*?fetchSubtitleChunks\(/s
+  );
+  assert.doesNotMatch(
+    content.match(
+      /function prefetchChunkedSentenceTranslation[\s\S]*?\r?\n}/
+    )?.[0] || "",
+    /requestSubtitleChunkTranslation\(/
   );
 });
 

@@ -32,10 +32,6 @@ const openAITerraModel =
   process.env.OPENAI_TERRA_MODEL ||
   "gpt-5.6-terra";
 
-const openAIChunkModel =
-  process.env.OPENAI_CHUNK_MODEL ||
-  "gpt-5.6-terra";
-
 const openAITtsModel =
   "gpt-4o-mini-tts";
 
@@ -503,10 +499,14 @@ function parseChunkDecision(
     Array.isArray(parsed) ||
     typeof parsed.suitable !==
       "boolean" ||
-    !Array.isArray(parsed.chunks) ||
-    parsed.chunks.some(
-      (chunk) =>
-        typeof chunk !== "string"
+    !Array.isArray(parsed.parts) ||
+    parsed.parts.some(
+      (part) =>
+        !part ||
+        typeof part !== "object" ||
+        Array.isArray(part) ||
+        typeof part.english !== "string" ||
+        typeof part.turkish !== "string"
     )
   ) {
     throw new Error(
@@ -517,8 +517,15 @@ function parseChunkDecision(
   return {
     suitable: parsed.suitable,
 
-    chunks: parsed.chunks.map(
-      (chunk) => cleanText(chunk)
+    parts: parsed.parts.map(
+      (part) => ({
+        english: cleanText(
+          part.english
+        ),
+        turkish: cleanText(
+          part.turkish
+        )
+      })
     )
   };
 }
@@ -966,16 +973,17 @@ async function generateSmartChunkDecision(
 ) {
   const openAIResponse =
     await openAI.responses.create({
-      model: openAIChunkModel,
+      model: openAIModel,
 reasoning: {
-  effort: "medium"
+  effort: "none"
 },
 
       instructions: [
         "Sen İngilizce telaffuz ve",
         "akıcı konuşma çalışması için",
         "öğrenmeye değer doğal",
-        "konuşma parçaları belirleyen",
+        "konuşma parçaları belirleyen ve",
+        "bunları doğal Türkçeye çeviren",
         "bir uzmansın.",
 
         "Önce verilen cümlenin doğal",
@@ -1189,10 +1197,11 @@ reasoning: {
         "birlikte tut.",
 
         "Uygunsa suitable true ve",
-        "2 ile 8 arasında chunk döndür.",
+        "2 ile 8 arasında part döndür.",
 
         "Uygun değilse suitable false",
-        "ve boş chunks dizisi döndür.",
+        "ve İngilizce cümlenin tamamını",
+        "tek part olarak döndür.",
 
       "Fiil ile nesnesini bölme.",
 "Phrasal verb bölme.",
@@ -1229,10 +1238,25 @@ reasoning: {
         "ekleme, düzeltme ya da",
         "yeniden sıralama.",
 
-        "Suitable true olduğunda",
-        "chunklar boşlukla yeniden",
+        "Partların english alanları",
+        "boşlukla yeniden",
         "birleştirildiğinde orijinal",
         "cümle aynen oluşmalıdır.",
+
+        "Her part için english alanında",
+        "orijinal İngilizce parçayı ve",
+        "turkish alanında yalnız o parçanın",
+        "cümle bağlamındaki doğal Türkçe",
+        "karşılığını ver.",
+
+        "Türkçe çeviriler doğal, akıcı ve",
+        "film altyazısına uygun olsun.",
+
+        "Deyimleri, argoyu, esprileri ve",
+        "kalıpları bağlama göre çevir.",
+
+        "Türkçe alana açıklama, başlık,",
+        "tırnak veya alternatif ekleme.",
 
     "Yalnızca geçerli bir JSON",
     "nesnesi döndür.",
@@ -1248,9 +1272,9 @@ reasoning: {
     "Yalnızca şu iki biçimden",
     "birini döndür:",
 
-    '{"suitable":true,"chunks":["birinci parça","ikinci parça"]}',
+    '{"suitable":true,"parts":[{"english":"birinci parça","turkish":"birinci çeviri"},{"english":"ikinci parça","turkish":"ikinci çeviri"}]}',
 
-    '{"suitable":false,"chunks":[]}'
+    '{"suitable":false,"parts":[{"english":"cümlenin tamamı","turkish":"doğal Türkçe çeviri"}]}'
   ].join("\n"),
 
   text: {
@@ -1264,23 +1288,36 @@ reasoning: {
           suitable: {
             type: "boolean"
           },
-          chunks: {
+          parts: {
             type: "array",
             items: {
-              type: "string"
+              type: "object",
+              properties: {
+                english: {
+                  type: "string"
+                },
+                turkish: {
+                  type: "string"
+                }
+              },
+              required: [
+                "english",
+                "turkish"
+              ],
+              additionalProperties: false
             }
           }
         },
         required: [
           "suitable",
-          "chunks"
+          "parts"
         ],
         additionalProperties: false
       }
     }
   },
 
-  max_output_tokens: 4096
+  max_output_tokens: 1200
 });
 
 const parsed = parseOpenAIResponse(
@@ -1689,6 +1726,57 @@ return {
   segments: parsed.value.segments,
   usage: parsed.usage
 };
+}
+
+function validateChunkDecision(
+  originalSentence,
+  decision
+) {
+  if (
+    !decision ||
+    typeof decision.suitable !==
+      "boolean" ||
+    !Array.isArray(decision.parts) ||
+    decision.parts.length < 1 ||
+    decision.parts.length > 8 ||
+    decision.parts.some(
+      (part) =>
+        !part.english ||
+        !part.turkish
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    decision.suitable &&
+    decision.parts.length < 2
+  ) {
+    return false;
+  }
+
+  if (
+    !decision.suitable &&
+    decision.parts.length !== 1
+  ) {
+    return false;
+  }
+
+  const expected =
+    normalizeForChunkValidation(
+      originalSentence
+    );
+  const recombined =
+    normalizeForChunkValidation(
+      decision.parts
+        .map((part) => part.english)
+        .join(" ")
+    );
+
+  return (
+    expected !== "" &&
+    expected === recombined
+  );
 }
 app.get(
   "/health",
@@ -2798,23 +2886,11 @@ app.post(
         const candidateDecision =
           generatedDecision.decision;
 
-        const suitableDecisionIsValid =
-          candidateDecision.suitable ===
-            true &&
-          validateChunks(
-            cleanedText,
-            candidateDecision.chunks
-          );
-
-        const unsuitableDecisionIsValid =
-          candidateDecision.suitable ===
-            false &&
-          candidateDecision.chunks.length ===
-            0;
-
         if (
-          suitableDecisionIsValid ||
-          unsuitableDecisionIsValid
+          validateChunkDecision(
+            cleanedText,
+            candidateDecision
+          )
         ) {
           decision = candidateDecision;
 
@@ -2841,8 +2917,8 @@ app.post(
         await recordSynchronizedUsage(
           request,
           {
-            operation: "chunk_split",
-            model: openAIChunkModel,
+            operation: "chunk_translation",
+            model: openAIModel,
             usage
           }
         );
@@ -2861,8 +2937,8 @@ app.post(
       await recordSynchronizedUsage(
         request,
         {
-          operation: "chunk_split",
-          model: openAIChunkModel,
+          operation: "chunk_translation",
+          model: openAIModel,
           usage
         }
       );
@@ -2874,11 +2950,18 @@ app.post(
       decision.suitable,
 
     chunks:
-      decision.chunks,
+      decision.parts.map(
+        (part) => part.english
+      ),
+
+    translations:
+      decision.parts.map(
+        (part) => part.turkish
+      ),
 
     provider: "openai",
 
-    model: openAIChunkModel,
+    model: openAIModel,
 
     usage
   });
@@ -2887,8 +2970,8 @@ app.post(
         await recordSynchronizedUsage(
           request,
           {
-            operation: "chunk_split",
-            model: openAIChunkModel,
+            operation: "chunk_translation",
+            model: openAIModel,
             usage: finalizeOpenAIUsage(
               error.openAIUsage,
               { errorCount: 1 }

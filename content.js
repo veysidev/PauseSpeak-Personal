@@ -2190,7 +2190,7 @@ const usageOperationLabels = {
   chunk_split:
     "Parça belirleme",
   chunk_translation:
-    "Parça çevirisi",
+    "Parçalama ve çeviri",
   improve_translation:
     "Çeviri iyileştirme",
   improve_chunk:
@@ -4199,11 +4199,10 @@ async function prefetchChunkedSentenceTranslation(
   requestNumber,
   signal
 ) {
-  const chunks =
-    await fetchSubtitleChunks(
-      sentence,
-      signal
-    );
+  await fetchSubtitleChunks(
+    sentence,
+    signal
+  );
 
   if (
     requestNumber !==
@@ -4213,26 +4212,6 @@ async function prefetchChunkedSentenceTranslation(
     return;
   }
 
-  let previousText = "";
-
-  for (const chunk of chunks) {
-    await requestSubtitleChunkTranslation(
-      chunk,
-      previousText,
-      sentence,
-      signal
-    );
-
-    if (
-      requestNumber !==
-        sentenceTranslationPrefetchRequestNumber ||
-      !isChunkTranslationVisible
-    ) {
-      return;
-    }
-
-    previousText = chunk;
-  }
 }
 
 function scheduleSentenceTranslationPrefetch(
@@ -10931,7 +10910,7 @@ function validateSubtitleChunks(
 ) {
   if (
     !Array.isArray(chunks) ||
-    chunks.length < 2 ||
+    chunks.length < 1 ||
     chunks.length > 8 ||
     chunks.some(
       (chunk) =>
@@ -11698,7 +11677,13 @@ async function fetchSubtitleChunks(
   const cachedChunks =
     getCachedSubtitleChunks(sentence);
 
-  if (cachedChunks) {
+  if (
+    cachedChunks &&
+    getCachedSubtitleChunkTranslations(
+      sentence,
+      cachedChunks
+    )
+  ) {
     return cachedChunks;
   }
 
@@ -11723,10 +11708,11 @@ async function fetchSubtitleChunks(
   if (
     response.ok &&
     data?.success &&
-    Array.isArray(data.chunks)
+    Array.isArray(data.chunks) &&
+    Array.isArray(data.translations)
   ) {
     recordTextUsage(
-      "chunk_split",
+      "chunk_translation",
       data.model,
       data.usage
     );
@@ -11735,7 +11721,8 @@ async function fetchSubtitleChunks(
   if (
     !response.ok ||
     !data?.success ||
-    !Array.isArray(data.chunks)
+    !Array.isArray(data.chunks) ||
+    !Array.isArray(data.translations)
   ) {
     throw new Error(
       data?.error ||
@@ -11750,16 +11737,31 @@ async function fetchSubtitleChunks(
         chunk.trim() !== ""
     )
     .map((chunk) => cleanText(chunk));
+  const translations =
+    data.translations.map(
+      (translation) =>
+        typeof translation === "string"
+          ? cleanText(translation)
+          : ""
+    );
 
   if (
     validateSubtitleChunks(
       sentence,
       chunks
-    )
+    ) &&
+    translations.length ===
+      chunks.length &&
+    translations.every(Boolean)
   ) {
     cacheSubtitleChunks(
       sentence,
       chunks
+    );
+    cacheSubtitleChunkTranslations(
+      sentence,
+      chunks,
+      translations
     );
     return chunks;
   }
@@ -11884,6 +11886,52 @@ function getCachedSubtitleChunkTranslations(
   }
 
   return translations;
+}
+
+function cacheSubtitleChunkTranslations(
+  sentence,
+  chunks,
+  translations
+) {
+  if (
+    !validateSubtitleChunks(
+      sentence,
+      chunks
+    ) ||
+    !Array.isArray(translations) ||
+    translations.length !== chunks.length ||
+    translations.some(
+      (translation) =>
+        typeof translation !== "string" ||
+        cleanText(translation) === ""
+    )
+  ) {
+    return false;
+  }
+
+  const translationCache =
+    getSubtitleChunkTranslationCache();
+  let previousText = "";
+
+  chunks.forEach((chunk, index) => {
+    translationCache.set(
+      getSubtitleChunkTranslationCacheKey(
+        chunk,
+        previousText,
+        sentence
+      ),
+      cleanText(translations[index])
+    );
+    previousText = chunk;
+  });
+
+  while (translationCache.size > 500) {
+    translationCache.delete(
+      translationCache.keys().next().value
+    );
+  }
+
+  return true;
 }
 
 async function requestSubtitleChunkTranslation(
