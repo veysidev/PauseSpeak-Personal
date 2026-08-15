@@ -17,7 +17,45 @@ const usageStore = read("server/usage-store.js");
 const manifest = JSON.parse(read("manifest.json"));
 
 test("manifest uses the Netflix and YouTube release version", () => {
-  assert.equal(manifest.version, "1.1.20");
+  assert.equal(manifest.version, "1.1.28");
+});
+
+test("contextual word and expression analysis uses Luna end to end", () => {
+  const meaningGenerator = server.match(
+    /async function generateStudyMeaning\([\s\S]*?\r?\n}\r?\n(?=async function generateStudySegments)/
+  );
+  const segmentsGenerator = server.match(
+    /async function generateStudySegments\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction getChunkWordTokens)/
+  );
+  const meaningRoute = server.match(
+    /app\.post\(\s*"\/study-meaning"[\s\S]*?\r?\n\);\r?\n(?=app\.post\(\s*"\/speak-translation")/
+  );
+  const segmentsRoute = server.match(
+    /app\.post\(\s*"\/study-segments"[\s\S]*?\r?\n\);\r?\n(?=app\.post\(\s*"\/chunk")/
+  );
+
+  assert.ok(meaningGenerator, "study meaning generator was not found");
+  assert.ok(segmentsGenerator, "study segments generator was not found");
+  assert.ok(meaningRoute, "study meaning route was not found");
+  assert.ok(segmentsRoute, "study segments route was not found");
+  assert.match(meaningGenerator[0], /model:\s*openAIModel/);
+  assert.match(segmentsGenerator[0], /model:\s*openAIModel/);
+  assert.doesNotMatch(meaningGenerator[0], /model:[\s\S]*?openAITerraModel/);
+  assert.doesNotMatch(segmentsGenerator[0], /model:[\s\S]*?openAITerraModel/);
+  assert.match(meaningRoute[0], /const usageModel\s*=\s*openAIModel;/);
+  assert.match(segmentsRoute[0], /const usageModel\s*=\s*openAIModel;/);
+  assert.equal(
+    (
+      content.match(
+        /analysisMode:\s*"context-expression-luna-v1"/g
+      ) || []
+    ).length,
+    2
+  );
+  assert.match(
+    server,
+    /function isContextExpressionAnalysisMode\([\s\S]*?"context-expression-v1"[\s\S]*?"context-expression-luna-v1"/s
+  );
 });
 
 test("normal mode completes a subtitle without calling the chunk API", () => {
@@ -62,27 +100,31 @@ test("normal mode completes a subtitle without calling the chunk API", () => {
   );
 });
 
-test("opening chunk mode requests combined AI chunks and translations", () => {
-  const handler = content.match(
-    /chunkPracticeButton\.addEventListener\([\s\S]*?\r?\n\);\r?\n(?=\s*function finishSentence)/
-  );
-
-  assert.ok(handler, "chunk mode handler was not found");
+test("the main player removes chunk mode while keeping coach chunk support", () => {
   assert.match(
-    handler[0],
-    /if \(\s*!isChunkTranslationVisible\s*\)[\s\S]*?return;[\s\S]*?loadStudySegments\(\s*completedBox\.textContent\s*\)/s
+    content,
+    /const isChunkTranslationVisible\s*=\s*false;/
+  );
+  assert.doesNotMatch(content, /chunkPracticeButton/);
+  assert.doesNotMatch(
+    content,
+    /isChunkTranslationVisible\s*=\s*!isChunkTranslationVisible/
+  );
+  assert.doesNotMatch(
+    content,
+    /prefetchChunkedSentenceTranslation/
   );
   assert.match(
     content,
-    /async function fetchSubtitleChunks[\s\S]*?fetch\(\s*chunkApiUrl/s
+    /async function requestSmartChunks[\s\S]*?fetch\(\s*chunkApiUrl/s
   );
   assert.match(
-    content,
-    /async function fetchSubtitleChunks[\s\S]*?data\.translations[\s\S]*?cacheSubtitleChunkTranslations/s
+    server,
+    /app\.post\(\s*"\/chunk"/s
   );
 });
 
-test("the chunk loader skips the network in normal mode and uses it in chunk mode", async () => {
+test("the normal subtitle loader keeps local chunks without using the network", async () => {
   const helper = content.match(
     /async function loadStudySegments\([\s\S]*?\r?\n}\r?\n(?=\s*async function requestSmartChunks)/
   );
@@ -137,18 +179,9 @@ test("the chunk loader skips the network in normal mode and uses it in chunk mod
     ["Local safe chunks."]
   );
 
-  sandbox.isChunkTranslationVisible = true;
-  vm.runInNewContext(
-    `chunkResult = loadStudySegments("A completed sentence.");`,
-    sandbox
-  );
-  await sandbox.chunkResult;
-
-  assert.equal(sandbox.chunkRequestCount, 1);
-  assert.equal(sandbox.translationLoadCount, 1);
-  assert.deepEqual(
-    Array.from(sandbox.currentSubtitleChunks),
-    ["AI chunks."]
+  assert.match(
+    content,
+    /const isChunkTranslationVisible\s*=\s*false;/
   );
 });
 
@@ -535,7 +568,7 @@ test("separate improvement actions update translation or segmentation with one r
   );
 });
 
-test("improvement controls are mode-aware, guarded and ignore stale results", () => {
+test("the single translation improvement control is guarded and ignores stale results", () => {
   const controller = content.match(
     /async function improveCurrentWithTerra\([\s\S]*?\r?\n}\r?\n(?=\s*function normalizeSpeechText)/
   );
@@ -547,8 +580,9 @@ test("improvement controls are mode-aware, guarded and ignore stale results", ()
   assert.ok(buttonState, "Terra button state helper was not found");
   assert.match(
     buttonState[0],
-    /AI Çeviri\+[\s\S]*?AI Parçalama\+/s
+    /AI Çeviri\+/
   );
+  assert.doesNotMatch(content, /improveSegmentationButton/);
   assert.match(controller[0], /if \(isTerraImprovePending\)\s*\{\s*return;/s);
   assert.match(
     controller[0],
@@ -573,39 +607,24 @@ test("improvement controls are mode-aware, guarded and ignore stale results", ()
   );
   assert.match(
     content,
-    /improveTranslationButton\.addEventListener\([\s\S]*?improveCurrentWithTerra\(\s*"translation"\s*\)[\s\S]*?improveSegmentationButton\.addEventListener\([\s\S]*?improveCurrentWithTerra\(\s*"segmentation"\s*\)/s
-  );
-  assert.match(
-    controller[0],
-    /action === "segmentation"[\s\S]*?mode !== "chunk"[\s\S]*?return;/s
+    /improveTranslationButton\.addEventListener\([\s\S]*?improveCurrentWithTerra\(\s*"translation"\s*\)/s
   );
   assert.doesNotMatch(
-    controller[0],
-    /action === "segmentation"[\s\S]*?isChunkTranslationVisible = true/s
-  );
-  assert.match(
-    buttonState[0],
-    /action !== "segmentation" \|\|[\s\S]*?mode === "chunk"[\s\S]*?ps-action-hidden/s
-  );
-  assert.match(
-    css,
-    /\.ps-terra-action\.ps-action-hidden\s*\{[^}]*display:\s*none !important/s
+    content,
+    /improveCurrentWithTerra\(\s*"segmentation"\s*\)/s
   );
 });
 
-test("both improvement actions and microphone occupy a responsive action row", () => {
+test("translation improvement and microphone occupy a responsive action row", () => {
   assert.match(
     content,
     /panel\.replaceChildren\([\s\S]*?translationBox,\s*subtitleActionsRow/s
   );
   assert.match(
     content,
-    /subtitleActionsRow\.replaceChildren\(\s*improveTranslationButton,\s*improveSegmentationButton,\s*pronunciationCoachButton\s*\)/s
+    /subtitleActionsRow\.replaceChildren\(\s*improveTranslationButton,\s*pronunciationCoachButton\s*\)/s
   );
-  assert.match(
-    content,
-    /improveSegmentationButton\.className\s*=\s*"ps-terra-action ps-action-hidden"/s
-  );
+  assert.doesNotMatch(content, /AI Parçalama\+/);
   assert.match(
     css,
     /#pausespeak-status-panel \.ps-subtitle-actions\s*\{[^}]*position:\s*static !important[^}]*display:\s*flex !important[^}]*gap:\s*8px !important/s
@@ -780,7 +799,7 @@ test("the main microphone button closes the active inline coach on its second cl
   );
 });
 
-test("only the selected translation mode prefetches the sentence currently entering playback", () => {
+test("normal translation is the only automatic sentence prefetch mode", () => {
   const scheduler = content.match(
     /function scheduleSentenceTranslationPrefetch\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction formatTranscriptTime)/
   );
@@ -788,29 +807,19 @@ test("only the selected translation mode prefetches the sentence currently enter
   assert.ok(scheduler, "translation prefetch scheduler was not found");
   assert.match(
     scheduler[0],
-    /isChunkTranslationVisible\s*\?\s*"chunk"\s*:\s*"normal"/s
+    /prefetchNormalSentenceTranslation\(\s*normalizedSentence,\s*previousText,/s
   );
-  assert.match(
+  assert.doesNotMatch(
     scheduler[0],
-    /mode === "chunk"[\s\S]*?prefetchChunkedSentenceTranslation[\s\S]*?: prefetchNormalSentenceTranslation/s
+    /chunk|fetchSubtitleChunks/
   );
-  assert.match(
+  assert.doesNotMatch(
     content,
-    /isChunkTranslationVisible\s*=\s*!isChunkTranslationVisible;[\s\S]*?cancelSentenceTranslationPrefetch\(\)/s
+    /prefetchChunkedSentenceTranslation/
   );
   assert.match(
     content,
     /function prefetchNormalSentenceTranslation[\s\S]*?cacheCueTranslation\(/s
-  );
-  assert.match(
-    content,
-    /function prefetchChunkedSentenceTranslation[\s\S]*?fetchSubtitleChunks\(/s
-  );
-  assert.doesNotMatch(
-    content.match(
-      /function prefetchChunkedSentenceTranslation[\s\S]*?\r?\n}/
-    )?.[0] || "",
-    /requestSubtitleChunkTranslation\(/
   );
 });
 
@@ -1186,9 +1195,8 @@ test("YouTube bridge publishes JSON3 cues and seeks the real player", async () =
   );
 });
 
-test("the continuous dock keeps all seven actions", () => {
+test("six visible dock actions use a silent spacer to keep playback centered", () => {
   for (const label of [
-    "Parçalar",
     "Cümleyi tekrarla",
     "10 sn geri",
     "10 sn ileri",
@@ -1202,9 +1210,18 @@ test("the continuous dock keeps all seven actions", () => {
     content,
     /ps-(?:study|playback|tools)-group/
   );
+  assert.doesNotMatch(content, /chunkPracticeButton/);
   assert.match(
     css,
-    /\.ps-command-row\s*\{[^}]*grid-template-columns:\s*repeat\(2,[^}]*66px 72px 66px/s
+    /\.ps-command-row::before\s*\{[^}]*content:\s*""[^}]*pointer-events:\s*none/s
+  );
+  assert.match(
+    css,
+    /\.ps-command-row\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(86px, 1fr\)\) 66px 72px 66px repeat\(2,/s
+  );
+  assert.match(
+    css,
+    /grid-template-columns:\s*repeat\(7, 42px\)/s
   );
 });
 
@@ -1371,9 +1388,15 @@ test("failed AI chunking falls back to one safe full-sentence translation", () =
   );
 });
 
-test("fullscreen playback hides controls after five seconds while translations remain", () => {
+test("controls hide after three idle seconds while subtitles remain", () => {
   const showControlsFunction = content.match(
-    /function showInterfaceControls\(\) \{[\s\S]*?\r?\n\}/
+    /function showInterfaceControls\([\s\S]*?\r?\n\}/
+  );
+  const pointerRevealHandler = content.match(
+    /function handleInterfacePointerActivity\([\s\S]*?\r?\n\}/
+  );
+  const pointerRevealEvents = content.match(
+    /\[\s*"pointermove",\s*"pointerdown",\s*"touchstart"\s*\]\.forEach\([\s\S]*?handleInterfacePointerActivity[\s\S]*?\r?\n\}\);/
   );
   const hiddenControls = css.match(
     /#pausespeak-controls-panel\.ps-controls-hidden \.ps-topbar,[\s\S]*?#pausespeak-controls-panel\.ps-controls-hidden \.ps-player-shell\s*\{[^}]*\}/s
@@ -1386,20 +1409,58 @@ test("fullscreen playback hides controls after five seconds while translations r
   );
 
   assert.ok(showControlsFunction, "controls visibility function was not found");
+  assert.ok(
+    pointerRevealHandler,
+    "pointer-only controls reveal handler was not found"
+  );
+  assert.ok(
+    pointerRevealEvents,
+    "pointer-only controls reveal events were not found"
+  );
+  assert.doesNotMatch(
+    pointerRevealEvents[0],
+    /"keydown"/,
+    "keyboard activity must not reveal hidden controls"
+  );
+  assert.match(
+    pointerRevealHandler[0],
+    /event\.type === "pointermove"[\s\S]*?event\.pointerType !== "mouse"[\s\S]*?return;[\s\S]*?showInterfaceControls\(true\);/,
+    "only mouse movement or a pointer/touch press may reveal hidden controls"
+  );
   assert.match(
     showControlsFunction[0],
+    /classList\.contains\(\s*"ps-controls-hidden"\s*\)[\s\S]*?!allowReveal[\s\S]*?return;/,
+    "non-pointer updates must leave already hidden controls hidden"
+  );
+  assert.doesNotMatch(
+    showControlsFunction[0],
     /if \(!document\.fullscreenElement\) \{\s*return;\s*\}/,
-    "controls must not auto-hide outside fullscreen"
+    "controls must auto-hide in both windowed and fullscreen playback"
   );
   assert.match(
     content,
-    /const fullscreenControlsHideDelayMs\s*=\s*5000;/,
-    "fullscreen controls must wait five seconds"
+    /const interfaceControlsHideDelayMs\s*=\s*3000;/,
+    "controls must wait three seconds"
   );
   assert.match(
     showControlsFunction[0],
-    /document\.fullscreenElement\s*&&[\s\S]*?!video\.paused[\s\S]*?classList\.add\(\s*"ps-controls-hidden"/,
-    "only active fullscreen playback may hide the controls"
+    /video\s*&&[\s\S]*?!hasOpenMenu\s*&&[\s\S]*?!hasOpenWorkPanel[\s\S]*?classList\.add\(\s*"ps-controls-hidden"/,
+    "both playing and paused video must hide idle controls when no work panel is open"
+  );
+  assert.doesNotMatch(
+    showControlsFunction[0],
+    /!video\.paused/,
+    "paused playback must not prevent automatic hiding"
+  );
+  assert.match(
+    showControlsFunction[0],
+    /studyMeaningOverlay\.classList\.contains\(\s*"ps-open"\s*\)[\s\S]*?isPronunciationCoachOpen/,
+    "study and pronunciation panels must keep controls visible while in use"
+  );
+  assert.match(
+    content,
+    /const playbackStateChanged\s*=\s*video !== controlsPlaybackVideo[\s\S]*?playbackPausedState !==[\s\S]*?controlsPlaybackPausedState[\s\S]*?if \(playbackStateChanged\) \{[\s\S]*?showInterfaceControls\(\);/,
+    "play and pause transitions must restart the idle timer only when state changes"
   );
   assert.ok(hiddenControls, "hidden controls rule was not found");
   assert.match(
@@ -1948,6 +2009,105 @@ test("interface opacity controls every PauseSpeak glass surface", () => {
   );
 });
 
+test("appearance sliders allow smaller subtitles and clearer video", () => {
+  assert.match(
+    content,
+    /fontScaleRange\.min\s*=\s*"60";/,
+    "subtitle scale must reach 60 percent"
+  );
+  assert.match(
+    content,
+    /opacityRange\.min\s*=\s*"25";/,
+    "interface opacity must reach 25 percent"
+  );
+  assert.match(
+    content,
+    /savedScale\s*>=\s*60\s*&&\s*savedScale\s*<=\s*140/,
+    "saved subtitle scale must accept the expanded range"
+  );
+  assert.match(
+    content,
+    /savedOpacity\s*>=\s*25\s*&&\s*savedOpacity\s*<=\s*98/,
+    "saved interface opacity must accept the expanded range"
+  );
+});
+
+test("subtitle size also scales the translation card", () => {
+  const layoutHelper = content.match(
+    /function getSubtitleCardLayout\([\s\S]*?\r?\n\}/
+  );
+
+  assert.ok(
+    layoutHelper,
+    "subtitle card layout helper was not found"
+  );
+
+  const sandbox = {
+    small: null,
+    normal: null,
+    large: null
+  };
+
+  vm.runInNewContext(
+    `${layoutHelper[0]}\n` +
+      `small = getSubtitleCardLayout(60);\n` +
+      `normal = getSubtitleCardLayout(100);\n` +
+      `large = getSubtitleCardLayout(140);`,
+    sandbox
+  );
+
+  assert.equal(
+    sandbox.small[
+      "--ps-subtitle-card-max-width"
+    ],
+    "578px"
+  );
+  assert.equal(
+    sandbox.normal[
+      "--ps-subtitle-card-max-width"
+    ],
+    "680px"
+  );
+  assert.equal(
+    sandbox.large[
+      "--ps-subtitle-card-max-width"
+    ],
+    "782px"
+  );
+  assert.equal(
+    sandbox.small[
+      "--ps-subtitle-card-padding-top"
+    ],
+    "21.6px"
+  );
+  assert.equal(
+    sandbox.normal[
+      "--ps-subtitle-card-padding-top"
+    ],
+    "36px"
+  );
+  assert.match(
+    content,
+    /Object\.entries\(cardLayout\)[\s\S]*?controlsPanel\.style\.setProperty/s,
+    "the subtitle slider must apply every card layout variable"
+  );
+  assert.match(
+    css,
+    /width:\s*min\([\s\S]*?--ps-subtitle-card-width-vw[\s\S]*?--ps-subtitle-card-max-width[\s\S]*?\)\s*!important;/,
+    "the card width must follow subtitle scale"
+  );
+  assert.match(
+    css,
+    /padding:\s*var\(--ps-subtitle-card-padding-top\)[\s\S]*?--ps-subtitle-card-padding-inline[\s\S]*?--ps-subtitle-card-padding-bottom[\s\S]*?!important;/,
+    "the card padding must follow subtitle scale"
+  );
+  assert.match(
+    css,
+    /--ps-subtitle-card-action-height/,
+    "the card action row must shrink with the card"
+  );
+});
+
 test("Pronunciation Coach replaces the old two-control pronunciation UI", () => {
   const settingsAppend = content.match(
     /settingsMenu\.append\([\s\S]*?\);/
@@ -1972,7 +2132,7 @@ test("Pronunciation Coach replaces the old two-control pronunciation UI", () => 
   );
   assert.match(
     content,
-    /subtitleActionsRow\.replaceChildren\(\s*improveTranslationButton,\s*improveSegmentationButton,\s*pronunciationCoachButton\s*\)/s
+    /subtitleActionsRow\.replaceChildren\(\s*improveTranslationButton,\s*pronunciationCoachButton\s*\)/s
   );
   assert.match(
     content,
@@ -2604,12 +2764,13 @@ test("clicking the middle of a phrase selects its full contiguous range", () => 
   );
 });
 
-test("both improvement icons survive their loading state", () => {
+test("the translation improvement icon survives its loading state", () => {
   assert.match(content, /aria-busy/);
   assert.match(
     content,
-    /buttonSettings[\s\S]*?icon:\s*"waveSpark"[\s\S]*?icon:\s*"parts"[\s\S]*?setPauseSpeakButton\(\s*button,\s*icon,[\s\S]*?"Yükleniyor"/s
+    /setPauseSpeakButton\(\s*improveTranslationButton,\s*"waveSpark",[\s\S]*?"Yükleniyor"/s
   );
+  assert.doesNotMatch(content, /improveSegmentationButton/);
 });
 
 test("transcript drawer uses a subtle active-line treatment", () => {

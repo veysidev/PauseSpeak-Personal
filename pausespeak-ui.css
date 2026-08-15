@@ -7,6 +7,23 @@
   --ps-muted: rgba(255, 255, 255, 0.68);
   --ps-subtitle-scale: 1;
   --ps-card-opacity: 0.88;
+  --ps-subtitle-card-width-vw: 52vw;
+  --ps-subtitle-card-width-compact-vw: 68vw;
+  --ps-subtitle-card-max-width: 680px;
+  --ps-subtitle-card-compact-max-width: 650px;
+  --ps-subtitle-card-padding-top: 36px;
+  --ps-subtitle-card-padding-inline: 48px;
+  --ps-subtitle-card-padding-bottom: 30px;
+  --ps-subtitle-card-compact-padding-top: 21px;
+  --ps-subtitle-card-compact-padding-inline: 28px;
+  --ps-subtitle-card-compact-padding-bottom: 25px;
+  --ps-subtitle-card-mobile-padding-top: 15px;
+  --ps-subtitle-card-mobile-padding-inline: 18px;
+  --ps-subtitle-card-mobile-padding-bottom: 18px;
+  --ps-subtitle-card-translation-gap: 13px;
+  --ps-subtitle-card-actions-gap: 14px;
+  --ps-subtitle-card-action-height: 40px;
+  --ps-subtitle-card-action-icon-size: 42px;
 }
 
 #pausespeak-controls-panel,
@@ -527,6 +544,12 @@
   align-items: center;
   gap: clamp(8px, 1.2vw, 18px);
   margin-top: 10px;
+}
+
+.ps-command-row::before {
+  content: "";
+  display: block;
+  pointer-events: none;
 }
 
 .ps-command-button {
@@ -4123,5 +4146,116 @@ button.ps-coach-word:focus-visible,
 
   .ps-coach-chunk-card-words {
     font-size: clamp(17px, 5.2vw, 23px);
+  }
+}
+
+/* The subtitle-size setting also resizes its card. Keep these rules last so
+   older theme and responsive declarations cannot override the live values. */
+#pausespeak-status-panel,
+#pausespeak-status-panel.ps-panel-shifted,
+#pausespeak-controls-panel.ps-transcript-open
+  #pausespeak-status-panel,
+#pausespeak-controls-panel.ps-transcript-open
+  #pausespeak-status-panel.ps-panel-shifted {
+  width: min(
+    max(
+      var(--ps-subtitle-card-width-vw),
+      min(440px, calc(100vw - 220px))
+    ),
+    var(--ps-subtitle-card-max-width)
+  ) !important;
+  padding: var(--ps-subtitle-card-padding-top)
+    var(--ps-subtitle-card-padding-inline)
+    var(--ps-subtitle-card-padding-bottom) !important;
+}
+
+#pausespeak-status-panel
+  #pausespeak-subtitle-turkish {
+  margin-top: var(
+    --ps-subtitle-card-translation-gap
+  ) !important;
+}
+
+#pausespeak-status-panel .ps-subtitle-actions {
+  min-height: var(
+    --ps-subtitle-card-action-height
+  ) !important;
+  margin-top: var(
+    --ps-subtitle-card-actions-gap
+  ) !important;
+}
+
+#pausespeak-status-panel .ps-subtitle-actions
+  .ps-terra-action {
+  height: var(
+    --ps-subtitle-card-action-height
+  ) !important;
+  min-height: var(
+    --ps-subtitle-card-action-height
+  ) !important;
+}
+
+#pausespeak-status-panel .ps-subtitle-actions
+  #pausespeak-pronunciation-coach-button {
+  width: var(
+    --ps-subtitle-card-action-icon-size
+  ) !important;
+  min-width: var(
+    --ps-subtitle-card-action-icon-size
+  ) !important;
+  height: var(
+    --ps-subtitle-card-action-height
+  ) !important;
+  min-height: var(
+    --ps-subtitle-card-action-height
+  ) !important;
+}
+
+@media (max-width: 1100px) {
+  #pausespeak-status-panel,
+  #pausespeak-status-panel.ps-panel-shifted,
+  #pausespeak-controls-panel.ps-transcript-open
+    #pausespeak-status-panel,
+  #pausespeak-controls-panel.ps-transcript-open
+    #pausespeak-status-panel.ps-panel-shifted {
+    width: min(
+      max(
+        var(
+          --ps-subtitle-card-width-compact-vw
+        ),
+        min(360px, calc(100vw - 132px))
+      ),
+      var(
+        --ps-subtitle-card-compact-max-width
+      )
+    ) !important;
+    padding: var(
+        --ps-subtitle-card-compact-padding-top
+      )
+      var(
+        --ps-subtitle-card-compact-padding-inline
+      )
+      var(
+        --ps-subtitle-card-compact-padding-bottom
+      ) !important;
+  }
+}
+
+@media (max-width: 760px), (max-height: 520px) {
+  #pausespeak-status-panel,
+  #pausespeak-status-panel.ps-panel-shifted,
+  #pausespeak-controls-panel.ps-transcript-open
+    #pausespeak-status-panel,
+  #pausespeak-controls-panel.ps-transcript-open
+    #pausespeak-status-panel.ps-panel-shifted {
+    padding: var(
+        --ps-subtitle-card-mobile-padding-top
+      )
+      var(
+        --ps-subtitle-card-mobile-padding-inline
+      )
+      var(
+        --ps-subtitle-card-mobile-padding-bottom
+      ) !important;
   }
 }

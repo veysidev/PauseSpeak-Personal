@@ -637,13 +637,24 @@ function parseStudyMeaning(
       )
   };
 }
+
+function isContextExpressionAnalysisMode(
+  analysisMode
+) {
+  return [
+    "context-expression-v1",
+    "context-expression-luna-v1"
+  ].includes(analysisMode);
+}
+
 function parseStudySegments(
   outputText,
   analysisMode
 ) {
   const isContextExpressionMode =
-    analysisMode ===
-    "context-expression-v1";
+    isContextExpressionAnalysisMode(
+      analysisMode
+    );
   const cleanedOutput =
     String(outputText || "")
       .trim()
@@ -1464,13 +1475,12 @@ async function generateStudyMeaning(
   analysisMode
 ) {
   const isContextExpressionMode =
-  analysisMode ===
-  "context-expression-v1";
+  isContextExpressionAnalysisMode(
+    analysisMode
+  );
   const openAIResponse =
     await openAI.responses.create({
-      model: isContextExpressionMode
-        ? openAITerraModel
-        : openAIModel,
+      model: openAIModel,
 
       reasoning: {
         effort: "none"
@@ -1654,14 +1664,13 @@ async function generateStudySegments(
   analysisMode
 ) {
 const isContextExpressionMode =
-  analysisMode ===
-  "context-expression-v1";
+  isContextExpressionAnalysisMode(
+    analysisMode
+  );
 
 const openAIResponse =
   await openAI.responses.create({
-    model: isContextExpressionMode
-      ? openAITerraModel
-      : openAIModel,
+    model: openAIModel,
 
     reasoning: {
       effort: "none"
@@ -2754,12 +2763,10 @@ const analysisMode =
     const cleanedSegmentType =
       cleanText(segmentType);
 const usesContextExpressionMode =
-  analysisMode ===
-  "context-expression-v1";
-    const usageModel =
-      usesContextExpressionMode
-        ? openAITerraModel
-        : openAIModel;
+  isContextExpressionAnalysisMode(
+    analysisMode
+  );
+    const usageModel = openAIModel;
     if (
       cleanedSelectedText.length >
         200 ||
@@ -3156,13 +3163,7 @@ const analysisMode =
 
     const cleanedText =
       cleanText(text);
-      const usesContextExpressionMode =
-  analysisMode ===
-  "context-expression-v1";
-      const usageModel =
-        usesContextExpressionMode
-          ? openAITerraModel
-          : openAIModel;
+      const usageModel = openAIModel;
 
     if (
       cleanedText.length > 1000

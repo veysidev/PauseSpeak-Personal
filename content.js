@@ -350,7 +350,7 @@ let sentenceTranslationPrefetchPromise = null;
 let currentSubtitleChunks = [];
 let currentSubtitleChunkTranslations = [];
 
-let isChunkTranslationVisible = false;
+const isChunkTranslationVisible = false;
 let isSubtitlePanelHidden = false;
 let subtitleHiddenAtSentence = "";
 let isPrivacyCurtainActive = false;
@@ -475,34 +475,6 @@ improveTranslationButton.setAttribute(
 improveTranslationButton.disabled =
   true;
 
-const improveSegmentationButton =
-  document.createElement("button");
-
-improveSegmentationButton.type =
-  "button";
-
-improveSegmentationButton.className =
-  "ps-terra-action ps-action-hidden";
-
-improveSegmentationButton.textContent =
-  "AI Parçalama+";
-
-improveSegmentationButton.title =
-  "Cümleyi daha doğal konuşma parçalarına ayır";
-
-improveSegmentationButton.setAttribute(
-  "aria-label",
-  improveSegmentationButton.title
-);
-
-improveSegmentationButton.setAttribute(
-  "aria-hidden",
-  "true"
-);
-
-improveSegmentationButton.disabled =
-  true;
-
 const pronunciationCoachButton =
   document.createElement("button");
 
@@ -620,13 +592,6 @@ turkishTranslationSpeechToggleButton.textContent =
 
 automaticPauseToggleButton.textContent =
   "Otomatik Durdurma: Açık";
-  const chunkPracticeButton =
-  document.createElement("button");
-
-chunkPracticeButton.textContent =
-  "Parça Çevirisi: Kapalı";
-chunkPracticeButton.disabled = true;
-
   const replayButton = document.createElement("button");
   replayButton.textContent = "Cümleyi Tekrar Oynat";
   replayButton.disabled = true;
@@ -1070,8 +1035,6 @@ chunkPracticeButton.disabled = true;
     "pausespeak-subtitle-turkish";
   improveTranslationButton.id =
     "pausespeak-improve-button";
-  improveSegmentationButton.id =
-    "pausespeak-improve-segmentation-button";
   pronunciationCoachButton.id =
     "pausespeak-pronunciation-coach-button";
   subtitleCloseButton.id =
@@ -1409,7 +1372,7 @@ chunkPracticeButton.disabled = true;
   const fontScaleRange =
     document.createElement("input");
   fontScaleRange.type = "range";
-  fontScaleRange.min = "80";
+  fontScaleRange.min = "60";
   fontScaleRange.max = "140";
   fontScaleRange.step = "5";
   fontScaleRange.value = "100";
@@ -1429,7 +1392,7 @@ chunkPracticeButton.disabled = true;
   const opacityRange =
     document.createElement("input");
   opacityRange.type = "range";
-  opacityRange.min = "45";
+  opacityRange.min = "25";
   opacityRange.max = "98";
   opacityRange.step = "1";
   opacityRange.value = "88";
@@ -1489,8 +1452,10 @@ chunkPracticeButton.disabled = true;
   let isInterfaceHidden = false;
   let isPlayerShellCollapsed = false;
   let controlsHideTimeout = null;
-  const fullscreenControlsHideDelayMs =
-    5000;
+  let controlsPlaybackVideo = null;
+  let controlsPlaybackPausedState = null;
+  const interfaceControlsHideDelayMs =
+    3000;
   const playbackRates = [
     0.75,
     1,
@@ -1964,7 +1929,6 @@ Object.assign(chunkBox.style, {
   pronunciationToggleButton,
   turkishTranslationSpeechToggleButton,
   automaticPauseToggleButton,
-  chunkPracticeButton,
   transcriptButton,
   usageButton,
   pauseButton,
@@ -2070,20 +2034,6 @@ Object.assign(
   {
     backgroundImage:
       automaticPauseButtonIconSvg,
-    backgroundRepeat: "no-repeat",
-    backgroundPosition: "16px center",
-    backgroundSize: "20px 20px",
-    paddingLeft: "50px"
-  }
-);
-const chunkPracticeButtonIconSvg =
-  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0%200%2024%2024' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9%203H5a2%202%200%200%200-2%202v4h1.5a2.5%202.5%200%201%201%200%205H3v5a2%202%200%200%200%202%202h5v-1.5a2.5%202.5%200%201%201%205%200V21h4a2%202%200%200%200%202-2v-5h-1.5a2.5%202.5%200%201%201%200-5H21V5a2%202%200%200%200-2-2h-4v1.5a2.5%202.5%200%201%201-5%200V3Z'/%3E%3C/svg%3E\")";
-
-Object.assign(
-  chunkPracticeButton.style,
-  {
-    backgroundImage:
-      chunkPracticeButtonIconSvg,
     backgroundRepeat: "no-repeat",
     backgroundPosition: "16px center",
     backgroundSize: "20px 20px",
@@ -2197,7 +2147,6 @@ moreButton.textContent =
   pronunciationToggleButton,
   turkishTranslationSpeechToggleButton,
   automaticPauseToggleButton,
-  chunkPracticeButton,
   transcriptButton,
   usageButton,
   pauseButton,
@@ -4234,8 +4183,7 @@ async function prefetchNormalSentenceTranslation(
 
   if (
     requestNumber !==
-      sentenceTranslationPrefetchRequestNumber ||
-    isChunkTranslationVisible
+      sentenceTranslationPrefetchRequestNumber
   ) {
     return;
   }
@@ -4244,26 +4192,6 @@ async function prefetchNormalSentenceTranslation(
     sentence,
     data.translation
   );
-}
-
-async function prefetchChunkedSentenceTranslation(
-  sentence,
-  requestNumber,
-  signal
-) {
-  await fetchSubtitleChunks(
-    sentence,
-    signal
-  );
-
-  if (
-    requestNumber !==
-      sentenceTranslationPrefetchRequestNumber ||
-    !isChunkTranslationVisible
-  ) {
-    return;
-  }
-
 }
 
 function scheduleSentenceTranslationPrefetch(
@@ -4278,14 +4206,10 @@ function scheduleSentenceTranslationPrefetch(
     return;
   }
 
-  const mode =
-    isChunkTranslationVisible
-      ? "chunk"
-      : "normal";
   const normalizedSentence =
     cleanText(sentence.text);
   const prefetchKey =
-    `${mode}:${normalizedSentence.toLocaleLowerCase("en-US")}`;
+    `normal:${normalizedSentence.toLocaleLowerCase("en-US")}`;
 
   if (
     prefetchKey ===
@@ -4295,30 +4219,8 @@ function scheduleSentenceTranslationPrefetch(
   }
 
   if (
-    mode === "normal" &&
     getCachedCueTranslation(
       normalizedSentence
-    )
-  ) {
-    cancelSentenceTranslationPrefetch();
-    sentenceTranslationPrefetchKey =
-      prefetchKey;
-    return;
-  }
-
-  const cachedChunks =
-    mode === "chunk"
-      ? getCachedSubtitleChunks(
-          normalizedSentence
-        )
-      : null;
-
-  if (
-    mode === "chunk" &&
-    cachedChunks &&
-    getCachedSubtitleChunkTranslations(
-      normalizedSentence,
-      cachedChunks
     )
   ) {
     cancelSentenceTranslationPrefetch();
@@ -4352,18 +4254,12 @@ function scheduleSentenceTranslationPrefetch(
     prefetchKey;
 
   const prefetchWork =
-    mode === "chunk"
-      ? prefetchChunkedSentenceTranslation(
-          normalizedSentence,
-          requestNumber,
-          controller.signal
-        )
-      : prefetchNormalSentenceTranslation(
-          normalizedSentence,
-          previousText,
-          requestNumber,
-          controller.signal
-        );
+    prefetchNormalSentenceTranslation(
+      normalizedSentence,
+      previousText,
+      requestNumber,
+      controller.signal
+    );
 
   sentenceTranslationPrefetchPromise =
     prefetchWork
@@ -6179,92 +6075,48 @@ function updateTerraImproveButtonState() {
     completedText !== "" &&
     completedText !==
       "Henüz tamamlanan cümle yok.";
+  const isActiveRequest =
+    isTerraImprovePending &&
+    terraImprovePendingAction ===
+      "translation";
+  const accessibleName =
+    "Türkçe çeviriyi daha doğal ve akıcı hale getir";
 
-  const mode = isChunkTranslationVisible
-    ? "chunk"
-    : "normal";
-  const buttonSettings = [
-    {
-      action: "translation",
-      button: improveTranslationButton,
-      icon: "waveSpark",
-      label: "AI Çeviri+",
-      accessibleName:
-        mode === "chunk"
-          ? "Parça çevirilerini daha doğal ve akıcı hale getir"
-          : "Türkçe çeviriyi daha doğal ve akıcı hale getir"
-    },
-    {
-      action: "segmentation",
-      button: improveSegmentationButton,
-      icon: "parts",
-      label: "AI Parçalama+",
-      accessibleName:
-        mode === "chunk"
-          ? "Cümlenin konuşma parçası sınırlarını iyileştir"
-          : "Cümleyi doğal konuşma parçalarına ayır ve sonucu göster"
-    }
-  ];
+  improveTranslationButton.title =
+    accessibleName;
+  improveTranslationButton.setAttribute(
+    "aria-label",
+    accessibleName
+  );
+  improveTranslationButton.dataset.mode =
+    "normal";
+  improveTranslationButton.dataset.action =
+    "translation";
+  improveTranslationButton.disabled =
+    isTerraImprovePending ||
+    !hasCompletedSentence;
+  improveTranslationButton.classList.toggle(
+    "ps-loading",
+    isActiveRequest
+  );
 
-  buttonSettings.forEach(
-    ({
-      action,
-      button,
-      icon,
-      label,
-      accessibleName
-    }) => {
-      const isActiveRequest =
-        isTerraImprovePending &&
-        terraImprovePendingAction ===
-          action;
-      const isVisible =
-        action !== "segmentation" ||
-        mode === "chunk";
+  if (isActiveRequest) {
+    improveTranslationButton.setAttribute(
+      "aria-busy",
+      "true"
+    );
+  } else {
+    improveTranslationButton.removeAttribute(
+      "aria-busy"
+    );
+  }
 
-      button.title = accessibleName;
-      button.setAttribute(
-        "aria-label",
-        accessibleName
-      );
-      button.dataset.mode = mode;
-      button.dataset.action = action;
-      button.classList.toggle(
-        "ps-action-hidden",
-        !isVisible
-      );
-      button.setAttribute(
-        "aria-hidden",
-        String(!isVisible)
-      );
-      button.disabled =
-        !isVisible ||
-        isTerraImprovePending ||
-        !hasCompletedSentence;
-      button.classList.toggle(
-        "ps-loading",
-        isActiveRequest
-      );
-
-      if (isActiveRequest) {
-        button.setAttribute(
-          "aria-busy",
-          "true"
-        );
-      } else {
-        button.removeAttribute(
-          "aria-busy"
-        );
-      }
-
-      setPauseSpeakButton(
-        button,
-        icon,
-        isActiveRequest
-          ? "Yükleniyor"
-          : label
-      );
-    }
+  setPauseSpeakButton(
+    improveTranslationButton,
+    "waveSpark",
+    isActiveRequest
+      ? "Yükleniyor"
+      : "AI Çeviri+"
   );
 }
 
@@ -10784,7 +10636,7 @@ async function requestStudyMeaning(
   sentence,
   segmentType,
   analysisMode:
-    "context-expression-v1"
+    "context-expression-luna-v1"
 }),
 
           signal:
@@ -10908,7 +10760,7 @@ async function requestStudySegments(
    body: JSON.stringify({
   text: sentence,
   analysisMode:
-    "context-expression-v1"
+    "context-expression-luna-v1"
 }),
 
         signal: controller.signal
@@ -13885,17 +13737,12 @@ pronunciationToggleButton.addEventListener(
 
      speakButton.disabled = true;
 
-chunkPracticeButton.disabled =
-  completedStartTimeMs === null;
-
 return;
     }
 
     speakButton.disabled =
       completedStartTimeMs === null ||
       !SpeechRecognitionClass;
-     chunkPracticeButton.disabled =
-  completedStartTimeMs === null;
 
     const video = getNetflixVideo();
 
@@ -13940,79 +13787,6 @@ automaticPauseToggleButton.addEventListener(
         : "Otomatik Durdurma: Kapalı";
 
 
-  }
-);
-chunkPracticeButton.addEventListener(
-  "click",
-  () => {
-    cancelTerraImprovement();
-
-    isChunkTranslationVisible =
-      !isChunkTranslationVisible;
-
-    updateTerraImproveButtonState();
-
-    cancelSentenceTranslationPrefetch();
-
-    setPauseSpeakButton(
-      chunkPracticeButton,
-      "parts",
-      isChunkTranslationVisible
-        ? "Parçalar açık"
-        : "Parçalar"
-    );
-    chunkPracticeButton.classList.toggle(
-      "ps-active",
-      isChunkTranslationVisible
-    );
-
-    if (isChunkTranslationVisible) {
-      stopNormalTranslation();
-      stopTranslationSpeech();
-    }
-
-    if (
-      completedStartTimeMs === null ||
-      completedBox.textContent ===
-        "Henüz tamamlanan cümle yok."
-    ) {
-      scheduleSentenceTranslationPrefetch();
-      return;
-    }
-
-    if (
-      !isChunkTranslationVisible
-    ) {
-      subtitleTranslationRequestNumber +=
-        1;
-
-      if (
-        subtitleTranslationAbortController
-      ) {
-        subtitleTranslationAbortController
-          .abort();
-
-        subtitleTranslationAbortController =
-          null;
-      }
-
-      renderChunkedSubtitle();
-
-      void translateSentence(
-        completedBox.textContent,
-        currentTranslationPreviousText
-      );
-
-      scheduleSentenceTranslationPrefetch();
-
-      return;
-    }
-
-    void loadStudySegments(
-      completedBox.textContent
-    );
-
-    scheduleSentenceTranslationPrefetch();
   }
 );
   function finishSentence(video) {
@@ -14119,8 +13893,6 @@ if (
       completedStartTimeMs + 800,
       currentTime * 1000
     );
-chunkPracticeButton.disabled =
-  false;
 
 updateTerraImproveButtonState();
 
@@ -14492,8 +14264,19 @@ function seekVideoRelative(seconds) {
   updatePlayerChrome();
 }
 
-function showInterfaceControls() {
+function showInterfaceControls(
+  allowReveal = false
+) {
   if (isInterfaceHidden) {
+    return;
+  }
+
+  if (
+    controlsPanel.classList.contains(
+      "ps-controls-hidden"
+    ) &&
+    !allowReveal
+  ) {
     return;
   }
 
@@ -14504,10 +14287,6 @@ function showInterfaceControls() {
   if (controlsHideTimeout) {
     clearTimeout(controlsHideTimeout);
     controlsHideTimeout = null;
-  }
-
-  if (!document.fullscreenElement) {
-    return;
   }
 
   controlsHideTimeout =
@@ -14523,22 +14302,26 @@ function showInterfaceControls() {
           "ps-open"
         )
       );
+      const hasOpenWorkPanel =
+        transcriptOverlay.style.display !==
+          "none" ||
+        usageOverlay.style.display !==
+          "none" ||
+        studyMeaningOverlay.classList.contains(
+          "ps-open"
+        ) ||
+        isPronunciationCoachOpen;
 
       if (
-        document.fullscreenElement &&
         video &&
-        !video.paused &&
         !hasOpenMenu &&
-        transcriptOverlay.style.display ===
-          "none" &&
-        usageOverlay.style.display ===
-          "none"
+        !hasOpenWorkPanel
       ) {
         controlsPanel.classList.add(
           "ps-controls-hidden"
         );
       }
-    }, fullscreenControlsHideDelayMs);
+    }, interfaceControlsHideDelayMs);
 }
 
 function updateVideoStatus() {
@@ -14554,6 +14337,8 @@ function updateVideoStatus() {
       "none";
     setTranscriptPanelVisibility(false);
     lastVideoFound = null;
+    controlsPlaybackVideo = null;
+    controlsPlaybackPausedState = null;
     return;
   }
 
@@ -14585,7 +14370,6 @@ function updateVideoStatus() {
       speakButton.disabled =
         completedStartTimeMs === null ||
         !SpeechRecognitionClass;
-      showInterfaceControls();
     } else {
       status.textContent =
         "⏳ Video aranıyor...";
@@ -14593,6 +14377,24 @@ function updateVideoStatus() {
       playButton.disabled = true;
       replayButton.disabled = true;
       speakButton.disabled = true;
+    }
+  }
+
+  const playbackPausedState = video
+    ? Boolean(video.paused)
+    : null;
+  const playbackStateChanged =
+    video !== controlsPlaybackVideo ||
+    playbackPausedState !==
+      controlsPlaybackPausedState;
+
+  if (playbackStateChanged) {
+    controlsPlaybackVideo = video;
+    controlsPlaybackPausedState =
+      playbackPausedState;
+
+    if (video) {
+      showInterfaceControls();
     }
   }
 
@@ -15031,11 +14833,6 @@ setPauseSpeakButton(
   "AI Çeviri+"
 );
 setPauseSpeakButton(
-  improveSegmentationButton,
-  "parts",
-  "AI Parçalama+"
-);
-setPauseSpeakButton(
   pronunciationCoachButton,
   "coach"
 );
@@ -15096,7 +14893,6 @@ setPauseSpeakButton(
 );
 
 [
-  chunkPracticeButton,
   replayButton,
   transcriptButton
 ].forEach((button) => {
@@ -15104,11 +14900,6 @@ setPauseSpeakButton(
     "ps-command-button";
 });
 
-setPauseSpeakButton(
-  chunkPracticeButton,
-  "parts",
-  "Parçalar"
-);
 setPauseSpeakButton(
   replayButton,
   "replay",
@@ -15231,7 +15022,6 @@ panel.replaceChildren(
 
 subtitleActionsRow.replaceChildren(
   improveTranslationButton,
-  improveSegmentationButton,
   pronunciationCoachButton
 );
 
@@ -15261,7 +15051,6 @@ progressRow.append(
   durationLabel
 );
 commandRow.append(
-  chunkPracticeButton,
   replayButton,
   seekBackwardButton,
   playPauseButton,
@@ -15364,15 +15153,6 @@ improveTranslationButton.addEventListener(
   () => {
     void improveCurrentWithTerra(
       "translation"
-    );
-  }
-);
-
-improveSegmentationButton.addEventListener(
-  "click",
-  () => {
-    void improveCurrentWithTerra(
-      "segmentation"
     );
   }
 );
@@ -15826,6 +15606,72 @@ progressRange.addEventListener(
   }
 );
 
+function getSubtitleCardLayout(
+  percentage
+) {
+  const boundedPercentage = Math.min(
+    140,
+    Math.max(60, Number(percentage) || 100)
+  );
+  const textScale =
+    boundedPercentage / 100;
+  const widthScale = Math.min(
+    1.15,
+    Math.max(
+      0.85,
+      0.625 +
+        boundedPercentage * 0.00375
+    )
+  );
+  const densityScale = Math.min(
+    1.15,
+    Math.max(0.6, textScale)
+  );
+  const actionScale = Math.min(
+    1,
+    Math.max(0.9, textScale)
+  );
+  const toUnit = (value, unit) =>
+    `${Number(value.toFixed(2))}${unit}`;
+
+  return {
+    "--ps-subtitle-card-width-vw":
+      toUnit(52 * widthScale, "vw"),
+    "--ps-subtitle-card-width-compact-vw":
+      toUnit(68 * widthScale, "vw"),
+    "--ps-subtitle-card-max-width":
+      toUnit(680 * widthScale, "px"),
+    "--ps-subtitle-card-compact-max-width":
+      toUnit(650 * widthScale, "px"),
+    "--ps-subtitle-card-padding-top":
+      toUnit(36 * densityScale, "px"),
+    "--ps-subtitle-card-padding-inline":
+      toUnit(48 * densityScale, "px"),
+    "--ps-subtitle-card-padding-bottom":
+      toUnit(30 * densityScale, "px"),
+    "--ps-subtitle-card-compact-padding-top":
+      toUnit(21 * densityScale, "px"),
+    "--ps-subtitle-card-compact-padding-inline":
+      toUnit(28 * densityScale, "px"),
+    "--ps-subtitle-card-compact-padding-bottom":
+      toUnit(25 * densityScale, "px"),
+    "--ps-subtitle-card-mobile-padding-top":
+      toUnit(15 * densityScale, "px"),
+    "--ps-subtitle-card-mobile-padding-inline":
+      toUnit(18 * densityScale, "px"),
+    "--ps-subtitle-card-mobile-padding-bottom":
+      toUnit(18 * densityScale, "px"),
+    "--ps-subtitle-card-translation-gap":
+      toUnit(13 * densityScale, "px"),
+    "--ps-subtitle-card-actions-gap":
+      toUnit(14 * densityScale, "px"),
+    "--ps-subtitle-card-action-height":
+      toUnit(40 * actionScale, "px"),
+    "--ps-subtitle-card-action-icon-size":
+      toUnit(42 * actionScale, "px")
+  };
+}
+
 fontScaleRange.addEventListener(
   "input",
   () => {
@@ -15836,6 +15682,18 @@ fontScaleRange.addEventListener(
       "--ps-subtitle-scale",
       String(percentage / 100)
     );
+    const cardLayout =
+      getSubtitleCardLayout(
+        percentage
+      );
+
+    for (const [property, value] of
+      Object.entries(cardLayout)) {
+      controlsPanel.style.setProperty(
+        property,
+        value
+      );
+    }
     fontScaleLabel.querySelector(
       "strong"
     ).textContent = `${percentage}%`;
@@ -15973,7 +15831,7 @@ try {
   );
 
   if (
-    savedScale >= 80 &&
+    savedScale >= 60 &&
     savedScale <= 140
   ) {
     fontScaleRange.value =
@@ -15984,7 +15842,7 @@ try {
   }
 
   if (
-    savedOpacity >= 45 &&
+    savedOpacity >= 25 &&
     savedOpacity <= 98
   ) {
     opacityRange.value =
@@ -16218,15 +16076,28 @@ window.setInterval(
   1000
 );
 
+function handleInterfacePointerActivity(
+  event
+) {
+  if (
+    event.type === "pointermove" &&
+    event.pointerType &&
+    event.pointerType !== "mouse"
+  ) {
+    return;
+  }
+
+  showInterfaceControls(true);
+}
+
 [
   "pointermove",
   "pointerdown",
-  "touchstart",
-  "keydown"
+  "touchstart"
 ].forEach((eventName) => {
   document.addEventListener(
     eventName,
-    showInterfaceControls,
+    handleInterfacePointerActivity,
     {
       capture: true,
       passive: true
