@@ -293,31 +293,6 @@ const usageTtsDurationApiUrl =
   let replayGuardUntilVideoTime = null;
   let isReplayPlaybackActive = false;
   let isAutomaticRetryReplay = false;
-  let replayPauseGeneration = 0;
-
-  const sentencePauseConfig =
-    Object.freeze({
-      schedulerLeadMs: 0,
-      lateGraceMs: 150,
-      subtitleOffsetMs: 0,
-      minArmLeadAfterSeekMs: 100
-    });
-  const captionEngineVersion =
-    "1.2.3-legacy-capture-v2";
-
-  const sentencePauseController = {
-    video: null,
-    trackId: "",
-    timelineKey: "",
-    timeline: [],
-    armed: null,
-    lastMediaMs: null,
-    settled: new Map(),
-    callbackId: null,
-    callbackKind: "",
-    eventAbortController: null,
-    generation: 0
-  };
 
   let previousCompletedSentence = "";
 
@@ -356,8 +331,6 @@ let activeTranscriptSeekRequestId = "";
 let lastSubtitleTrackRequestAt = 0;
 let visibleSubtitleCueStartMs = null;
 let visibleSubtitleCueText = "";
-let lastIndependentVisibleSubtitle = "";
-let lastIndependentVisibleSubtitleAt = 0;
 const visibleSubtitleCues = [];
 let subtitleChunkRequestNumber = 0;
 let subtitleChunkAbortController = null;
@@ -1465,14 +1438,6 @@ automaticPauseToggleButton.textContent =
     "ps-export-section-label";
   exportLanguagesLabel.textContent =
     "İndirme dili";
-
-  const diagnosticExportButton =
-    document.createElement("button");
-  diagnosticExportButton.type = "button";
-  diagnosticExportButton.textContent =
-    "Tanılama JSON";
-  diagnosticExportButton.title =
-    "Geçerli zamanın çevresindeki ham cue, blok, cümle ve durdurma sınırlarını indir";
 
   const transcriptSettingsButton =
     document.createElement("button");
@@ -3544,73 +3509,17 @@ function normalizeIncomingSubtitleTrack(
   }
 
   const cues = track.cues
-    .map((cue, sourceIndex) => {
-      const text = normalizeTranscriptText(
+    .map((cue) => ({
+      startTimeMs: Math.round(
+        Number(cue?.startTimeMs)
+      ),
+      endTimeMs: Math.round(
+        Number(cue?.endTimeMs)
+      ),
+      text: normalizeTranscriptText(
         cue?.text
-      );
-
-      return {
-        id:
-          String(cue?.id || "") ||
-          `cue-${Math.round(
-            Number(cue?.startTimeMs)
-          )}-${Math.round(
-            Number(cue?.endTimeMs)
-          )}-${sourceIndex}`,
-        startTimeMs: Math.round(
-          Number(cue?.startTimeMs)
-        ),
-        endTimeMs: Math.round(
-          Number(cue?.endTimeMs)
-        ),
-        sourceOrder: Number.isFinite(
-          Number(cue?.sourceOrder)
-        )
-          ? Math.round(
-              Number(cue.sourceOrder)
-            )
-          : sourceIndex,
-        sourceKind:
-          String(cue?.sourceKind || ""),
-        regionId:
-          String(cue?.regionId || ""),
-        laneKey:
-          String(
-            cue?.laneKey ||
-              cue?.regionId ||
-              "default"
-          ),
-        styleId:
-          String(cue?.styleId || ""),
-        cueSettings:
-          String(cue?.cueSettings || ""),
-        visualX:
-          cue?.visualX !== null &&
-          cue?.visualX !== "" &&
-          Number.isFinite(
-            Number(cue?.visualX)
-          )
-          ? Number(cue.visualX)
-          : null,
-        visualY:
-          cue?.visualY !== null &&
-          cue?.visualY !== "" &&
-          Number.isFinite(
-            Number(cue?.visualY)
-          )
-          ? Number(cue.visualY)
-          : null,
-        lines: Array.isArray(cue?.lines)
-          ? cue.lines
-              .map(
-                normalizeTranscriptText
-              )
-              .filter(Boolean)
-              .slice(0, 20)
-          : [text],
-        text
-      };
-    })
+      )
+    }))
     .filter(
       (cue) =>
         Number.isFinite(
@@ -3629,9 +3538,7 @@ function normalizeIncomingSubtitleTrack(
         first.startTimeMs -
           second.startTimeMs ||
         first.endTimeMs -
-          second.endTimeMs ||
-        first.sourceOrder -
-          second.sourceOrder
+          second.endTimeMs
     )
     .slice(0, 10000);
 
@@ -3649,102 +3556,8 @@ function normalizeIncomingSubtitleTrack(
       normalizeTranscriptText(
         track.format
       ),
-    parserVersion:
-      normalizeTranscriptText(
-        track.parserVersion
-      ),
-    sourcePath:
-      normalizeTranscriptText(
-        track.sourcePath
-      ),
     cues
   };
-}
-
-function findLastTranscriptCueStartIndex(
-  cues,
-  timeMs
-) {
-  if (
-    !Array.isArray(cues) ||
-    cues.length === 0 ||
-    !Number.isFinite(timeMs)
-  ) {
-    return -1;
-  }
-
-  let low = 0;
-  let high = cues.length - 1;
-  let candidate = -1;
-
-  while (low <= high) {
-    const middle = Math.floor(
-      (low + high) / 2
-    );
-
-    if (
-      cues[middle].startTimeMs <=
-      timeMs
-    ) {
-      candidate = middle;
-      low = middle + 1;
-    } else {
-      high = middle - 1;
-    }
-  }
-
-  return candidate;
-}
-
-function getActiveTranscriptCues(
-  cues,
-  timeMs
-) {
-  const lastStartedIndex =
-    findLastTranscriptCueStartIndex(
-      cues,
-      timeMs
-    );
-
-  if (lastStartedIndex < 0) {
-    return [];
-  }
-
-  const activeCues = [];
-  const minimumIndex = Math.max(
-    0,
-    lastStartedIndex - 79
-  );
-  const activeGroupStartTimeMs = Number(
-    cues[lastStartedIndex]?.startTimeMs
-  );
-
-  for (
-    let index = lastStartedIndex;
-    index >= minimumIndex;
-    index -= 1
-  ) {
-    const cue = cues[index];
-    const cueStartTimeMs = Number(
-      cue?.startTimeMs
-    );
-
-    if (
-      cueStartTimeMs <
-      activeGroupStartTimeMs - 50
-    ) {
-      break;
-    }
-
-    if (
-      timeMs <=
-      Number(cue?.endTimeMs) + 600
-    ) {
-      activeCues.push({ cue, index });
-    }
-  }
-
-  return activeCues.reverse();
 }
 
 function findTranscriptCueIndex(
@@ -3770,7 +3583,7 @@ function findTranscriptCueIndex(
 
     if (
       cues[middle].startTimeMs <=
-      timeMs
+      timeMs + 250
     ) {
       candidate = middle;
       low = middle + 1;
@@ -3900,1139 +3713,6 @@ function getTranscriptCues() {
     track: null,
     cues: visibleSubtitleCues
   };
-}
-
-function buildCaptionTimelineData(cues) {
-  if (!Array.isArray(cues)) {
-    return {
-      blocks: [],
-      events: [],
-      sentences: []
-    };
-  }
-
-  const blocks = cues
-    .map((cue, sourceIndex) => {
-      const displayText =
-        normalizeTranscriptText(
-          cue?.text
-        );
-      const startTimeMs = Number(
-        cue?.startTimeMs
-      );
-      const endTimeMs = Number(
-        cue?.endTimeMs
-      );
-
-      if (
-        !displayText ||
-        !Number.isFinite(startTimeMs) ||
-        !Number.isFinite(endTimeMs) ||
-        endTimeMs <= startTimeMs
-      ) {
-        return null;
-      }
-
-      const visualX =
-        cue?.visualX !== null &&
-        cue?.visualX !== ""
-          ? Number(cue?.visualX)
-          : null;
-      const visualY =
-        cue?.visualY !== null &&
-        cue?.visualY !== ""
-          ? Number(cue?.visualY)
-          : null;
-
-      return {
-        id:
-          String(cue?.id || "") ||
-          `block-${Math.round(
-            startTimeMs
-          )}-${Math.round(
-            endTimeMs
-          )}-${sourceIndex}`,
-        startTimeMs,
-        endTimeMs,
-        displayText,
-        text: displayText,
-        lines: Array.isArray(cue?.lines)
-          ? cue.lines
-              .map(
-                normalizeTranscriptText
-              )
-              .filter(Boolean)
-          : [displayText],
-        sourceOrder: Number.isFinite(
-          Number(cue?.sourceOrder)
-        )
-          ? Number(cue.sourceOrder)
-          : sourceIndex,
-        sourceKind:
-          String(cue?.sourceKind || ""),
-        regionId:
-          String(cue?.regionId || ""),
-        laneKey:
-          String(
-            cue?.laneKey ||
-              cue?.regionId ||
-              "default"
-          ),
-        styleId:
-          String(cue?.styleId || ""),
-        cueSettings:
-          String(cue?.cueSettings || ""),
-        visualX:
-          Number.isFinite(visualX)
-            ? visualX
-            : null,
-        visualY:
-          Number.isFinite(visualY)
-            ? visualY
-            : null
-      };
-    })
-    .filter(Boolean)
-    .sort(
-      (first, second) =>
-        first.startTimeMs -
-          second.startTimeMs ||
-        (
-          Number.isFinite(first.visualY) &&
-          Number.isFinite(second.visualY)
-            ? first.visualY - second.visualY
-            : 0
-        ) ||
-        (
-          Number.isFinite(first.visualX) &&
-          Number.isFinite(second.visualX)
-            ? first.visualX - second.visualX
-            : 0
-        ) ||
-        first.sourceOrder -
-          second.sourceOrder ||
-        first.endTimeMs -
-          second.endTimeMs
-    );
-
-  const eventDrafts = [];
-
-  for (const block of blocks) {
-    let eventDraft = null;
-
-    for (
-      let index =
-        eventDrafts.length - 1;
-      index >= 0 &&
-        index >=
-          eventDrafts.length - 8;
-      index -= 1
-    ) {
-      const candidate =
-        eventDrafts[index];
-
-      if (
-        candidate.laneKey ===
-          block.laneKey &&
-        Math.abs(
-          candidate.anchorStartTimeMs -
-            block.startTimeMs
-        ) <= 80 &&
-        Math.abs(
-          candidate.anchorEndTimeMs -
-            block.endTimeMs
-        ) <= 250
-      ) {
-        eventDraft = candidate;
-        break;
-      }
-    }
-
-    if (!eventDraft) {
-      eventDraft = {
-        laneKey: block.laneKey,
-        anchorStartTimeMs:
-          block.startTimeMs,
-        anchorEndTimeMs:
-          block.endTimeMs,
-        blocks: []
-      };
-      eventDrafts.push(eventDraft);
-    }
-
-    eventDraft.blocks.push(block);
-  }
-
-  const events = eventDrafts
-    .map((draft, eventIndex) => {
-      const orderedBlocks = [
-        ...draft.blocks
-      ].sort(
-        (first, second) =>
-          (
-            Number.isFinite(
-              first.visualY
-            ) &&
-            Number.isFinite(
-              second.visualY
-            )
-              ? first.visualY -
-                second.visualY
-              : 0
-          ) ||
-          (
-            Number.isFinite(
-              first.visualX
-            ) &&
-            Number.isFinite(
-              second.visualX
-            )
-              ? first.visualX -
-                second.visualX
-              : 0
-          ) ||
-          first.sourceOrder -
-            second.sourceOrder
-      );
-      const layoutPositions =
-        orderedBlocks
-          .filter(
-            (block) =>
-              Number.isFinite(
-                block.visualY
-              )
-          )
-          .map(
-            (block) =>
-              `${block.visualY}:${
-                Number.isFinite(
-                  block.visualX
-                )
-                  ? block.visualX
-                  : ""
-              }`
-          );
-      const hasLayoutOrder =
-        orderedBlocks.length === 1 ||
-        (
-          layoutPositions.length ===
-            orderedBlocks.length &&
-          new Set(layoutPositions).size ===
-            orderedBlocks.length
-        );
-      const displayText =
-        orderedBlocks.reduce(
-          (combinedText, block) =>
-            mergeOverlappingSubtitleText(
-              combinedText,
-              block.displayText
-            ),
-          ""
-        );
-
-      return {
-        id:
-          `event-${Math.round(
-            Math.min(
-              ...orderedBlocks.map(
-                (block) =>
-                  block.startTimeMs
-              )
-            )
-          )}-${eventIndex}`,
-        laneKey: draft.laneKey,
-        startTimeMs: Math.min(
-          ...orderedBlocks.map(
-            (block) =>
-              block.startTimeMs
-          )
-        ),
-        endTimeMs: Math.max(
-          ...orderedBlocks.map(
-            (block) =>
-              block.endTimeMs
-          )
-        ),
-        displayText,
-        text: displayText,
-        blockIds: orderedBlocks.map(
-          (block) => block.id
-        ),
-        sourceOrders:
-          orderedBlocks.map(
-            (block) =>
-              block.sourceOrder
-          ),
-        orderEvidence:
-          orderedBlocks.length === 1
-            ? "single-block"
-            : hasLayoutOrder
-              ? "layout"
-              : "ambiguous-source-order",
-        reliableOrder: hasLayoutOrder
-      };
-    })
-    .sort(
-      (first, second) =>
-        first.startTimeMs -
-          second.startTimeMs ||
-        first.endTimeMs -
-          second.endTimeMs
-    );
-
-  const sentences = [];
-  const draftsByLane = new Map();
-
-  const flushDraft = (
-    laneKey,
-    boundaryReason = "ambiguous"
-  ) => {
-    const draft =
-      draftsByLane.get(laneKey);
-
-    if (!draft?.text) {
-      draftsByLane.delete(laneKey);
-      return;
-    }
-
-    const spokenText =
-      removeSubtitleDescriptions(
-        draft.text
-      );
-    const finalized =
-      boundaryReason === "punctuation" &&
-      endsSentence(spokenText);
-    const hasReliableTiming =
-      Number.isFinite(
-        draft.startTimeMs
-      ) &&
-      Number.isFinite(
-        draft.endTimeMs
-      ) &&
-      draft.endTimeMs >
-        draft.startTimeMs;
-
-    sentences.push({
-      ...draft,
-      displayText: draft.text,
-      spokenText,
-      finalized,
-      pauseEligible:
-        finalized &&
-        Boolean(spokenText) &&
-        hasReliableTiming &&
-        draft.reliableOrder,
-      boundaryReason
-    });
-    draftsByLane.delete(laneKey);
-  };
-
-  for (const event of events) {
-    const laneKey = event.laneKey;
-    const eventText = event.displayText;
-    const speakerLead = eventText.match(
-      /^([\p{Lu}\d][\p{Lu}\p{N} .'-]{0,30}:)(?:\s|$)/u
-    );
-    const existingDraft =
-      draftsByLane.get(laneKey);
-
-    if (
-      existingDraft &&
-      speakerLead
-    ) {
-      flushDraft(
-        laneKey,
-        "speaker-change"
-      );
-    } else if (
-      existingDraft &&
-      event.startTimeMs >
-        existingDraft.endTimeMs + 1800
-    ) {
-      flushDraft(laneKey, "gap");
-    }
-
-    let draft =
-      draftsByLane.get(laneKey);
-
-    if (!draft) {
-      draft = {
-        laneKey,
-        startTimeMs:
-          event.startTimeMs,
-        endTimeMs: event.endTimeMs,
-        text: "",
-        eventIds: [],
-        blockIds: [],
-        orderEvidence: [],
-        reliableOrder: true
-      };
-      draftsByLane.set(
-        laneKey,
-        draft
-      );
-    }
-
-    draft.text =
-      mergeOverlappingSubtitleText(
-        draft.text,
-        eventText
-      );
-    draft.endTimeMs = Math.max(
-      draft.endTimeMs,
-      event.endTimeMs
-    );
-    draft.eventIds.push(event.id);
-    draft.blockIds.push(
-      ...event.blockIds
-    );
-    draft.orderEvidence.push(
-      event.orderEvidence
-    );
-    draft.reliableOrder =
-      draft.reliableOrder &&
-      event.reliableOrder;
-
-    const spokenEventText =
-      removeSubtitleDescriptions(
-        eventText
-      );
-
-    if (endsSentence(spokenEventText)) {
-      const hasTrailingEllipsis =
-        /(?:\.{2,}|…)["'’”)\]]*$/.test(
-          spokenEventText
-        );
-
-      flushDraft(
-        laneKey,
-        hasTrailingEllipsis
-          ? "ambiguous"
-          : "punctuation"
-      );
-    }
-  }
-
-  for (const laneKey of [
-    ...draftsByLane.keys()
-  ]) {
-    flushDraft(laneKey, "track-end");
-  }
-
-  sentences.sort(
-    (first, second) =>
-      first.startTimeMs -
-        second.startTimeMs ||
-      first.endTimeMs -
-        second.endTimeMs
-  );
-
-  sentences.forEach(
-    (sentence, sentenceIndex) => {
-      sentence.id =
-        `sentence-${Math.round(
-          sentence.startTimeMs
-        )}-${Math.round(
-          sentence.endTimeMs
-        )}-${sentenceIndex}`;
-    }
-  );
-
-  return {
-    blocks,
-    events,
-    sentences
-  };
-}
-
-function groupTranscriptCuesIntoSentences(
-  cues
-) {
-  return buildCaptionTimelineData(
-    cues
-  ).sentences;
-}
-
-function buildSentencePauseTimeline(
-  track
-) {
-  if (!track?.trackId) {
-    return [];
-  }
-
-  const sentences =
-    groupTranscriptCuesIntoSentences(
-      track.cues
-    );
-
-  return sentences
-    .map((sentence) => {
-      const nominalTimeMs =
-        sentence.endTimeMs +
-        sentencePauseConfig.subtitleOffsetMs;
-
-      const effectiveTimeMs =
-        nominalTimeMs -
-        sentencePauseConfig.schedulerLeadMs;
-
-      return {
-        ...sentence,
-        id:
-          `${track.trackId}:${sentence.id}`,
-        nominalTimeMs,
-        effectiveTimeMs,
-        pauseEligible:
-          sentence.pauseEligible &&
-          Number.isFinite(effectiveTimeMs) &&
-          effectiveTimeMs >
-            sentence.startTimeMs
-      };
-    })
-    .filter(
-      (sentence) =>
-        sentence.pauseEligible
-    );
-}
-
-function getSentencePauseTimelineKey(
-  track
-) {
-  const cues = track?.cues || [];
-  const lastCue =
-    cues[cues.length - 1] || null;
-
-  return [
-    track?.trackId || "",
-    cues.length,
-    lastCue?.startTimeMs || 0,
-    lastCue?.endTimeMs || 0,
-    lastCue?.text || ""
-  ].join("|");
-}
-
-function syncSentencePauseTimeline() {
-  const transcript = getTranscriptCues();
-  const track =
-    transcript.source ===
-    "captured_track"
-      ? transcript.track
-      : null;
-  const nextTrackId =
-    track?.trackId || "";
-
-  if (
-    nextTrackId !==
-    sentencePauseController.trackId
-  ) {
-    sentencePauseController.trackId =
-      nextTrackId;
-    sentencePauseController.timelineKey =
-      "";
-    sentencePauseController.timeline = [];
-    sentencePauseController.armed = null;
-    sentencePauseController.lastMediaMs =
-      null;
-    sentencePauseController.settled.clear();
-  }
-
-  if (!track) {
-    return;
-  }
-
-  const timelineKey =
-    getSentencePauseTimelineKey(track);
-
-  if (
-    timelineKey ===
-    sentencePauseController.timelineKey
-  ) {
-    return;
-  }
-
-  sentencePauseController.timelineKey =
-    timelineKey;
-  sentencePauseController.timeline =
-    buildSentencePauseTimeline(track);
-  sentencePauseController.armed = null;
-}
-
-function getReplayPauseBoundary() {
-  if (
-    !isReplayPlaybackActive ||
-    completedStartTimeMs === null ||
-    completedEndTimeMs === null
-  ) {
-    return null;
-  }
-
-  const startTimeMs = Number(
-    completedStartTimeMs
-  );
-  const endTimeMs = Number(
-    completedEndTimeMs
-  );
-  const spokenText = cleanText(
-    completedBox.textContent
-  );
-  const effectiveTimeMs =
-    endTimeMs -
-    sentencePauseConfig.schedulerLeadMs;
-
-  if (
-    !spokenText ||
-    !Number.isFinite(startTimeMs) ||
-    !Number.isFinite(endTimeMs) ||
-    endTimeMs <= startTimeMs ||
-    effectiveTimeMs <= startTimeMs
-  ) {
-    return null;
-  }
-
-  return {
-    id:
-      `replay-${replayPauseGeneration}`,
-    displayText: spokenText,
-    spokenText,
-    startTimeMs,
-    endTimeMs,
-    nominalTimeMs: endTimeMs,
-    effectiveTimeMs,
-    finalized: true,
-    pauseEligible: true,
-    boundaryReason: "punctuation"
-  };
-}
-
-function getActiveSentencePauseTimeline() {
-  const replayBoundary =
-    getReplayPauseBoundary();
-
-  if (replayBoundary) {
-    return [replayBoundary];
-  }
-
-  return sentencePauseController.timeline;
-}
-
-function canMonitorSentencePause(video) {
-  return Boolean(
-    video &&
-    isReplayPlaybackActive &&
-    (
-      isAutomaticPauseEnabled ||
-      isReplayPlaybackActive
-    ) &&
-    !isReplayStarting &&
-    !pronunciationCoachVideoPreview &&
-    !isPrivacyCurtainActive
-  );
-}
-
-function stopSentencePauseClock() {
-  const callbackId =
-    sentencePauseController.callbackId;
-  const callbackKind =
-    sentencePauseController.callbackKind;
-  const video =
-    sentencePauseController.video;
-
-  sentencePauseController.callbackId =
-    null;
-  sentencePauseController.callbackKind =
-    "";
-
-  if (callbackId === null) {
-    return;
-  }
-
-  if (
-    callbackKind === "video-frame" &&
-    typeof video?.cancelVideoFrameCallback ===
-      "function"
-  ) {
-    video.cancelVideoFrameCallback(
-      callbackId
-    );
-  } else if (
-    callbackKind === "animation-frame"
-  ) {
-    window.cancelAnimationFrame(
-      callbackId
-    );
-  }
-}
-
-function findNextSentencePauseBoundary(
-  timeline,
-  settled,
-  nowMs,
-  reason,
-  config = sentencePauseConfig
-) {
-  for (const boundary of timeline) {
-    if (settled.has(boundary.id)) {
-      continue;
-    }
-
-    const effectiveTimeMs = Number(
-      boundary.effectiveTimeMs
-    );
-
-    if (
-      !Number.isFinite(effectiveTimeMs) ||
-      effectiveTimeMs <= nowMs
-    ) {
-      settled.set(
-        boundary.id,
-        "missed"
-      );
-      continue;
-    }
-
-    if (
-      reason === "seeked" &&
-      effectiveTimeMs - nowMs <
-        config.minArmLeadAfterSeekMs
-    ) {
-      settled.set(
-        boundary.id,
-        "missed"
-      );
-      continue;
-    }
-
-    return {
-      boundary,
-      effectiveTimeMs
-    };
-  }
-
-  return null;
-}
-
-function crossedSentencePauseBoundary(
-  lastMediaMs,
-  nowMs,
-  effectiveTimeMs
-) {
-  return (
-    Number.isFinite(lastMediaMs) &&
-    Number.isFinite(nowMs) &&
-    Number.isFinite(effectiveTimeMs) &&
-    lastMediaMs < effectiveTimeMs &&
-    nowMs >= effectiveTimeMs
-  );
-}
-
-function armNextSentencePause(
-  nowMs,
-  reason = "continuous"
-) {
-  sentencePauseController.armed = null;
-
-  const timeline =
-    getActiveSentencePauseTimeline();
-  sentencePauseController.armed =
-    findNextSentencePauseBoundary(
-      timeline,
-      sentencePauseController.settled,
-      nowMs,
-      reason
-    );
-}
-
-function boundaryMatchesIndependentVisible(
-  boundary
-) {
-  if (isReplayPlaybackActive) {
-    return true;
-  }
-
-  if (
-    !lastIndependentVisibleSubtitle ||
-    Date.now() -
-      lastIndependentVisibleSubtitleAt >
-      1800
-  ) {
-    return true;
-  }
-
-  const boundaryText =
-    normalizeSpeechText(
-      boundary?.spokenText ||
-        boundary?.displayText ||
-        ""
-    );
-  const visibleText =
-    normalizeSpeechText(
-      lastIndependentVisibleSubtitle
-    );
-
-  return Boolean(
-    boundaryText &&
-    visibleText &&
-    (
-      boundaryText.includes(
-        visibleText
-      ) ||
-      visibleText.includes(
-        boundaryText
-      )
-    )
-  );
-}
-
-function commitSentencePause(boundary) {
-  const video =
-    sentencePauseController.video;
-
-  if (
-    !video ||
-    sentencePauseController.settled.has(
-      boundary.id
-    )
-  ) {
-    return;
-  }
-
-  if (
-    !boundaryMatchesIndependentVisible(
-      boundary
-    )
-  ) {
-    sentencePauseController.settled.set(
-      boundary.id,
-      "visible-mismatch"
-    );
-    sentencePauseController.armed = null;
-    status.textContent =
-      "⚠️ Altyazı sırası doğrulanamadı — video durdurulmadı";
-    return;
-  }
-
-  sentencePauseController.settled.set(
-    boundary.id,
-    "paused"
-  );
-  sentencePauseController.armed = null;
-  stopSentencePauseClock();
-  video.pause();
-  finishSentence(
-    video,
-    boundary,
-    true
-  );
-}
-
-function tickSentencePauseClock(nowMs) {
-  const video =
-    sentencePauseController.video;
-
-  if (
-    !canMonitorSentencePause(video) ||
-    video.paused ||
-    video.seeking ||
-    !Number.isFinite(nowMs)
-  ) {
-    return;
-  }
-
-  const lastMediaMs =
-    sentencePauseController.lastMediaMs;
-
-  if (
-    lastMediaMs !== null &&
-    nowMs + 50 < lastMediaMs
-  ) {
-    sentencePauseController.armed = null;
-    sentencePauseController.lastMediaMs =
-      nowMs;
-    armNextSentencePause(nowMs, "seeked");
-    return;
-  }
-
-  const armed =
-    sentencePauseController.armed;
-
-  if (
-    armed &&
-    crossedSentencePauseBoundary(
-      lastMediaMs,
-      nowMs,
-      armed.effectiveTimeMs
-    )
-  ) {
-    const latenessMs =
-      nowMs - armed.effectiveTimeMs;
-
-    if (
-      latenessMs <=
-      sentencePauseConfig.lateGraceMs
-    ) {
-      sentencePauseController.lastMediaMs =
-        nowMs;
-      commitSentencePause(
-        armed.boundary
-      );
-      return;
-    }
-
-    sentencePauseController.settled.set(
-      armed.boundary.id,
-      "missed"
-    );
-    sentencePauseController.armed = null;
-  }
-
-  sentencePauseController.lastMediaMs =
-    nowMs;
-
-  if (!sentencePauseController.armed) {
-    armNextSentencePause(
-      nowMs,
-      "continuous"
-    );
-  }
-}
-
-function scheduleSentencePauseClock() {
-  const video =
-    sentencePauseController.video;
-
-  if (
-    sentencePauseController.callbackId !==
-      null ||
-    !sentencePauseController.armed ||
-    !canMonitorSentencePause(video) ||
-    video.paused ||
-    video.seeking
-  ) {
-    return;
-  }
-
-  const generation =
-    sentencePauseController.generation;
-
-  if (
-    typeof video.requestVideoFrameCallback ===
-    "function"
-  ) {
-    sentencePauseController.callbackKind =
-      "video-frame";
-    sentencePauseController.callbackId =
-      video.requestVideoFrameCallback(
-        (_now, metadata) => {
-          sentencePauseController.callbackId =
-            null;
-          sentencePauseController.callbackKind =
-            "";
-
-          if (
-            generation !==
-              sentencePauseController.generation ||
-            video !==
-              sentencePauseController.video
-          ) {
-            return;
-          }
-
-          const mediaTimeMs =
-            Number(metadata?.mediaTime) *
-            1000;
-
-          tickSentencePauseClock(
-            Number.isFinite(mediaTimeMs)
-              ? mediaTimeMs
-              : Number(video.currentTime) *
-                  1000
-          );
-          scheduleSentencePauseClock();
-        }
-      );
-    return;
-  }
-
-  sentencePauseController.callbackKind =
-    "animation-frame";
-  sentencePauseController.callbackId =
-    window.requestAnimationFrame(() => {
-      sentencePauseController.callbackId =
-        null;
-      sentencePauseController.callbackKind =
-        "";
-
-      if (
-        generation !==
-          sentencePauseController.generation ||
-        video !==
-          sentencePauseController.video
-      ) {
-        return;
-      }
-
-      tickSentencePauseClock(
-        Number(video.currentTime) * 1000
-      );
-      scheduleSentencePauseClock();
-    });
-}
-
-function startSentencePauseClock(
-  reason = "continuous"
-) {
-  const video =
-    sentencePauseController.video;
-
-  if (
-    !canMonitorSentencePause(video) ||
-    video.paused ||
-    video.seeking
-  ) {
-    stopSentencePauseClock();
-    return;
-  }
-
-  const nowMs =
-    Number(video.currentTime) * 1000;
-
-  if (!Number.isFinite(nowMs)) {
-    return;
-  }
-
-  sentencePauseController.lastMediaMs =
-    nowMs;
-
-  if (!sentencePauseController.armed) {
-    armNextSentencePause(nowMs, reason);
-  }
-
-  scheduleSentencePauseClock();
-}
-
-function resetSentencePauseController() {
-  stopSentencePauseClock();
-
-  if (
-    sentencePauseController
-      .eventAbortController
-  ) {
-    sentencePauseController
-      .eventAbortController.abort();
-  }
-
-  sentencePauseController.video = null;
-  sentencePauseController.trackId = "";
-  sentencePauseController.timelineKey =
-    "";
-  sentencePauseController.timeline = [];
-  sentencePauseController.armed = null;
-  sentencePauseController.lastMediaMs =
-    null;
-  sentencePauseController.settled.clear();
-  sentencePauseController.callbackId = null;
-  sentencePauseController.callbackKind = "";
-  sentencePauseController.eventAbortController =
-    null;
-  sentencePauseController.generation += 1;
-}
-
-function bindSentencePauseVideo(video) {
-  if (
-    sentencePauseController.video ===
-    video
-  ) {
-    return;
-  }
-
-  resetSentencePauseController();
-
-  if (!video) {
-    return;
-  }
-
-  const eventAbortController =
-    new AbortController();
-  const eventOptions = {
-    signal: eventAbortController.signal
-  };
-
-  sentencePauseController.video = video;
-  sentencePauseController
-    .eventAbortController =
-    eventAbortController;
-
-  video.addEventListener(
-    "play",
-    () => {
-      syncSentencePauseTimeline();
-      sentencePauseController.armed = null;
-      startSentencePauseClock("play");
-    },
-    eventOptions
-  );
-
-  video.addEventListener(
-    "pause",
-    () => {
-      stopSentencePauseClock();
-    },
-    eventOptions
-  );
-
-  video.addEventListener(
-    "seeking",
-    () => {
-      stopSentencePauseClock();
-      sentencePauseController.armed = null;
-      sentencePauseController.lastMediaMs =
-        null;
-    },
-    eventOptions
-  );
-
-  video.addEventListener(
-    "seeked",
-    () => {
-      syncSentencePauseTimeline();
-      sentencePauseController.armed = null;
-      startSentencePauseClock("seeked");
-    },
-    eventOptions
-  );
-
-  video.addEventListener(
-    "timeupdate",
-    () => {
-      tickSentencePauseClock(
-        Number(video.currentTime) * 1000
-      );
-    },
-    eventOptions
-  );
-}
-
-function updateSentencePauseController(
-  video
-) {
-  bindSentencePauseVideo(video);
-  syncSentencePauseTimeline();
-
-  if (
-    !canMonitorSentencePause(video) ||
-    video?.paused ||
-    video?.seeking
-  ) {
-    stopSentencePauseClock();
-    return;
-  }
-
-  if (!sentencePauseController.armed) {
-    startSentencePauseClock(
-      "continuous"
-    );
-  } else {
-    scheduleSentencePauseClock();
-  }
 }
 
 function collectTranscriptSentence(
@@ -5893,224 +4573,6 @@ function downloadSubtitleExport(
   );
 }
 
-function createCaptionDiagnostic() {
-  const video = getNetflixVideo();
-  const transcript = getTranscriptCues();
-  const track = transcript.track;
-  const currentTimeMs = video
-    ? Number(video.currentTime) * 1000
-    : 0;
-  const windowStartTimeMs = Math.max(
-    0,
-    currentTimeMs - 90000
-  );
-  const windowEndTimeMs =
-    currentTimeMs + 90000;
-  const timeline =
-    buildCaptionTimelineData(
-      transcript.cues
-    );
-  const overlapsWindow = (item) =>
-    Number(item?.endTimeMs) >=
-      windowStartTimeMs &&
-    Number(item?.startTimeMs) <=
-      windowEndTimeMs;
-  const visibleDomText =
-    getSubtitleFromVisibleDom();
-  const nativeTrackText =
-    getSubtitleFromNativeTextTracks(
-      video
-    );
-  const capturedTrackText =
-    getSubtitleFromCapturedTrack(video);
-  const activeEvents =
-    timeline.events.filter(
-      (event) =>
-        event.startTimeMs <=
-          currentTimeMs + 250 &&
-        event.endTimeMs >=
-          currentTimeMs - 600
-    );
-  const activeEventText =
-    activeEvents.reduce(
-      (combinedText, event) =>
-        mergeOverlappingSubtitleText(
-          combinedText,
-          event.displayText
-        ),
-      ""
-    );
-  const normalizedVisible =
-    normalizeSpeechText(
-      visibleDomText || nativeTrackText
-    );
-  const normalizedActive =
-    normalizeSpeechText(activeEventText);
-
-  return {
-    schemaVersion: 1,
-    captionEngineVersion,
-    generatedAt:
-      new Date().toISOString(),
-    platform: getPlaybackPlatform(),
-    pageTitle: String(
-      document.title || ""
-    ),
-    currentTimeMs:
-      Math.round(currentTimeMs),
-    windowStartTimeMs:
-      Math.round(windowStartTimeMs),
-    windowEndTimeMs:
-      Math.round(windowEndTimeMs),
-    automaticPauseEnabled:
-      isAutomaticPauseEnabled,
-    visible: {
-      domText: visibleDomText,
-      nativeTextTrackText:
-        nativeTrackText,
-      capturedTrackText,
-      activeEventText,
-      activeEventMatchesVisible:
-        Boolean(
-          normalizedVisible &&
-          normalizedActive &&
-          (
-            normalizedVisible.includes(
-              normalizedActive
-            ) ||
-            normalizedActive.includes(
-              normalizedVisible
-            )
-          )
-        )
-    },
-    track: track
-      ? {
-          trackId: track.trackId,
-          language: track.language,
-          format: track.format,
-          parserVersion:
-            track.parserVersion,
-          sourcePath: track.sourcePath,
-          cueCount: track.cues.length
-        }
-      : null,
-    rawCues: transcript.cues
-      .filter(overlapsWindow)
-      .map((cue) => ({
-        id: cue.id,
-        startTimeMs:
-          cue.startTimeMs,
-        endTimeMs: cue.endTimeMs,
-        sourceOrder:
-          cue.sourceOrder,
-        sourceKind:
-          cue.sourceKind,
-        regionId: cue.regionId,
-        laneKey: cue.laneKey,
-        styleId: cue.styleId,
-        cueSettings:
-          cue.cueSettings,
-        visualX: cue.visualX,
-        visualY: cue.visualY,
-        lines: cue.lines,
-        text: cue.text
-      })),
-    blocks:
-      timeline.blocks.filter(
-        overlapsWindow
-      ),
-    events:
-      timeline.events.filter(
-        overlapsWindow
-      ),
-    sentences:
-      timeline.sentences.filter(
-        overlapsWindow
-      ),
-    pauseBoundaries:
-      sentencePauseController.timeline
-        .filter(overlapsWindow)
-        .map((boundary) => ({
-          id: boundary.id,
-          startTimeMs:
-            boundary.startTimeMs,
-          endTimeMs:
-            boundary.endTimeMs,
-          nominalTimeMs:
-            boundary.nominalTimeMs,
-          effectiveTimeMs:
-            boundary.effectiveTimeMs,
-          spokenText:
-            boundary.spokenText,
-          settled:
-            sentencePauseController
-              .settled.get(
-                boundary.id
-              ) || null
-        })),
-    armedBoundary:
-      sentencePauseController.armed
-        ? {
-            id:
-              sentencePauseController
-                .armed.boundary.id,
-            effectiveTimeMs:
-              sentencePauseController
-                .armed.effectiveTimeMs,
-            spokenText:
-              sentencePauseController
-                .armed.boundary.spokenText
-          }
-        : null
-  };
-}
-
-function downloadCaptionDiagnostic() {
-  const contents = JSON.stringify(
-    createCaptionDiagnostic(),
-    null,
-    2
-  );
-  const blob = new Blob([contents], {
-    type: "application/json;charset=utf-8"
-  });
-  const objectUrl =
-    URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  const safeTitle = String(
-    document.title || "PauseSpeak"
-  )
-    .replace(
-      /\s*[-|]\s*(?:Netflix|YouTube).*$/i,
-      ""
-    )
-    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
-    .replace(/^-+|-+$/g, "") ||
-    "PauseSpeak";
-
-  link.href = objectUrl;
-  link.download =
-    `${safeTitle}-PauseSpeak-1.2.0-tanilama.json`;
-  link.style.display = "none";
-  document.documentElement.appendChild(
-    link
-  );
-  link.click();
-  link.remove();
-
-  window.setTimeout(() => {
-    URL.revokeObjectURL(objectUrl);
-  }, 1000);
-
-  transcriptStatus.textContent =
-    "Tanılama JSON dosyası indirildi.";
-  exportMenu.classList.remove("ps-open");
-  exportButton.classList.remove(
-    "ps-active"
-  );
-}
-
 function styleTranscriptRow(
   row,
   isActive
@@ -6490,10 +4952,6 @@ function receiveSubtitleTrack(track) {
 
   chooseBestSubtitleTrack();
 
-  updateSentencePauseController(
-    getNetflixVideo()
-  );
-
   scheduleSentenceTranslationPrefetch(
     getNetflixVideo()
   );
@@ -6862,7 +5320,24 @@ function removeSubtitleDescriptions(text) {
     return "";
   }
 
-  function getSubtitleFromVisibleDom() {
+  function getNetflixSubtitle() {
+    const video = getNetflixVideo();
+    const capturedTrackSubtitle =
+      getSubtitleFromCapturedTrack(video);
+
+    if (capturedTrackSubtitle) {
+      return capturedTrackSubtitle;
+    }
+
+    const nativeTrackSubtitle =
+      getSubtitleFromNativeTextTracks(
+        video
+      );
+
+    if (nativeTrackSubtitle) {
+      return nativeTrackSubtitle;
+    }
+
     const platform = getPlaybackPlatform();
     const selectors = platform === "youtube"
       ? [
@@ -6880,6 +5355,7 @@ function removeSubtitleDescriptions(text) {
       const elements = Array.from(
         document.querySelectorAll(selector)
       ).filter(isVisible);
+
       const texts = elements
         .map((element) =>
           cleanText(
@@ -6889,9 +5365,8 @@ function removeSubtitleDescriptions(text) {
           )
         )
         .filter(Boolean);
-      const uniqueTexts = [
-        ...new Set(texts)
-      ];
+
+      const uniqueTexts = [...new Set(texts)];
 
       if (uniqueTexts.length > 0) {
         return uniqueTexts.reduce(
@@ -6911,45 +5386,9 @@ function removeSubtitleDescriptions(text) {
     return "";
   }
 
-  function getNetflixSubtitle() {
-    const video = getNetflixVideo();
-    const capturedTrackSubtitle =
-      getSubtitleFromCapturedTrack(video);
-
-    if (capturedTrackSubtitle) {
-      return capturedTrackSubtitle;
-    }
-
-    const nativeTrackSubtitle =
-      getSubtitleFromNativeTextTracks(
-        video
-      );
-
-    if (nativeTrackSubtitle) {
-      return nativeTrackSubtitle;
-    }
-
-    return getSubtitleFromVisibleDom();
-  }
-
   function endsSentence(text) {
     return /[.!?…]["'’”)\]]*$/.test(
       text.trim()
-    );
-  }
-
-  function hasDefiniteSentenceEnding(
-    text
-  ) {
-    const normalizedText = String(
-      text || ""
-    ).trim();
-
-    return (
-      endsSentence(normalizedText) &&
-      !/(?:\.{2,}|…)["'’”)\]]*$/.test(
-        normalizedText
-      )
     );
   }
 
@@ -15276,10 +13715,6 @@ pronunciationToggleButton.addEventListener(
   automaticPauseToggleButton.textContent =
     "Otomatik Durdurma: Açık";
 
-  updateSentencePauseController(
-    getNetflixVideo()
-  );
-
 
 }
 
@@ -15351,21 +13786,13 @@ automaticPauseToggleButton.addEventListener(
         ? "Otomatik Durdurma: Açık"
         : "Otomatik Durdurma: Kapalı";
 
-    sentencePauseController.armed = null;
-    updateSentencePauseController(
-      getNetflixVideo()
-    );
+
   }
 );
-  function finishSentence(
-    video,
-    sentenceSpan = null,
-    pauseCommittedByController = false
-  ) {
+  function finishSentence(video) {
     const fullSentence =
       cleanText(
-        sentenceSpan?.spokenText ||
-          sentenceParts.join(" ")
+        sentenceParts.join(" ")
       );
 
     if (!fullSentence) {
@@ -15445,55 +13872,27 @@ if (
         : 0;
 
     if (
-      sentenceSpan &&
-      Number.isFinite(
-        Number(
-          sentenceSpan.startTimeMs
-        )
-      ) &&
-      Number.isFinite(
-        Number(
-          sentenceSpan.endTimeMs
-        )
-      )
+      sentenceStartTime !==
+      null
     ) {
       completedStartTimeMs =
         Math.max(
           0,
-          Number(
-            sentenceSpan.startTimeMs
-          )
-        );
-      completedEndTimeMs = Math.max(
-        completedStartTimeMs + 1,
-        Number(
-          sentenceSpan.endTimeMs
-        )
-      );
+          sentenceStartTime -
+            0.25
+        ) * 1000;
     } else {
-      if (
-        sentenceStartTime !==
-        null
-      ) {
-        completedStartTimeMs =
-          Math.max(
-            0,
-            sentenceStartTime -
-              0.25
-          ) * 1000;
-      } else {
-        completedStartTimeMs =
-          Math.max(
-            0,
-            currentTime - 3
-          ) * 1000;
-      }
-
-      completedEndTimeMs = Math.max(
-        completedStartTimeMs + 800,
-        currentTime * 1000
-      );
+      completedStartTimeMs =
+        Math.max(
+          0,
+          currentTime - 3
+        ) * 1000;
     }
+
+    completedEndTimeMs = Math.max(
+      completedStartTimeMs + 800,
+      currentTime * 1000
+    );
 
 updateTerraImproveButtonState();
 
@@ -15530,21 +13929,26 @@ const spokenWordCount =
     fullSentence
   ).length;
 
-const shouldStartPronunciation =
+const shouldPauseForSentence =
   spokenWordCount >= 3;
 
-if (pauseCommittedByController) {
-  status.textContent =
-    "⏸️ Cümle bitti — video durduruldu";
-} else if (
+if (
   video &&
   !video.paused &&
-  isAutomaticPauseEnabled
+  isAutomaticPauseEnabled &&
+  shouldPauseForSentence
 ) {
   video.pause();
 
   status.textContent =
     "⏸️ Cümle bitti — video durduruldu";
+} else if (
+  video &&
+  isAutomaticPauseEnabled &&
+  !shouldPauseForSentence
+) {
+  status.textContent =
+    "⏭️ Kısa ifade — video devam ediyor";
 } else if (
   video &&
   !isAutomaticPauseEnabled
@@ -15565,14 +13969,14 @@ if (pauseCommittedByController) {
 if (
   SpeechRecognitionClass &&
   isPronunciationEnabled &&
-  shouldStartPronunciation
+  shouldPauseForSentence
 ) {
   scheduleAutomaticSpeechStart();
 }
 
 if (
   isPronunciationCoachSessionActive &&
-  shouldStartPronunciation
+  shouldPauseForSentence
 ) {
   setTimeout(() => {
     openPronunciationCoach(
@@ -15924,10 +14328,6 @@ function updateVideoStatus() {
   const video = getNetflixVideo();
 
   if (!isSupportedWatchPage()) {
-    if (sentencePauseController.video) {
-      resetSentencePauseController();
-    }
-
     controlsPanel.classList.add(
       "ps-interface-hidden"
     );
@@ -16004,8 +14404,6 @@ function updateVideoStatus() {
 function updateSubtitle() {
   const video =
     getNetflixVideo();
-  const usesTimedSentenceController =
-    false;
 
 panel.style.backgroundColor =
   "#1d2a30";
@@ -16071,15 +14469,14 @@ if (isReplayStarting) {
 
     if (
       previousSubtitle &&
-      !replayGuardActive &&
-      !usesTimedSentenceController
+      !replayGuardActive
     ) {
       addSentencePart(
         previousSubtitle
       );
 
       if (
-        hasDefiniteSentenceEnding(
+        endsSentence(
           previousSubtitle
         )
       ) {
@@ -16090,7 +14487,6 @@ if (isReplayStarting) {
 
     if (newSubtitle) {
       if (
-        !usesTimedSentenceController &&
         sentenceStartTime ===
         null
       ) {
@@ -16171,7 +14567,6 @@ if (isReplayStarting) {
 }
 
     isReplayPlaybackActive = true;
-    replayPauseGeneration += 1;
 
     const replayStartSeconds =
       completedStartTimeMs !==
@@ -16194,11 +14589,6 @@ if (isReplayStarting) {
 
     status.textContent =
       "🔁 Cümle tekrar oynatılıyor";
-
-    sentencePauseController.armed = null;
-    updateSentencePauseController(
-      getNetflixVideo()
-    );
   }
 function playStoredPreviousSentence() {
     if (
@@ -16708,10 +15098,6 @@ for (const [format, label] of [
     formatButton
   );
 }
-
-exportFormats.appendChild(
-  diagnosticExportButton
-);
 
 for (const [language, label] of [
   ["en", "İngilizce"],
@@ -17392,13 +15778,6 @@ for (const languageButton of
   );
 }
 
-diagnosticExportButton.addEventListener(
-  "click",
-  () => {
-    downloadCaptionDiagnostic();
-  }
-);
-
 exportButton.addEventListener(
   "click",
   () => {
@@ -17788,7 +16167,6 @@ movePauseSpeakPanelsForFullscreen();
 function resetPlaybackMediaContext(
   mediaKey
 ) {
-  resetSentencePauseController();
   lastPlaybackMediaKey = mediaKey;
   currentSubtitle = "";
   sentenceParts = [];
@@ -17803,8 +16181,6 @@ function resetPlaybackMediaContext(
   activeTranscriptCueIndex = -1;
   visibleSubtitleCueStartMs = null;
   visibleSubtitleCueText = "";
-  lastIndependentVisibleSubtitle = "";
-  lastIndependentVisibleSubtitleAt = 0;
   capturedSubtitleTracks.clear();
   visibleSubtitleCues.length = 0;
   currentSubtitleChunks = [];
@@ -17817,7 +16193,6 @@ function resetPlaybackMediaContext(
   activeReplayRequestId = null;
   replayGuardUntilVideoTime = null;
   isReplayPlaybackActive = false;
-  replayPauseGeneration += 1;
   pronunciationCoachVideoPreview = null;
 
   if (replayTimeout) {
@@ -17879,10 +16254,6 @@ const runPauseSpeakUpdate = () => {
   }
 
   if (!isSupportedWatchPage()) {
-    if (sentencePauseController.video) {
-      resetSentencePauseController();
-    }
-
     subtitleOpenButton.style.display =
       "none";
     controlsPanel.classList.add(
@@ -17934,9 +16305,6 @@ const runPauseSpeakUpdate = () => {
   updateVideoStatus();
   updatePronunciationCoachVideoPreview();
   updateSubtitle();
-  updateSentencePauseController(
-    pronunciationCoachVideo
-  );
   updateTranscriptActiveCue();
 };
 

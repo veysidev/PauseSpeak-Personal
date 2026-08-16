@@ -270,25 +270,10 @@
     );
   }
 
-  function parseCueCoordinate(value) {
-    const match = String(value || "").match(
-      /-?\d+(?:\.\d+)?/
-    );
-
-    return match
-      ? Number(match[0])
-      : null;
-  }
-
   function normalizeCues(cues) {
     const normalized = [];
 
-    for (
-      let sourceIndex = 0;
-      sourceIndex < cues.length;
-      sourceIndex += 1
-    ) {
-      const cue = cues[sourceIndex];
+    for (const cue of cues) {
       const startTimeMs = Number(
         cue?.startTimeMs
       );
@@ -326,56 +311,8 @@
       }
 
       normalized.push({
-        id:
-          String(cue?.id || "") ||
-          `cue-${Math.round(
-            startTimeMs
-          )}-${Math.round(
-            endTimeMs
-          )}-${sourceIndex}`,
         startTimeMs: Math.round(startTimeMs),
         endTimeMs: Math.round(endTimeMs),
-        sourceOrder: Number.isFinite(
-          Number(cue?.sourceOrder)
-        )
-          ? Math.round(Number(cue.sourceOrder))
-          : sourceIndex,
-        sourceKind:
-          String(cue?.sourceKind || ""),
-        regionId:
-          String(cue?.regionId || ""),
-        laneKey:
-          String(
-            cue?.laneKey ||
-              cue?.regionId ||
-              "default"
-          ),
-        styleId:
-          String(cue?.styleId || ""),
-        cueSettings:
-          String(cue?.cueSettings || ""),
-        visualX:
-          cue?.visualX !== null &&
-          cue?.visualX !== "" &&
-          Number.isFinite(
-            Number(cue?.visualX)
-          )
-          ? Number(cue.visualX)
-          : null,
-        visualY:
-          cue?.visualY !== null &&
-          cue?.visualY !== "" &&
-          Number.isFinite(
-            Number(cue?.visualY)
-          )
-          ? Number(cue.visualY)
-          : null,
-        lines: Array.isArray(cue?.lines)
-          ? cue.lines
-              .map(cleanSubtitleText)
-              .filter(Boolean)
-              .slice(0, 20)
-          : [text],
         text: text.slice(0, 700)
       });
     }
@@ -386,9 +323,7 @@
           first.startTimeMs -
             second.startTimeMs ||
           first.endTimeMs -
-            second.endTimeMs ||
-          first.sourceOrder -
-            second.sourceOrder
+            second.endTimeMs
       )
       .slice(0, 10000);
   }
@@ -407,8 +342,7 @@
     const cues = [];
 
     for (let index = 0; index < lines.length; index += 1) {
-      const timingLineText = lines[index];
-      const timingLine = timingLineText.match(
+      const timingLine = lines[index].match(
         /((?:\d+:)?\d{2}:\d{2}[.,]\d+)\s+-->\s+((?:\d+:)?\d{2}:\d{2}[.,]\d+)/
       );
 
@@ -432,29 +366,6 @@
       const endTimeMs = parseClockTime(
         normalizeVttTime(timingLine[2])
       );
-      const cueSettings =
-        timingLineText.slice(
-          Number(timingLine.index) +
-            timingLine[0].length
-        ).trim();
-      const cueIdentifier =
-        index > 0 &&
-        lines[index - 1].trim() &&
-        !/-->/.test(lines[index - 1])
-          ? lines[index - 1].trim()
-          : "";
-      const lineSetting =
-        cueSettings.match(
-          /(?:^|\s)line:([^\s]+)/
-        )?.[1] || "";
-      const positionSetting =
-        cueSettings.match(
-          /(?:^|\s)position:([^\s]+)/
-        )?.[1] || "";
-      const regionId =
-        cueSettings.match(
-          /(?:^|\s)region:([^\s]+)/
-        )?.[1] || "";
       const textLines = [];
 
       index += 1;
@@ -468,24 +379,8 @@
       }
 
       cues.push({
-        id:
-          cueIdentifier ||
-          `vtt-${cues.length}`,
         startTimeMs,
         endTimeMs,
-        sourceOrder: cues.length,
-        sourceKind: "webvtt",
-        regionId,
-        laneKey:
-          regionId || lineSetting || "default",
-        cueSettings,
-        visualX:
-          parseCueCoordinate(
-            positionSetting
-          ),
-        visualY:
-          parseCueCoordinate(lineSetting),
-        lines: textLines,
         text: textLines.join(" ")
       });
     }
@@ -615,198 +510,6 @@
     return readNode(paragraph);
   }
 
-  function extractTtmlParagraphLines(
-    paragraph
-  ) {
-    const lines = [""];
-
-    function appendText(value) {
-      const incoming = String(value || "");
-
-      if (!incoming) {
-        return;
-      }
-
-      const lineIndex = lines.length - 1;
-
-      if (
-        shouldSeparateTtmlRuns(
-          lines[lineIndex],
-          incoming
-        )
-      ) {
-        lines[lineIndex] += " ";
-      }
-
-      lines[lineIndex] += incoming;
-    }
-
-    function visit(node) {
-      if (!node) {
-        return;
-      }
-
-      if (
-        node.nodeType === 3 ||
-        node.nodeType === 4
-      ) {
-        appendText(
-          node.nodeValue ||
-            node.textContent ||
-            ""
-        );
-        return;
-      }
-
-      const localName = String(
-        node.localName ||
-          node.nodeName ||
-          ""
-      )
-        .split(":")
-        .pop()
-        .toLowerCase();
-
-      if (localName === "br") {
-        lines.push("");
-        return;
-      }
-
-      for (const child of
-        node.childNodes || []) {
-        visit(child);
-      }
-    }
-
-    visit(paragraph);
-
-    return lines
-      .map(cleanSubtitleText)
-      .filter(Boolean);
-  }
-
-  function getTtmlAttribute(
-    node,
-    localName
-  ) {
-    if (!node) {
-      return "";
-    }
-
-    for (const attribute of
-      node.attributes || []) {
-      const attributeName = String(
-        attribute.localName ||
-          attribute.name ||
-          ""
-      )
-        .split(":")
-        .pop();
-
-      if (attributeName === localName) {
-        return String(
-          attribute.value || ""
-        );
-      }
-    }
-
-    return "";
-  }
-
-  function resolveTtmlBegin(
-    node,
-    timing
-  ) {
-    const ancestors = [];
-    let current = node;
-
-    while (current?.nodeType === 1) {
-      ancestors.unshift(current);
-      current = current.parentElement;
-    }
-
-    let resolvedTimeMs = 0;
-    let found = false;
-
-    for (const ancestor of ancestors) {
-      const value = getTtmlAttribute(
-        ancestor,
-        "begin"
-      );
-
-      if (!value) {
-        continue;
-      }
-
-      const parsed = parseClockTime(
-        value,
-        timing
-      );
-
-      if (parsed === null) {
-        continue;
-      }
-
-      found = true;
-
-      if (/^\d+:\d{2}:\d{2}/.test(value)) {
-        resolvedTimeMs = parsed;
-      } else {
-        resolvedTimeMs += parsed;
-      }
-    }
-
-    return found ? resolvedTimeMs : null;
-  }
-
-  function resolveTtmlEnd(
-    node,
-    timing,
-    beginTimeMs
-  ) {
-    const endValue = getTtmlAttribute(
-      node,
-      "end"
-    );
-
-    if (endValue) {
-      const parsedEnd = parseClockTime(
-        endValue,
-        timing
-      );
-
-      if (parsedEnd !== null) {
-        if (
-          /^\d+:\d{2}:\d{2}/.test(
-            endValue
-          )
-        ) {
-          return parsedEnd;
-        }
-
-        const parentBegin =
-          resolveTtmlBegin(
-            node.parentElement,
-            timing
-          ) || 0;
-
-        return parentBegin + parsedEnd;
-      }
-    }
-
-    const duration = parseClockTime(
-      getTtmlAttribute(node, "dur"),
-      timing
-    );
-
-    return (
-      beginTimeMs !== null &&
-      duration !== null
-    )
-      ? beginTimeMs + duration
-      : null;
-  }
-
   function parseTtml(text) {
     if (!/<(?:\w+:)?tt\b/i.test(text)) {
       return null;
@@ -843,58 +546,21 @@
         "p"
       )
     ];
-    const regionElements = new Map(
-      [
-        ...documentNode.getElementsByTagNameNS(
-          "*",
-          "region"
-        )
-      ].map((region) => [
-        getTtmlAttribute(region, "id"),
-        region
-      ])
-    );
-    const styleElements = new Map(
-      [
-        ...documentNode.getElementsByTagNameNS(
-          "*",
-          "style"
-        )
-      ].map((style) => [
-        getTtmlAttribute(style, "id"),
-        style
-      ])
-    );
     const cues = [];
 
-    for (
-      let sourceOrder = 0;
-      sourceOrder < paragraphs.length;
-      sourceOrder += 1
-    ) {
-      const paragraph =
-        paragraphs[sourceOrder];
+    for (const paragraph of paragraphs) {
       const begin = parseClockTime(
-        getTtmlAttribute(
-          paragraph,
-          "begin"
-        ),
+        paragraph.getAttribute("begin"),
         timing
       );
       let end = parseClockTime(
-        getTtmlAttribute(
-          paragraph,
-          "end"
-        ),
+        paragraph.getAttribute("end"),
         timing
       );
 
       if (end === null) {
         const duration = parseClockTime(
-          getTtmlAttribute(
-            paragraph,
-            "dur"
-          ),
+          paragraph.getAttribute("dur"),
           timing
         );
 
@@ -905,72 +571,10 @@
           end = begin + duration;
         }
       }
-      const regionId = getTtmlAttribute(
-        paragraph,
-        "region"
-      );
-      const styleId = getTtmlAttribute(
-        paragraph,
-        "style"
-      );
-      const region =
-        regionElements.get(regionId) ||
-        null;
-      const style =
-        styleElements.get(
-          styleId.split(/\s+/)[0]
-        ) || null;
-      const origin =
-        getTtmlAttribute(
-          paragraph,
-          "origin"
-        ) ||
-        getTtmlAttribute(style, "origin") ||
-        getTtmlAttribute(region, "origin");
-      const positionParts =
-        origin.trim().split(/\s+/);
-      const lines =
-        extractTtmlParagraphLines(
-          paragraph
-        );
 
       cues.push({
-        id:
-          getTtmlAttribute(
-            paragraph,
-            "id"
-          ) || `ttml-${sourceOrder}`,
         startTimeMs: begin,
         endTimeMs: end,
-        sourceOrder,
-        sourceKind: "ttml",
-        regionId,
-        laneKey:
-          regionId || origin || "default",
-        styleId,
-        cueSettings: [
-          origin
-            ? `origin:${origin}`
-            : "",
-          getTtmlAttribute(
-            region,
-            "displayAlign"
-          )
-            ? `displayAlign:${getTtmlAttribute(
-                region,
-                "displayAlign"
-              )}`
-            : ""
-        ].filter(Boolean).join(" "),
-        visualX:
-          parseCueCoordinate(
-            positionParts[0]
-          ),
-        visualY:
-          parseCueCoordinate(
-            positionParts[1]
-          ),
-        lines,
         text: extractTtmlParagraphText(
           paragraph
         )
@@ -1037,17 +641,6 @@
       trackId,
       language: parsedTrack.language,
       format: parsedTrack.format,
-      parserVersion: "caption-block-v2",
-      sourcePath: (() => {
-        try {
-          return new URL(
-            String(url || ""),
-            window.location.href
-          ).pathname;
-        } catch (_error) {
-          return "";
-        }
-      })(),
       cues: parsedTrack.cues
     };
 
@@ -1115,12 +708,8 @@
           : "";
 
         return {
-          id: `youtube-${index}`,
           startTimeMs,
           endTimeMs,
-          sourceOrder: index,
-          sourceKind: "youtube-json3",
-          laneKey: "default",
           text
         };
       });
@@ -1256,9 +845,6 @@
               track.kind === "asr"
                 ? "youtube-json3-asr"
                 : "youtube-json3",
-            parserVersion:
-              "caption-block-v2",
-            sourcePath: "youtube-json3",
             label: getYouTubeTrackLabel(
               track
             ),
