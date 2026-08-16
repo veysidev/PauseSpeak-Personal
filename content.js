@@ -303,7 +303,7 @@ const usageTtsDurationApiUrl =
       minArmLeadAfterSeekMs: 100
     });
   const captionEngineVersion =
-    "1.2.0-caption-block-v2";
+    "1.2.3-legacy-capture-v2";
 
   const sentencePauseController = {
     video: null,
@@ -3628,22 +3628,10 @@ function normalizeIncomingSubtitleTrack(
       (first, second) =>
         first.startTimeMs -
           second.startTimeMs ||
-        (
-          Number.isFinite(first.visualY) &&
-          Number.isFinite(second.visualY)
-            ? first.visualY - second.visualY
-            : 0
-        ) ||
-        (
-          Number.isFinite(first.visualX) &&
-          Number.isFinite(second.visualX)
-            ? first.visualX - second.visualX
-            : 0
-        ) ||
-        first.sourceOrder -
-          second.sourceOrder ||
         first.endTimeMs -
-          second.endTimeMs
+          second.endTimeMs ||
+        first.sourceOrder -
+          second.sourceOrder
     )
     .slice(0, 10000);
 
@@ -3696,7 +3684,7 @@ function findLastTranscriptCueStartIndex(
 
     if (
       cues[middle].startTimeMs <=
-      timeMs + 250
+      timeMs
     ) {
       candidate = middle;
       low = middle + 1;
@@ -3763,16 +3751,44 @@ function findTranscriptCueIndex(
   cues,
   timeMs
 ) {
-  const activeCues =
-    getActiveTranscriptCues(
-      cues,
-      timeMs
+  if (
+    !Array.isArray(cues) ||
+    cues.length === 0 ||
+    !Number.isFinite(timeMs)
+  ) {
+    return -1;
+  }
+
+  let low = 0;
+  let high = cues.length - 1;
+  let candidate = -1;
+
+  while (low <= high) {
+    const middle = Math.floor(
+      (low + high) / 2
     );
 
-  return activeCues.length > 0
-    ? activeCues[activeCues.length - 1]
-        .index
-    : -1;
+    if (
+      cues[middle].startTimeMs <=
+      timeMs
+    ) {
+      candidate = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  if (
+    candidate >= 0 &&
+    timeMs <=
+      cues[candidate].endTimeMs +
+        600
+  ) {
+    return candidate;
+  }
+
+  return -1;
 }
 
 function getActiveSubtitleTrack() {
@@ -4501,11 +4517,7 @@ function getActiveSentencePauseTimeline() {
 function canMonitorSentencePause(video) {
   return Boolean(
     video &&
-    (
-      isReplayPlaybackActive ||
-      sentencePauseController.timeline.length >
-        0
-    ) &&
+    isReplayPlaybackActive &&
     (
       isAutomaticPauseEnabled ||
       isReplayPlaybackActive
@@ -6178,10 +6190,7 @@ function requestNetflixSeek(
 function renderTranscriptPanel() {
   const transcriptData =
     getTranscriptCues();
-  const cues =
-    groupTranscriptCuesIntoSentences(
-      transcriptData.cues
-    );
+  const cues = transcriptData.cues;
   const query =
     normalizeTranscriptText(
       transcriptSearchInput.value
@@ -6241,16 +6250,11 @@ function renderTranscriptPanel() {
         ? ` · ${transcriptData.track.language}`
         : "";
 
-    const reliablePauseCount =
-      cues.filter(
-        (cue) => cue.pauseEligible
-      ).length;
-
     transcriptStatus.textContent =
-      `${cues.length} cümle önceden yüklendi${languageLabel} · ${reliablePauseCount} güvenilir durdurma · OpenAI kullanılmıyor`;
+      `${cues.length} satır önceden yüklendi${languageLabel} · OpenAI kullanılmıyor`;
   } else {
     transcriptStatus.textContent =
-      `${cues.length} geçmiş cümle oluşturuldu · Tam altyazı akışı bekleniyor`;
+      `${cues.length} geçmiş satır yakalandı · Tam altyazı akışı bekleniyor`;
   }
 
   if (query) {
@@ -6267,13 +6271,6 @@ function renderTranscriptPanel() {
     row.type = "button";
     row.dataset.transcriptCueIndex =
       String(index);
-    row.dataset.pauseEligible =
-      String(
-        Boolean(cue.pauseEligible)
-      );
-    row.title = cue.pauseEligible
-      ? "Güvenilir cümle sınırı"
-      : "Belirsiz sıra veya cümle sonu: otomatik durdurma uygulanmaz";
 
     styleTranscriptRow(
       row,
@@ -6345,10 +6342,7 @@ function updateTranscriptActiveCue() {
     return;
   }
 
-  const cues =
-    groupTranscriptCuesIntoSentences(
-      getTranscriptCues().cues
-    );
+  const cues = getTranscriptCues().cues;
   const video = getNetflixVideo();
 
   if (!video || cues.length === 0) {
@@ -6815,39 +6809,14 @@ function removeSubtitleDescriptions(text) {
       return "";
     }
 
-    const timeMs =
-      Number(video.currentTime) * 1000;
-    const sentences =
-      groupTranscriptCuesIntoSentences(
-        track.cues
-      );
-    const sentenceIndex =
-      findTranscriptCueIndex(
-        sentences,
-        timeMs
-      );
-
-    const sentence =
-      sentences[sentenceIndex] || null;
-
-    if (sentence?.text) {
-      return sentence.text;
-    }
-
-    const activeCues =
-      getActiveTranscriptCues(
-        track.cues,
-        timeMs
-      );
-
-    return activeCues.reduce(
-      (combinedText, { cue }) =>
-        mergeOverlappingSubtitleText(
-          combinedText,
-          cue.text
-        ),
-      ""
+    const cueIndex = findTranscriptCueIndex(
+      track.cues,
+      Number(video.currentTime) * 1000
     );
+
+    return cueIndex >= 0
+      ? track.cues[cueIndex].text
+      : "";
   }
 
   function getSubtitleFromNativeTextTracks(
@@ -16035,62 +16004,18 @@ function updateVideoStatus() {
 function updateSubtitle() {
   const video =
     getNetflixVideo();
-  const independentlyVisibleSubtitle =
-    removeSubtitleDescriptions(
-      getSubtitleFromNativeTextTracks(
-        video
-      ) ||
-        getSubtitleFromVisibleDom()
-    );
-
-  if (independentlyVisibleSubtitle) {
-    lastIndependentVisibleSubtitle =
-      independentlyVisibleSubtitle;
-    lastIndependentVisibleSubtitleAt =
-      Date.now();
-    chooseBestSubtitleTrack(
-      independentlyVisibleSubtitle
-    );
-  }
-
   const usesTimedSentenceController =
-    getTranscriptCues().source ===
-    "captured_track";
+    false;
 
 panel.style.backgroundColor =
   "#1d2a30";
-  let newSubtitle =
+  const newSubtitle =
   removeSubtitleDescriptions(
     getNetflixSubtitle()
   );
 
-  if (
-    independentlyVisibleSubtitle &&
-    newSubtitle
-  ) {
-    const normalizedIndependent =
-      normalizeSpeechText(
-        independentlyVisibleSubtitle
-      );
-    const normalizedCandidate =
-      normalizeSpeechText(newSubtitle);
-    const candidateMatchesVisible =
-      normalizedCandidate.includes(
-        normalizedIndependent
-      ) ||
-      normalizedIndependent.includes(
-        normalizedCandidate
-      );
-
-    if (!candidateMatchesVisible) {
-      newSubtitle =
-        independentlyVisibleSubtitle;
-    }
-  }
-
   captureVisibleSubtitleCue(
-    independentlyVisibleSubtitle ||
-      newSubtitle,
+    newSubtitle,
     video
   );
 

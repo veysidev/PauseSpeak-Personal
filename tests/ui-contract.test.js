@@ -17,7 +17,7 @@ const usageStore = read("server/usage-store.js");
 const manifest = JSON.parse(read("manifest.json"));
 
 test("manifest uses the Netflix and YouTube release version", () => {
-  assert.equal(manifest.version, "1.2.1");
+  assert.equal(manifest.version, "1.2.3");
 });
 
 test("contextual word and expression analysis uses Luna end to end", () => {
@@ -185,7 +185,7 @@ test("the normal subtitle loader keeps local chunks without using the network", 
   );
 });
 
-test("chunk endpoint uses the isolated Terra chunk model for English and Turkish parts", () => {
+test("chunk endpoint uses one Luna structured response for English and Turkish parts", () => {
   const generator = server.match(
     /async function generateSmartChunkDecision\([\s\S]*?\r?\n}\r?\n(?=async function generateStudyMeaning)/
   );
@@ -195,22 +195,18 @@ test("chunk endpoint uses the isolated Terra chunk model for English and Turkish
 
   assert.ok(generator, "combined chunk generator was not found");
   assert.ok(route, "chunk endpoint was not found");
-  assert.match(
-    server,
-    /const openAIChunkModel\s*=\s*process\.env\.OPENAI_CHUNK_MODEL\s*\|\|\s*"gpt-5\.6-terra"/s
-  );
-  assert.match(generator[0], /model\s*=\s*openAIChunkModel/);
+  assert.match(generator[0], /model\s*=\s*openAIModel/);
   assert.match(generator[0], /responses\.create\(\{[\s\S]*?model,/s);
   assert.match(generator[0], /effort:\s*"none"/);
   assert.match(generator[0], /parts:[\s\S]*?english:[\s\S]*?turkish:/s);
-  assert.doesNotMatch(generator[0], /openAIModel|effort:\s*"medium"/);
+  assert.doesNotMatch(generator[0], /openAIChunkModel|effort:\s*"medium"/);
   assert.match(
     route[0],
     /chunks:[\s\S]*?part\.english[\s\S]*?translations:[\s\S]*?part\.turkish/s
   );
   assert.match(
     route[0],
-    /selectedModel\s*=\s*improve\s*\?\s*openAITerraModel\s*:\s*openAIChunkModel/s
+    /selectedModel\s*=\s*improve\s*\?\s*openAITerraModel\s*:\s*openAIModel/s
   );
   assert.match(
     server,
@@ -310,7 +306,7 @@ test("combined chunk decisions preserve the full sentence and every translation"
   assert.equal(sandbox.malformedJsonRejected, true);
 });
 
-test("chunk validation retries once and keeps the selected model", async () => {
+test("Luna chunk validation retries once and never falls through to the improvement model", async () => {
   const helper = server.match(
     /async function generateValidatedChunkDecision\([\s\S]*?\r?\n}\r?\n(?=app\.get)/
   );
@@ -319,7 +315,6 @@ test("chunk validation retries once and keeps the selected model", async () => {
 
   const sandbox = {
     openAIModel: "gpt-5.6-luna",
-    openAIChunkModel: "gpt-5.6-terra",
     calls: [],
     queue: [],
     emptyOpenAIUsage: () => ({ requests: 0 }),
@@ -1627,7 +1622,7 @@ test("rolling Netflix captions merge their shared suffix and prefix once", () =>
   );
 });
 
-test("Netflix cues use preserved visual layout instead of capitalization guesses", () => {
+test("Netflix cues preserve the 1.1.20 source timing order", () => {
   const normalizer = bridge.match(
     /function parseCueCoordinate\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function parseWebVtt)/
   );
@@ -1700,19 +1695,19 @@ test("Netflix cues use preserved visual layout instead of capitalization guesses
   assert.deepEqual(
     Array.from(sandbox.result, (cue) => cue.text),
     [
-      "Good luck",
       "with your finger painting.",
-      "MARY:",
+      "Good luck",
       "Hey, language.",
-      "Speaking of God,",
+      "MARY:",
       "who's going to church",
-      "Now, turn around before",
-      "I knock your lights out."
+      "Speaking of God,",
+      "I knock your lights out.",
+      "Now, turn around before"
     ]
   );
   assert.deepEqual(
     Array.from(sandbox.result, (cue) => cue.sourceOrder),
-    [1, 0, 3, 2, 5, 4, 7, 6]
+    [0, 1, 2, 3, 4, 5, 6, 7]
   );
   assert.doesNotMatch(
     bridge,
@@ -1722,7 +1717,7 @@ test("Netflix cues use preserved visual layout instead of capitalization guesses
     content,
     /getTranscriptCueReadingRank|readingOrder/
   );
-  assert.match(
+  assert.doesNotMatch(
     bridge,
     /first\.visualY\s*-\s*second\.visualY/
   );
@@ -1789,7 +1784,7 @@ test("the photographed Netflix rows remain two separate complete sentences", () 
   );
 });
 
-test("the transcript drawer groups photographed cue fragments into sentences", () => {
+test("the diagnostic grouper stays available while playback and transcript use raw cues", () => {
   const grouper = content.match(
     /function buildCaptionTimelineData\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction buildSentencePauseTimeline)/
   );
@@ -1872,13 +1867,30 @@ test("the transcript drawer groups photographed cue fragments into sentences", (
       [151000, 154500]
     ]
   );
+  const transcriptRenderer = content.match(
+    /function renderTranscriptPanel\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction updateTranscriptActiveCue)/
+  );
+  const capturedReader = content.match(
+    /function getSubtitleFromCapturedTrack\([\s\S]*?\r?\n  }\r?\n(?=\r?\n  function getSubtitleFromNativeTextTracks)/
+  );
+
+  assert.ok(transcriptRenderer, "transcript renderer was not found");
+  assert.ok(capturedReader, "captured subtitle reader was not found");
   assert.match(
-    content,
-    /function renderTranscriptPanel\([\s\S]*?groupTranscriptCuesIntoSentences\(/s
+    transcriptRenderer[0],
+    /const cues = transcriptData\.cues;/
+  );
+  assert.doesNotMatch(
+    transcriptRenderer[0],
+    /groupTranscriptCuesIntoSentences/
   );
   assert.match(
-    content,
-    /function getSubtitleFromCapturedTrack\([\s\S]*?groupTranscriptCuesIntoSentences\([\s\S]*?findTranscriptCueIndex\([\s\S]*?return sentence\.text;/s
+    capturedReader[0],
+    /findTranscriptCueIndex\([\s\S]*?return cueIndex >= 0[\s\S]*?track\.cues\[cueIndex\]\.text/s
+  );
+  assert.doesNotMatch(
+    capturedReader[0],
+    /groupTranscriptCuesIntoSentences|getActiveTranscriptCues/
   );
 });
 
@@ -2164,7 +2176,7 @@ test("media-clock controller settles once before pausing and uses frame fallback
   );
 });
 
-test("all simultaneously active Netflix lines form one ordered subtitle block", () => {
+test("1.1.20 playback selects one active cue without preselecting a future line", () => {
   const helpers = content.match(
     /function findLastTranscriptCueStartIndex\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction getActiveSubtitleTrack)/
   );
@@ -2199,13 +2211,15 @@ test("all simultaneously active Netflix lines form one ordered subtitle block", 
   ];
   const sandbox = {
     active: null,
-    activeIndex: null
+    activeIndex: null,
+    beforeNextCueIndex: null
   };
 
   vm.runInNewContext(
     `${helpers[0]}\n` +
       `active = getActiveTranscriptCues(${JSON.stringify(cues)}, 34500);\n` +
-      `activeIndex = findTranscriptCueIndex(${JSON.stringify(cues)}, 34500);`,
+      `activeIndex = findTranscriptCueIndex(${JSON.stringify(cues)}, 34500);\n` +
+      `beforeNextCueIndex = findTranscriptCueIndex(${JSON.stringify(cues)}, 33900);`,
     sandbox
   );
 
@@ -2221,9 +2235,23 @@ test("all simultaneously active Netflix lines form one ordered subtitle block", 
     ]
   );
   assert.equal(sandbox.activeIndex, 3);
+  assert.equal(
+    sandbox.beforeNextCueIndex,
+    0,
+    "a cue that starts in the future must not replace the currently active cue"
+  );
+  const capturedReader = content.match(
+    /function getSubtitleFromCapturedTrack\([\s\S]*?\r?\n  }\r?\n(?=\r?\n  function getSubtitleFromNativeTextTracks)/
+  );
+
+  assert.ok(capturedReader, "captured subtitle reader was not found");
   assert.match(
-    content,
-    /getSubtitleFromCapturedTrack\([\s\S]*?getActiveTranscriptCues\([\s\S]*?activeCues\.reduce\(/s
+    capturedReader[0],
+    /return cueIndex >= 0[\s\S]*?track\.cues\[cueIndex\]\.text/s
+  );
+  assert.doesNotMatch(
+    capturedReader[0],
+    /getActiveTranscriptCues|activeCues\.reduce/
   );
 });
 
@@ -2313,6 +2341,19 @@ test("Netflix TTML run and line boundaries cannot fuse neighboring words", () =>
   assert.match(
     bridge,
     /regionId[\s\S]*?laneKey[\s\S]*?visualX[\s\S]*?visualY/s
+  );
+  const ttmlParser = bridge.match(
+    /function parseTtml\([\s\S]*?\r?\n  }\r?\n(?=\r?\n  function parseSubtitleDocument)/
+  );
+
+  assert.ok(ttmlParser, "TTML parser was not found");
+  assert.match(
+    ttmlParser[0],
+    /const begin = parseClockTime\([\s\S]*?"begin"[\s\S]*?let end = parseClockTime\([\s\S]*?"end"/s
+  );
+  assert.doesNotMatch(
+    ttmlParser[0],
+    /resolveTtmlBegin\(|resolveTtmlEnd\(/
   );
 
   const textNode = (value) => ({

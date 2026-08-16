@@ -385,22 +385,10 @@
         (first, second) =>
           first.startTimeMs -
             second.startTimeMs ||
-          (
-            Number.isFinite(first.visualY) &&
-            Number.isFinite(second.visualY)
-              ? first.visualY - second.visualY
-              : 0
-          ) ||
-          (
-            Number.isFinite(first.visualX) &&
-            Number.isFinite(second.visualX)
-              ? first.visualX - second.visualX
-              : 0
-          ) ||
-          first.sourceOrder -
-            second.sourceOrder ||
           first.endTimeMs -
-            second.endTimeMs
+            second.endTimeMs ||
+          first.sourceOrder -
+            second.sourceOrder
       )
       .slice(0, 10000);
   }
@@ -886,15 +874,37 @@
     ) {
       const paragraph =
         paragraphs[sourceOrder];
-      const begin = resolveTtmlBegin(
-        paragraph,
+      const begin = parseClockTime(
+        getTtmlAttribute(
+          paragraph,
+          "begin"
+        ),
         timing
       );
-      const end = resolveTtmlEnd(
-        paragraph,
-        timing,
-        begin
+      let end = parseClockTime(
+        getTtmlAttribute(
+          paragraph,
+          "end"
+        ),
+        timing
       );
+
+      if (end === null) {
+        const duration = parseClockTime(
+          getTtmlAttribute(
+            paragraph,
+            "dur"
+          ),
+          timing
+        );
+
+        if (
+          begin !== null &&
+          duration !== null
+        ) {
+          end = begin + duration;
+        }
+      }
       const regionId = getTtmlAttribute(
         paragraph,
         "region"
