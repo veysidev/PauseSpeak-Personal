@@ -17,7 +17,7 @@ const usageStore = read("server/usage-store.js");
 const manifest = JSON.parse(read("manifest.json"));
 
 test("manifest uses the Netflix and YouTube release version", () => {
-  assert.equal(manifest.version, "1.1.28");
+  assert.equal(manifest.version, "1.2.1");
 });
 
 test("contextual word and expression analysis uses Luna end to end", () => {
@@ -60,7 +60,7 @@ test("contextual word and expression analysis uses Luna end to end", () => {
 
 test("normal mode completes a subtitle without calling the chunk API", () => {
   const finishSentence = content.match(
-    /function finishSentence\(video\)[\s\S]*?\r?\n  }\r?\n(?=\r?\nfunction setSubtitlePanelVisibility)/
+    /function finishSentence\([\s\S]*?\r?\n  }\r?\n(?=\r?\nfunction setSubtitlePanelVisibility)/
   );
   const loadStudySegments = content.match(
     /async function loadStudySegments\([\s\S]*?\r?\n}\r?\n(?=\s*async function requestSmartChunks)/
@@ -185,7 +185,7 @@ test("the normal subtitle loader keeps local chunks without using the network", 
   );
 });
 
-test("chunk endpoint uses one Luna structured response for English and Turkish parts", () => {
+test("chunk endpoint uses the isolated Terra chunk model for English and Turkish parts", () => {
   const generator = server.match(
     /async function generateSmartChunkDecision\([\s\S]*?\r?\n}\r?\n(?=async function generateStudyMeaning)/
   );
@@ -195,18 +195,22 @@ test("chunk endpoint uses one Luna structured response for English and Turkish p
 
   assert.ok(generator, "combined chunk generator was not found");
   assert.ok(route, "chunk endpoint was not found");
-  assert.match(generator[0], /model\s*=\s*openAIModel/);
+  assert.match(
+    server,
+    /const openAIChunkModel\s*=\s*process\.env\.OPENAI_CHUNK_MODEL\s*\|\|\s*"gpt-5\.6-terra"/s
+  );
+  assert.match(generator[0], /model\s*=\s*openAIChunkModel/);
   assert.match(generator[0], /responses\.create\(\{[\s\S]*?model,/s);
   assert.match(generator[0], /effort:\s*"none"/);
   assert.match(generator[0], /parts:[\s\S]*?english:[\s\S]*?turkish:/s);
-  assert.doesNotMatch(generator[0], /openAIChunkModel|effort:\s*"medium"/);
+  assert.doesNotMatch(generator[0], /openAIModel|effort:\s*"medium"/);
   assert.match(
     route[0],
     /chunks:[\s\S]*?part\.english[\s\S]*?translations:[\s\S]*?part\.turkish/s
   );
   assert.match(
     route[0],
-    /selectedModel\s*=\s*improve\s*\?\s*openAITerraModel\s*:\s*openAIModel/s
+    /selectedModel\s*=\s*improve\s*\?\s*openAITerraModel\s*:\s*openAIChunkModel/s
   );
   assert.match(
     server,
@@ -306,7 +310,7 @@ test("combined chunk decisions preserve the full sentence and every translation"
   assert.equal(sandbox.malformedJsonRejected, true);
 });
 
-test("Luna chunk validation retries once and never falls through to the improvement model", async () => {
+test("chunk validation retries once and keeps the selected model", async () => {
   const helper = server.match(
     /async function generateValidatedChunkDecision\([\s\S]*?\r?\n}\r?\n(?=app\.get)/
   );
@@ -315,6 +319,7 @@ test("Luna chunk validation retries once and never falls through to the improvem
 
   const sandbox = {
     openAIModel: "gpt-5.6-luna",
+    openAIChunkModel: "gpt-5.6-terra",
     calls: [],
     queue: [],
     emptyOpenAIUsage: () => ({ requests: 0 }),
@@ -1622,6 +1627,606 @@ test("rolling Netflix captions merge their shared suffix and prefix once", () =>
   );
 });
 
+test("Netflix cues use preserved visual layout instead of capitalization guesses", () => {
+  const normalizer = bridge.match(
+    /function parseCueCoordinate\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function parseWebVtt)/
+  );
+
+  assert.ok(normalizer, "bridge cue normalizer was not found");
+
+  const sandbox = {
+    cleanSubtitleText: (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    result: null
+  };
+  const photographedCues = [
+    {
+      startTimeMs: 162000,
+      endTimeMs: 164900,
+      visualY: 80,
+      text: "with your finger painting."
+    },
+    {
+      startTimeMs: 162000,
+      endTimeMs: 164900,
+      visualY: 70,
+      text: "Good luck"
+    },
+    {
+      startTimeMs: 166000,
+      endTimeMs: 168000,
+      visualY: 80,
+      text: "Hey, language."
+    },
+    {
+      startTimeMs: 166000,
+      endTimeMs: 168000,
+      visualY: 70,
+      text: "MARY:"
+    },
+    {
+      startTimeMs: 172000,
+      endTimeMs: 174900,
+      visualY: 80,
+      text: "who's going to church"
+    },
+    {
+      startTimeMs: 172000,
+      endTimeMs: 174900,
+      visualY: 70,
+      text: "Speaking of God,"
+    },
+    {
+      startTimeMs: 286000,
+      endTimeMs: 288000,
+      visualY: 80,
+      text: "I knock your lights out."
+    },
+    {
+      startTimeMs: 286000,
+      endTimeMs: 288000,
+      visualY: 70,
+      text: "Now, turn around before"
+    }
+  ];
+
+  vm.runInNewContext(
+    `${normalizer[0]}\nresult = normalizeCues(${JSON.stringify(photographedCues)});`,
+    sandbox
+  );
+
+  assert.deepEqual(
+    Array.from(sandbox.result, (cue) => cue.text),
+    [
+      "Good luck",
+      "with your finger painting.",
+      "MARY:",
+      "Hey, language.",
+      "Speaking of God,",
+      "who's going to church",
+      "Now, turn around before",
+      "I knock your lights out."
+    ]
+  );
+  assert.deepEqual(
+    Array.from(sandbox.result, (cue) => cue.sourceOrder),
+    [1, 0, 3, 2, 5, 4, 7, 6]
+  );
+  assert.doesNotMatch(
+    bridge,
+    /getSubtitleCueReadingRank|readingOrder/
+  );
+  assert.doesNotMatch(
+    content,
+    /getTranscriptCueReadingRank|readingOrder/
+  );
+  assert.match(
+    bridge,
+    /first\.visualY\s*-\s*second\.visualY/
+  );
+});
+
+test("the photographed Netflix rows remain two separate complete sentences", () => {
+  const collector = content.match(
+    /function collectTranscriptSentence\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction findTranscriptSentenceStartIndex)/
+  );
+
+  assert.ok(collector, "transcript sentence collector was not found");
+
+  const cues = [
+    {
+      startTimeMs: 162000,
+      endTimeMs: 164900,
+      text: "Good luck"
+    },
+    {
+      startTimeMs: 162000,
+      endTimeMs: 164900,
+      text: "with your finger painting."
+    },
+    {
+      startTimeMs: 164000,
+      endTimeMs: 166500,
+      text: "You're gonna get your ass kicked"
+    },
+    {
+      startTimeMs: 164000,
+      endTimeMs: 166500,
+      text: "in high school."
+    }
+  ];
+  const sandbox = {
+    removeSubtitleDescriptions: (value) =>
+      String(value || "").trim(),
+    cleanText: (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    mergeOverlappingSubtitleText: (current, incoming) =>
+      `${current} ${incoming}`.trim(),
+    endsSentence: (value) =>
+      /[.!?]$/.test(String(value || "").trim()),
+    first: null,
+    second: null
+  };
+
+  vm.runInNewContext(
+    `${collector[0]}\n` +
+      `first = collectTranscriptSentence(${JSON.stringify(cues)}, 0);\n` +
+      `second = collectTranscriptSentence(${JSON.stringify(cues)}, 2);`,
+    sandbox
+  );
+
+  assert.equal(
+    sandbox.first.text,
+    "Good luck with your finger painting."
+  );
+  assert.equal(
+    sandbox.second.text,
+    "You're gonna get your ass kicked in high school."
+  );
+});
+
+test("the transcript drawer groups photographed cue fragments into sentences", () => {
+  const grouper = content.match(
+    /function buildCaptionTimelineData\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction buildSentencePauseTimeline)/
+  );
+
+  assert.ok(grouper, "transcript sentence grouper was not found");
+
+  const cues = [
+    { startTimeMs: 141000, endTimeMs: 143000, text: "(Southern accent):" },
+    { startTimeMs: 141000, endTimeMs: 143000, text: "ought not be orderin'" },
+    { startTimeMs: 141000, endTimeMs: 143000, text: "tater tots." },
+    { startTimeMs: 143000, endTimeMs: 145500, text: "Everybody excited" },
+    { startTimeMs: 143000, endTimeMs: 145500, text: "to start school Monday?" },
+    { startTimeMs: 146000, endTimeMs: 147000, text: "I am." },
+    { startTimeMs: 147000, endTimeMs: 148000, text: "I guess so." },
+    { startTimeMs: 148000, endTimeMs: 150000, text: "MARY:" },
+    { startTimeMs: 148000, endTimeMs: 150000, text: "Georgie?" },
+    { startTimeMs: 150000, endTimeMs: 151500, text: "Freshman year," },
+    { startTimeMs: 150000, endTimeMs: 151500, text: "that's a big deal." },
+    { startTimeMs: 151000, endTimeMs: 153500, text: "How can I be excited" },
+    { startTimeMs: 151000, endTimeMs: 153500, text: "when he's gonna be" },
+    { startTimeMs: 153000, endTimeMs: 154500, text: "in the same grade as me?" }
+  ];
+  const sandbox = {
+    normalizeTranscriptText: (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    removeSubtitleDescriptions: (value) =>
+      String(value || "")
+        .replace(/\([^)]*\)/g, " ")
+        .replace(/^\s*[A-Z][A-Z .'-]{0,30}:\s*/, "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    mergeOverlappingSubtitleText: (current, incoming) =>
+      `${current} ${incoming}`.trim(),
+    endsSentence: (value) =>
+      /[.!?]$/.test(String(value || "").trim()),
+    result: null
+  };
+
+  vm.runInNewContext(
+    `${grouper[0]}\nresult = groupTranscriptCuesIntoSentences(${JSON.stringify(cues.map((cue, index) => ({ ...cue, visualY: index })))});`,
+    sandbox
+  );
+
+  assert.deepEqual(
+    Array.from(sandbox.result, (sentence) => sentence.text),
+    [
+      "(Southern accent): ought not be orderin' tater tots.",
+      "Everybody excited to start school Monday?",
+      "I am.",
+      "I guess so.",
+      "MARY: Georgie?",
+      "Freshman year, that's a big deal.",
+      "How can I be excited when he's gonna be in the same grade as me?"
+    ]
+  );
+  assert.deepEqual(
+    Array.from(
+      sandbox.result,
+      (sentence) => sentence.pauseEligible
+    ),
+    [true, true, true, true, true, true, true]
+  );
+  assert.deepEqual(
+    Array.from(
+      sandbox.result,
+      (sentence) => [
+        sentence.startTimeMs,
+        sentence.endTimeMs
+      ]
+    ),
+    [
+      [141000, 143000],
+      [143000, 145500],
+      [146000, 147000],
+      [147000, 148000],
+      [148000, 150000],
+      [150000, 151500],
+      [151000, 154500]
+    ]
+  );
+  assert.match(
+    content,
+    /function renderTranscriptPanel\([\s\S]*?groupTranscriptCuesIntoSentences\(/s
+  );
+  assert.match(
+    content,
+    /function getSubtitleFromCapturedTrack\([\s\S]*?groupTranscriptCuesIntoSentences\([\s\S]*?findTranscriptCueIndex\([\s\S]*?return sentence\.text;/s
+  );
+});
+
+test("sentence pause boundaries use cue time and keep short sentences eligible", () => {
+  const timelineBuilder = content.match(
+    /function buildCaptionTimelineData\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction getSentencePauseTimelineKey)/
+  );
+
+  assert.ok(timelineBuilder, "sentence pause timeline builder was not found");
+
+  const cues = [
+    { startTimeMs: 1000, endTimeMs: 1500, text: "I am." },
+    { startTimeMs: 1500, endTimeMs: 1900, text: "Are you" },
+    { startTimeMs: 1800, endTimeMs: 2300, text: "ready?" },
+    { startTimeMs: 2280, endTimeMs: 2600, text: "Go!" }
+  ];
+  const sandbox = {
+    sentencePauseConfig: {
+      schedulerLeadMs: 0,
+      subtitleOffsetMs: 0
+    },
+    normalizeTranscriptText: (value) =>
+      String(value || "").replace(/\s+/g, " ").trim(),
+    removeSubtitleDescriptions: (value) =>
+      String(value || "").trim(),
+    mergeOverlappingSubtitleText: (current, incoming) =>
+      `${current} ${incoming}`.trim(),
+    endsSentence: (value) =>
+      /[.!?]$/.test(String(value || "").trim()),
+    result: null,
+    largeOverlapResult: null
+  };
+
+  vm.runInNewContext(
+    `${timelineBuilder[0]}\n` +
+      `result = buildSentencePauseTimeline({ trackId: "track-en", cues: ${JSON.stringify(cues.map((cue, index) => ({ ...cue, visualY: index })))} });\n` +
+      `largeOverlapResult = buildSentencePauseTimeline({ trackId: "track-overlap", cues: ${JSON.stringify([
+        { startTimeMs: 1000, endTimeMs: 2000, text: "Done." },
+        { startTimeMs: 1500, endTimeMs: 2500, text: "Next." }
+      ])} });`,
+    sandbox
+  );
+
+  assert.equal(sandbox.result.length, 3);
+  assert.equal(sandbox.result[0].spokenText, "I am.");
+  assert.equal(sandbox.result[0].pauseEligible, true);
+  assert.equal(sandbox.result[0].effectiveTimeMs, 1500);
+  assert.equal(sandbox.result[1].spokenText, "Are you ready?");
+  assert.equal(
+    sandbox.result[1].nominalTimeMs,
+    2300,
+    "the boundary must remain at the completed sentence cue end"
+  );
+  assert.equal(sandbox.result[1].effectiveTimeMs, 2300);
+  assert.equal(
+    sandbox.largeOverlapResult[0].nominalTimeMs,
+    2000,
+    "a large rolling-caption overlap must not cut the sentence short"
+  );
+});
+
+test("the new photographed dialogue stays separate from the pastor and ellipsis does not pause", () => {
+  const grouper = content.match(
+    /function buildCaptionTimelineData\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction buildSentencePauseTimeline)/
+  );
+
+  assert.ok(grouper, "transcript sentence grouper was not found");
+
+  const cues = [
+    {
+      startTimeMs: 286000,
+      endTimeMs: 288000,
+      text: "Now, turn around before"
+    },
+    {
+      startTimeMs: 286000,
+      endTimeMs: 288000,
+      text: "I knock your lights out."
+    },
+    {
+      startTimeMs: 288000,
+      endTimeMs: 291000,
+      text: "PASTOR:"
+    },
+    {
+      startTimeMs: 288000,
+      endTimeMs: 291000,
+      text: "...think continually on these things."
+    },
+    {
+      startTimeMs: 294000,
+      endTimeMs: 296000,
+      text: "You feel it in your..."
+    }
+  ];
+  const sandbox = {
+    normalizeTranscriptText: (value) =>
+      String(value || "").replace(/\s+/g, " ").trim(),
+    removeSubtitleDescriptions: (value) =>
+      String(value || "")
+        .replace(/^\s*[A-Z][A-Z .'-]{0,30}:\s*/, "")
+        .trim(),
+    mergeOverlappingSubtitleText: (current, incoming) =>
+      `${current} ${incoming}`.trim(),
+    endsSentence: (value) =>
+      /[.!?…]["'’”)\]]*$/.test(String(value || "").trim()),
+    result: null
+  };
+
+  vm.runInNewContext(
+    `${grouper[0]}\nresult = groupTranscriptCuesIntoSentences(${JSON.stringify(cues.map((cue, index) => ({ ...cue, visualY: index })))});`,
+    sandbox
+  );
+
+  assert.deepEqual(
+    Array.from(sandbox.result, (sentence) => sentence.text),
+    [
+      "Now, turn around before I knock your lights out.",
+      "PASTOR: ...think continually on these things.",
+      "You feel it in your..."
+    ]
+  );
+  assert.deepEqual(
+    Array.from(sandbox.result, (sentence) => sentence.pauseEligible),
+    [true, true, false]
+  );
+  assert.equal(sandbox.result[2].boundaryReason, "ambiguous");
+});
+
+test("ambiguous multi-block source order is displayed but cannot auto-pause", () => {
+  const engine = content.match(
+    /function buildCaptionTimelineData\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction buildSentencePauseTimeline)/
+  );
+
+  assert.ok(engine, "caption block engine was not found");
+
+  const sandbox = {
+    normalizeTranscriptText: (value) =>
+      String(value || "").replace(/\s+/g, " ").trim(),
+    removeSubtitleDescriptions: (value) =>
+      String(value || "").trim(),
+    mergeOverlappingSubtitleText: (current, incoming) =>
+      `${current} ${incoming}`.trim(),
+    endsSentence: (value) =>
+      /[.!?]$/.test(String(value || "").trim()),
+    result: null
+  };
+
+  vm.runInNewContext(
+    `${engine[0]}\nresult = buildCaptionTimelineData(${JSON.stringify([
+      { startTimeMs: 1000, endTimeMs: 2000, sourceOrder: 0, text: "First part" },
+      { startTimeMs: 1000, endTimeMs: 2000, sourceOrder: 1, text: "ends here." }
+    ])});`,
+    sandbox
+  );
+
+  assert.equal(sandbox.result.events.length, 1);
+  assert.equal(
+    sandbox.result.events[0].orderEvidence,
+    "ambiguous-source-order"
+  );
+  assert.equal(sandbox.result.sentences[0].finalized, true);
+  assert.equal(sandbox.result.sentences[0].pauseEligible, false);
+});
+
+test("visible subtitle mismatch rejects a wrong captured boundary", () => {
+  const validator = content.match(
+    /function boundaryMatchesIndependentVisible\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction commitSentencePause)/
+  );
+
+  assert.ok(validator, "visible boundary validator was not found");
+
+  const sandbox = {
+    isReplayPlaybackActive: false,
+    lastIndependentVisibleSubtitle:
+      "Now, turn around before I knock your lights out.",
+    lastIndependentVisibleSubtitleAt:
+      Date.now(),
+    normalizeSpeechText: (value) =>
+      String(value || "")
+        .toLocaleLowerCase("en-US")
+        .replace(/[^a-z0-9']+/g, " ")
+        .trim(),
+    wrong: null,
+    correct: null
+  };
+
+  vm.runInNewContext(
+    `${validator[0]}\n` +
+      `wrong = boundaryMatchesIndependentVisible({ spokenText: "I knock your lights out. Now, turn around before" });\n` +
+      `correct = boundaryMatchesIndependentVisible({ spokenText: "Now, turn around before I knock your lights out." });`,
+    sandbox
+  );
+
+  assert.equal(sandbox.wrong, false);
+  assert.equal(sandbox.correct, true);
+  assert.match(
+    content,
+    /commitSentencePause\([\s\S]*?!boundaryMatchesIndependentVisible[\s\S]*?"visible-mismatch"/s
+  );
+});
+
+test("sentence boundary selection never catch-up pauses after seek", () => {
+  const boundaryHelpers = content.match(
+    /function findNextSentencePauseBoundary\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction armNextSentencePause)/
+  );
+
+  assert.ok(boundaryHelpers, "sentence boundary helpers were not found");
+
+  const timeline = [
+    { id: "one", effectiveTimeMs: 1000 },
+    { id: "two", effectiveTimeMs: 2000 },
+    { id: "three", effectiveTimeMs: 3000 }
+  ];
+  const sandbox = {
+    Number,
+    sentencePauseConfig: {
+      minArmLeadAfterSeekMs: 100
+    },
+    timeline,
+    settled: new Map(),
+    selected: null,
+    seekSettled: new Map(),
+    seekSelected: null,
+    crossedNormally: null,
+    crossedTooLate: null
+  };
+
+  vm.runInNewContext(
+    `${boundaryHelpers[0]}\n` +
+      `selected = findNextSentencePauseBoundary(timeline, settled, 1500, "continuous");\n` +
+      `seekSelected = findNextSentencePauseBoundary(timeline, seekSettled, 1950, "seeked");\n` +
+      `crossedNormally = crossedSentencePauseBoundary(1980, 2010, 2000);\n` +
+      `crossedTooLate = crossedSentencePauseBoundary(2100, 2200, 2000);`,
+    sandbox
+  );
+
+  assert.equal(sandbox.settled.get("one"), "missed");
+  assert.equal(sandbox.selected.boundary.id, "two");
+  assert.equal(sandbox.seekSettled.get("one"), "missed");
+  assert.equal(sandbox.seekSettled.get("two"), "missed");
+  assert.equal(sandbox.seekSelected.boundary.id, "three");
+  assert.equal(sandbox.crossedNormally, true);
+  assert.equal(sandbox.crossedTooLate, false);
+});
+
+test("media-clock controller settles once before pausing and uses frame fallbacks", () => {
+  const commit = content.match(
+    /function commitSentencePause\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction tickSentencePauseClock)/
+  );
+  const scheduler = content.match(
+    /function scheduleSentencePauseClock\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction startSentencePauseClock)/
+  );
+  const updater = content.match(
+    /function updateSubtitle\(\) \{[\s\S]*?\r?\n  }\r?\n(?=\r?\n  function finishReplay)/
+  );
+
+  assert.ok(commit, "sentence pause commit was not found");
+  assert.ok(scheduler, "sentence pause scheduler was not found");
+  assert.ok(updater, "subtitle updater was not found");
+
+  const settledIndex = commit[0].indexOf(
+    "sentencePauseController.settled.set"
+  );
+  const pauseIndex = commit[0].indexOf("video.pause()");
+
+  assert.ok(settledIndex >= 0 && settledIndex < pauseIndex);
+  assert.match(scheduler[0], /requestVideoFrameCallback/);
+  assert.match(scheduler[0], /metadata\?\.mediaTime/);
+  assert.match(scheduler[0], /window\.requestAnimationFrame/);
+  assert.match(content, /"timeupdate"[\s\S]*?tickSentencePauseClock/s);
+  assert.match(
+    content,
+    /latenessMs\s*<=\s*sentencePauseConfig\.lateGraceMs/
+  );
+  assert.match(
+    updater[0],
+    /usesTimedSentenceController[\s\S]*?previousSubtitle[\s\S]*?!usesTimedSentenceController[\s\S]*?finishSentence\(video\)/s
+  );
+  assert.match(
+    updater[0],
+    /hasDefiniteSentenceEnding\(\s*previousSubtitle\s*\)/s
+  );
+});
+
+test("all simultaneously active Netflix lines form one ordered subtitle block", () => {
+  const helpers = content.match(
+    /function findLastTranscriptCueStartIndex\([\s\S]*?\r?\n}\r?\n(?=\r?\nfunction getActiveSubtitleTrack)/
+  );
+
+  assert.ok(helpers, "active transcript cue helpers were not found");
+
+  const cues = [
+    {
+      startTimeMs: 33000,
+      endTimeMs: 36000,
+      sourceOrder: 0,
+      text: "Previous line."
+    },
+    {
+      startTimeMs: 34000,
+      endTimeMs: 37000,
+      sourceOrder: 1,
+      text: "SHELDON:"
+    },
+    {
+      startTimeMs: 34000,
+      endTimeMs: 37000,
+      sourceOrder: 2,
+      text: "Don't worry, Georgie,"
+    },
+    {
+      startTimeMs: 34000,
+      endTimeMs: 37000,
+      sourceOrder: 3,
+      text: "I'm not planning"
+    }
+  ];
+  const sandbox = {
+    active: null,
+    activeIndex: null
+  };
+
+  vm.runInNewContext(
+    `${helpers[0]}\n` +
+      `active = getActiveTranscriptCues(${JSON.stringify(cues)}, 34500);\n` +
+      `activeIndex = findTranscriptCueIndex(${JSON.stringify(cues)}, 34500);`,
+    sandbox
+  );
+
+  assert.deepEqual(
+    Array.from(
+      sandbox.active,
+      ({ cue }) => cue.text
+    ),
+    [
+      "SHELDON:",
+      "Don't worry, Georgie,",
+      "I'm not planning"
+    ]
+  );
+  assert.equal(sandbox.activeIndex, 3);
+  assert.match(
+    content,
+    /getSubtitleFromCapturedTrack\([\s\S]*?getActiveTranscriptCues\([\s\S]*?activeCues\.reduce\(/s
+  );
+});
+
 test("timed subtitle cues are preferred over rolling DOM text and real spaces are preserved", () => {
   const subtitleReader = content.match(
     /function getNetflixSubtitle\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function endsSentence)/
@@ -1696,6 +2301,18 @@ test("Netflix TTML run and line boundaries cannot fuse neighboring words", () =>
   assert.doesNotMatch(
     bridge,
     /text:\s*paragraph\.textContent/
+  );
+  assert.match(
+    bridge,
+    /function extractTtmlParagraphLines/
+  );
+  assert.match(
+    bridge,
+    /function resolveTtmlBegin[\s\S]*?function resolveTtmlEnd/s
+  );
+  assert.match(
+    bridge,
+    /regionId[\s\S]*?laneKey[\s\S]*?visualX[\s\S]*?visualY/s
   );
 
   const textNode = (value) => ({
@@ -1940,7 +2557,7 @@ test("touching a study word opens its detail panel without waiting for click", (
   assert.match(css, /touch-action:\s*manipulation/);
 });
 
-test("a newly completed paused sentence keeps its interactive word buttons", () => {
+test("timed subtitles finish from the media controller while fallback keeps its word buttons", () => {
   const updater = content.match(
     /function updateSubtitle\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function finishReplay)/
   );
@@ -1948,7 +2565,11 @@ test("a newly completed paused sentence keeps its interactive word buttons", () 
   assert.ok(updater, "subtitle updater was not found");
   assert.match(
     updater[0],
-    /finishSentence\(video\);\s*didFinishSentence = true;/s
+    /!usesTimedSentenceController[\s\S]*?finishSentence\(video\);\s*didFinishSentence = true;/s
+  );
+  assert.match(
+    content,
+    /commitSentencePause\([\s\S]*?finishSentence\(\s*video,\s*boundary,\s*true\s*\)/s
   );
   assert.match(
     updater[0],
@@ -2810,4 +3431,13 @@ test("all subtitle export choices remain available", () => {
   }
 
   assert.match(content, /replace\(\/\\\[[^\n]+\\\]/);
+  assert.match(content, /Tanılama JSON/);
+  assert.match(
+    content,
+    /function createCaptionDiagnostic\([\s\S]*?rawCues[\s\S]*?blocks[\s\S]*?events[\s\S]*?sentences[\s\S]*?pauseBoundaries/s
+  );
+  assert.match(
+    content,
+    /diagnosticExportButton\.addEventListener\([\s\S]*?downloadCaptionDiagnostic\(\)/s
+  );
 });
