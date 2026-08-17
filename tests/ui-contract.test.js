@@ -17,7 +17,7 @@ const usageStore = read("server/usage-store.js");
 const manifest = JSON.parse(read("manifest.json"));
 
 test("manifest uses the Netflix and YouTube release version", () => {
-  assert.equal(manifest.version, "1.1.28");
+  assert.equal(manifest.version, "1.1.29");
 });
 
 test("contextual word and expression analysis uses Luna end to end", () => {
@@ -779,24 +779,23 @@ test("every active OpenAI route records model and usage observability", () => {
   );
 });
 
-test("the main microphone button closes the active inline coach on its second click", () => {
+test("the main coach action is a gated single-practice action", () => {
   const handler = content.match(
     /pronunciationCoachButton\.addEventListener\([\s\S]*?\r?\n\);\r?\n(?=\r?\npronunciationCoachCloseButton\.addEventListener)/
   );
 
-  assert.ok(handler, "main microphone handler was not found");
+  assert.ok(handler, "main coach handler was not found");
+  assert.match(handler[0], /!isPronunciationPracticeEnabled/);
   assert.match(
     handler[0],
-    /isPronunciationCoachSessionActive\s*&&[\s\S]*?isPronunciationCoachOpen[\s\S]*?closePronunciationCoach\(\s*true,\s*false\s*\)/s
+    /openPronunciationCoach\(\s*currentFinalizedSentence,\s*"single"\s*\)/s
   );
   assert.match(
     handler[0],
-    /openPronunciationCoach\(\s*completedBox\.textContent,\s*true\s*\)/s
+    /pronunciationPracticeMode === "single"[\s\S]*?closePronunciationCoach\(\s*true,\s*false\s*\)/s
   );
-  assert.doesNotMatch(
-    handler[0],
-    /startPronunciationCoachRecognition\(/
-  );
+  assert.doesNotMatch(handler[0], /startPronunciationCoachRecognition\(/);
+  assert.doesNotMatch(handler[0], /isPronunciationContinuousSessionActive\s*=\s*true/);
 });
 
 test("normal translation is the only automatic sentence prefetch mode", () => {
@@ -1195,34 +1194,36 @@ test("YouTube bridge publishes JSON3 cues and seeks the real player", async () =
   );
 });
 
-test("six visible dock actions use a silent spacer to keep playback centered", () => {
+test("main player bar keeps pronunciation and sentence navigation around a centered Play/Pause", () => {
   for (const label of [
+    "Telaffuz",
     "Cümleyi tekrarla",
-    "10 sn geri",
-    "10 sn ileri",
+    "Önceki cümle",
+    "Sonraki cümle",
     "Altyazılar",
-    "Ses ve altyazı"
+    "Türkçe Ses: Kapalı",
+    "Otomatik Durdurma: Açık"
   ]) {
     assert.match(content, new RegExp(label));
   }
 
-  assert.doesNotMatch(
-    content,
-    /ps-(?:study|playback|tools)-group/
-  );
-  assert.doesNotMatch(content, /chunkPracticeButton/);
-  assert.match(
-    css,
-    /\.ps-command-row::before\s*\{[^}]*content:\s*""[^}]*pointer-events:\s*none/s
-  );
-  assert.match(
-    css,
-    /\.ps-command-row\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(86px, 1fr\)\) 66px 72px 66px repeat\(2,/s
-  );
-  assert.match(
-    css,
-    /grid-template-columns:\s*repeat\(7, 42px\)/s
-  );
+  const subtitleActions = content.match(/subtitleActionsRow\.replaceChildren\([\s\S]*?\);/);
+  const playbackGroup = content.match(/playbackCommandGroup\.append\([\s\S]*?\);/);
+  const commandRow = content.match(/commandRow\.append\([\s\S]*?\);/);
+  assert.ok(subtitleActions);
+  assert.ok(playbackGroup);
+  assert.ok(commandRow);
+  assert.match(subtitleActions[0], /pronunciationCoachButton/);
+  assert.match(commandRow[0], /pronunciationDock[\s\S]*?playbackCommandGroup[\s\S]*?utilityCommandGroup/);
+  assert.doesNotMatch(content, /pronunciationPopover/);
+  assert.match(content, /pronunciationDock\.append\([\s\S]*?pronunciationMenuButton[\s\S]*?replayButton[\s\S]*?\);/);
+  assert.match(playbackGroup[0], /previousSentenceButton[\s\S]*?playPauseButton[\s\S]*?nextSentenceButton/);
+  assert.doesNotMatch(playbackGroup[0], /seekBackwardButton|seekForwardButton/);
+  assert.match(content, /seekBackwardButton\.addEventListener\([\s\S]*?seekVideoRelative\(-10\)/);
+  assert.match(content, /seekForwardButton\.addEventListener\([\s\S]*?seekVideoRelative\(10\)/);
+  assert.match(content, /utilityCommandGroup\.append\([\s\S]*?transcriptButton[\s\S]*?\);/);
+  assert.doesNotMatch(content.match(/utilityCommandGroup\.append\([\s\S]*?\);/)?.[0] || "", /turkishTranslationSpeechToggleButton|automaticPauseToggleButton/);
+  assert.match(content, /moreMenu\.replaceChildren\([\s\S]*?turkishTranslationSpeechToggleButton[\s\S]*?automaticPauseToggleButton[\s\S]*?usageButton[\s\S]*?helpButton[\s\S]*?\);/);
 });
 
 test("Mist Ocean uses one calm low-glare surface system", () => {
@@ -1956,7 +1957,7 @@ test("a newly completed paused sentence keeps its interactive word buttons", () 
   );
   assert.match(
     updater[0],
-    /if \(!shouldKeepCompletedSentence\) \{\s*subtitleBox\.textContent\s*=\s*newSubtitle;/s
+    /!shouldKeepCompletedSentence\s*&&\s*!isPronunciationTargetDisplayLocked\(\)[\s\S]*?subtitleBox\.textContent\s*=\s*newSubtitle;/s
   );
 });
 
@@ -2108,72 +2109,31 @@ test("subtitle size also scales the translation card", () => {
   );
 });
 
-test("Pronunciation Coach replaces the old two-control pronunciation UI", () => {
-  const settingsAppend = content.match(
-    /settingsMenu\.append\([\s\S]*?\);/
+test("pronunciation practice uses an independent master gate in the existing More menu", () => {
+  const pronunciationDock = content.match(/pronunciationDock\.append\([\s\S]*?\);/);
+  const settings = content.match(/settingsMenu\.append\([\s\S]*?\);/);
+  const moreMenu = content.match(/moreMenu\.replaceChildren\([\s\S]*?\);/);
+  const panelChildren = content.match(/panel\.replaceChildren\([\s\S]*?\);/);
+  const featureToggle = content.match(
+    /pronunciationPracticeToggleButton\.addEventListener\([\s\S]*?\r?\n\);\s*(?=pronunciationToggleButton\.addEventListener)/
   );
-  const panelChildren = content.match(
-    /panel\.replaceChildren\([\s\S]*?\);/
-  );
-
-  assert.ok(settingsAppend, "settings menu assembly was not found");
+  assert.ok(pronunciationDock, "pronunciation dock assembly was not found");
+  assert.ok(settings, "settings menu assembly was not found");
+  assert.ok(moreMenu, "More menu assembly was not found");
   assert.ok(panelChildren, "subtitle panel assembly was not found");
-  assert.doesNotMatch(
-    settingsAppend[0],
-    /pronunciationToggleButton|speakButton/
-  );
-  assert.doesNotMatch(
-    panelChildren[0],
-    /pronunciationTitle|spokenBox|pronunciationResultBox|chunkBox/
-  );
-  assert.match(
-    panelChildren[0],
-    /subtitleActionsRow/
-  );
-  assert.match(
-    content,
-    /subtitleActionsRow\.replaceChildren\(\s*improveTranslationButton,\s*pronunciationCoachButton\s*\)/s
-  );
-  assert.match(
-    content,
-    /pausespeak-pronunciation-coach-overlay/
-  );
-  assert.match(
-    content,
-    /currentSubtitleChunks\.length[\s\S]*?createFallbackSubtitleChunks/s
-  );
-  assert.match(
-    content,
-    /word\.state\s*=\s*"passed"/
-  );
-  assert.match(
-    content,
-    /word\.state === "pending"[\s\S]*?word\.state = "retry"/s
-  );
-  assert.match(content, /"proper-name"/);
-  assert.match(content, /looksLikeOpeningName/);
-  assert.match(
-    content,
-    /"no-speech"[\s\S]*?ilerlemen korunuyor/s
-  );
-  assert.match(content, /}, 3200\);/);
-  assert.match(
-    content,
-    /isPronunciationCoachSessionActive[\s\S]*?openPronunciationCoach\(\s*fullSentence,\s*false/s
-  );
-  assert.match(
-    content,
-    /if \(isPronunciationCoachOpen\) \{\s*return;/s
-  );
-  assert.match(
-    css,
-    /PauseSpeak Pronunciation Coach/
-  );
-  assert.match(css, /\.ps-coach-word-active/);
-  assert.match(css, /\.ps-coach-word-passed/);
-  assert.match(css, /\.ps-coach-word-retry/);
-  assert.match(css, /#8bd3ad/i);
-  assert.match(css, /#e2a0a0/i);
+  assert.ok(featureToggle, "pronunciation master toggle was not found");
+  assert.match(pronunciationDock[0], /pronunciationMenuButton/);
+  assert.doesNotMatch(pronunciationDock[0], /pronunciationPracticeToggleButton|pronunciationPopover/);
+  assert.doesNotMatch(settings[0], /pronunciationPracticeToggleButton/);
+  assert.match(moreMenu[0], /pronunciationPracticeToggleButton[\s\S]*?turkishTranslationSpeechToggleButton[\s\S]*?automaticPauseToggleButton/);
+  assert.match(panelChildren[0], /subtitleActionsRow/);
+  assert.match(panelChildren[0], /pronunciationPracticeRow/);
+  assert.match(content, /subtitleActionsRow\.replaceChildren\(\s*improveTranslationButton,\s*pronunciationCoachButton\s*\)/s);
+  assert.match(content, /"Telaffuz alıştırmaları: Kapalı"/);
+  assert.match(content, /"Bu cümleyi çalış"/);
+  assert.doesNotMatch(featureToggle[0], /automaticPause|video\.(?:play|pause)|recognition\.start|startPronunciationCoachRecognition/);
+  assert.doesNotMatch(content, /pronunciationPopover|Başarıdan sonra/);
+  assert.match(content, /pronunciationPracticeToggleButton\.className\s*=\s*\n\s*"ps-menu-button ps-more-toggle-option"/);
 });
 
 test("Pronunciation Coach accepts a remaining word without resetting earlier words", () => {
@@ -2226,51 +2186,32 @@ test("Pronunciation Coach accepts a remaining word without resetting earlier wor
   assert.equal(sandbox.shortMismatch.success, false);
 });
 
-test("Pronunciation Coach auto-passes names without treating a new sentence as a name", () => {
-  const helper = content.match(
-    /function createPronunciationCoachParts\([\s\S]*?\r?\n  }\r?\n(?=\r?\n  function getPronunciationCoachWordReferences)/
+test("pronunciation evaluation weights critical words and requires tolerant proper names", () => {
+  const partsHelper = content.match(
+    /function createPronunciationCoachParts\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function getPronunciationCoachWordReferences)/
+  );
+  const weightHelper = content.match(
+    /function getPronunciationCoachWordWeight\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function createPronunciationCoachChunks)/
+  );
+  const completionHelper = content.match(
+    /function isPronunciationCoachChunkComplete\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function getPronunciationCoachRemainingCount)/
   );
 
-  assert.ok(helper, "coach name classifier was not found");
-
-  const sandbox = {
-    currentSentenceStudySegments: [
-      { text: "Kristi", type: "proper-name" }
-    ],
-    getWordTokens: (value) =>
-      String(value || "")
-        .toLowerCase()
-        .replace(/[’‘`]/g, "'")
-        .replace(/[^a-z0-9'\s]/g, " ")
-        .replace(/'/g, "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .split(" ")
-        .filter(Boolean),
-    result: null,
-    openingName: null
-  };
-
-  vm.runInNewContext(
-    `${helper[0]}\n` +
-      `result = createPronunciationCoachChunks("On this project, Kristi works. Sit down.", ["On this project, Kristi works.", "Sit down."]);\n` +
-      `openingName = createPronunciationCoachChunks("Everest is high.", ["Everest is high."]);`,
-    sandbox
-  );
-
-  const states = Object.fromEntries(
-    sandbox.result
-      .flatMap((chunk) => chunk.parts)
-      .filter((part) => part.kind === "word")
-      .map((part) => [part.text, part.state])
-  );
-
-  assert.equal(states.On, "pending");
-  assert.equal(states.Kristi, "proper");
-  assert.equal(states.Sit, "pending");
-  assert.equal(
-    sandbox.openingName[0].parts[0].state,
-    "proper"
+  assert.ok(partsHelper, "coach name classifier was not found");
+  assert.ok(weightHelper, "coach word weighting helper was not found");
+  assert.ok(completionHelper, "coach completion helper was not found");
+  assert.match(weightHelper[0], /criticalWords/);
+  assert.match(weightHelper[0], /2\.5/);
+  assert.match(weightHelper[0], /lowWeightWords/);
+  assert.match(weightHelper[0], /0\.4/);
+  assert.match(partsHelper[0], /isProperName/);
+  assert.match(partsHelper[0], /state:\s*"pending"/);
+  assert.doesNotMatch(partsHelper[0], /state:\s*"proper"/);
+  assert.match(completionHelper[0], /word\.isProperName/);
+  assert.match(completionHelper[0], /return false/);
+  assert.match(
+    content,
+    /function isPronunciationCoachWordMatch\([\s\S]*?isProperName = false[\s\S]*?isProperName[\s\S]*?0\.62/s
   );
 });
 
@@ -2346,251 +2287,103 @@ test("Pronunciation Coach reuses translation, navigates chunks and previews plat
   assert.match(css, /\.ps-pronunciation-coach-chunk-navigation/);
 });
 
-test("Coach Listen replays the whole sentence and closing keeps video paused", () => {
+test("Coach Listen uses the finalized sentence range and cleanup sends no media command", () => {
   const rangeHelper = content.match(
     /function getPronunciationCoachVideoRange\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function finishPronunciationCoachVideoPreview)/
   );
-
-  assert.ok(
-    rangeHelper,
-    "coach video range helper was not found"
+  const closeHelper = content.match(
+    /function closePronunciationCoach\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function getPronunciationCoachVideoRange)/
+  );
+  const previewHelper = content.match(
+    /function playCurrentPronunciationCoachChunk\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function updatePronunciationCoachVideoPreview)/
   );
 
+  assert.ok(rangeHelper, "coach video range helper was not found");
+  assert.ok(closeHelper, "coach close helper was not found");
+  assert.ok(previewHelper, "coach preview helper was not found");
+
   const sandbox = {
-    completedStartTimeMs: 2200,
-    completedEndTimeMs: 6800,
-    getNetflixVideo: () => ({
-      currentTime: 9.25
-    }),
+    activePronunciationSentence: {
+      id: "media:sentence:7",
+      startTimeMs: 2200,
+      endTimeMs: 6800
+    },
+    mediaInteractionGeneration: 4,
+    getNetflixVideo: () => ({ currentTime: 9.25 }),
     result: null
   };
-
   vm.runInNewContext(
     `${rangeHelper[0]}\nresult = getPronunciationCoachVideoRange();`,
     sandbox
   );
+  assert.equal(sandbox.result.startTimeMs, 2200);
+  assert.equal(sandbox.result.endTimeMs, 6800);
+  assert.equal(sandbox.result.returnTimeMs, 9250);
+  assert.equal(sandbox.result.sentenceId, "media:sentence:7");
+  assert.equal(sandbox.result.mediaGeneration, 4);
 
-  assert.equal(
-    sandbox.result.startTimeMs,
-    2200
-  );
-  assert.equal(
-    sandbox.result.endTimeMs,
-    6800
-  );
-  assert.equal(
-    sandbox.result.returnTimeMs,
-    9250
-  );
-
-  assert.match(content, /Cümleyi baştan dinle/);
-  assert.match(
-    content,
-    /if \(!resumeVideo\)[\s\S]*?video\.pause\(\)/s
-  );
-  assert.doesNotMatch(
-    content,
-    /closePronunciationCoach\(\s*true,\s*true\s*\)/
-  );
-  assert.match(
-    css,
-    /#pausespeak-pronunciation-coach-overlay button\.ps-coach-word\s*\{[^}]*background:\s*transparent !important/s
-  );
-  assert.match(
-    css,
-    /#pausespeak-pronunciation-coach-overlay button\.ps-coach-word:hover[\s\S]*?background:\s*rgba\(88, 199, 229,/s
-  );
+  assert.match(previewHelper[0], /PAUSESPEAK_COACH_PREVIEW_REQUEST/);
+  assert.match(previewHelper[0], /\.\.\.range/);
+  assert.match(rangeHelper[0], /sentenceId/);
+  assert.match(rangeHelper[0], /mediaGeneration/);
+  assert.doesNotMatch(closeHelper[0], /\.play\(|\.pause\(|requestNetflixSeek|PAUSESPEAK_COACH_/);
 });
 
-test("Pronunciation Coach stays inside the unchanged subtitle card", () => {
+test("Pronunciation Coach stays inside the subtitle card and can promote a transcript target into the main work sentence", () => {
   const openHelper = content.match(
     /function openPronunciationCoach\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function closePronunciationCoach)/
   );
-
+  const targetRenderer = content.match(
+    /function renderActivePronunciationSentenceInSubtitle\(\) \{[\s\S]*?\r?\n  \}/
+  );
   assert.ok(openHelper, "coach open helper was not found");
-  assert.match(
-    openHelper[0],
-    /isPronunciationCoachOpen\s*=\s*true/
-  );
-  assert.match(
-    openHelper[0],
-    /pronunciationCoachOverlay\.classList\.remove\(\s*"ps-open"\s*\)/s
-  );
-  assert.doesNotMatch(
-    openHelper[0],
-    /pronunciationCoachOverlay\.classList\.add\(\s*"ps-open"\s*\)/s
-  );
-  const decorator = content.match(
-    /function applyPronunciationCoachStateToSubtitle\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function createPronunciationCoachChunkCard)/
-  );
-
-  assert.ok(decorator, "inline coach decorator was not found");
-  assert.match(
-    decorator[0],
-    /querySelectorAll\(\s*"button\[data-study-text\]"\s*\)/s
-  );
-  assert.match(
-    decorator[0],
-    /segmentButton\.classList\.remove\([\s\S]*?ps-coach-word-passed[\s\S]*?segmentButton\.classList\.add/s
-  );
-  assert.doesNotMatch(
-    decorator[0],
-    /replaceChildren|createElement|createTextNode/
-  );
-  assert.match(
-    content,
-    /function renderChunkedSubtitle\([\s\S]*?appendStudySegments\([\s\S]*?applyPronunciationCoachStateToSubtitle\(\)/s
-  );
-  assert.match(
-    css,
-    /Inline Pronunciation Coach/
-  );
-  assert.match(
-    css,
-    /button\[data-study-text\]\.ps-inline-coach-segment[\s\S]*?white-space:\s*normal !important/s
-  );
-  assert.match(
-    css,
-    /button\[data-study-text\]\.ps-coach-word-passed[\s\S]*?color:\s*#8bd3ad !important/s
-  );
-  assert.match(
-    css,
-    /button\[data-study-text\]\.ps-coach-word-retry[\s\S]*?color:\s*#e2a0a0 !important/s
-  );
-
-  const makeButton = (text) => {
-    const classes = new Set();
-
-    return {
-      textContent: text,
-      dataset: { studyText: text },
-      classes,
-      classList: {
-        add: (...names) =>
-          names.forEach((name) =>
-            classes.add(name)
-          ),
-        remove: (...names) =>
-          names.forEach((name) =>
-            classes.delete(name)
-          )
-      }
-    };
-  };
-  const buttons = [
-    makeButton("When"),
-    makeButton("you"),
-    makeButton("speak")
-  ];
-  const sandbox = {
-    isPronunciationCoachOpen: true,
-    isPronunciationCoachSessionActive: true,
-    pronunciationCoachChunks: [
-      {
-        parts: [
-          { kind: "word", key: "0", state: "passed" },
-          { kind: "word", key: "1", state: "pending" },
-          { kind: "word", key: "2", state: "retry" }
-        ]
-      }
-    ],
-    pronunciationCoachChunkIndex: 0,
-    pronunciationCoachActiveWordIndex: 1,
-    pronunciationCoachLiveMatches:
-      new Set(["1"]),
-    subtitleBox: {
-      classList: { add: () => {} },
-      querySelectorAll: () => buttons
-    },
-    panel: {
-      classList: { add: () => {} }
-    }
-  };
-
-  vm.runInNewContext(
-    `${decorator[0]}\napplyPronunciationCoachStateToSubtitle();`,
-    sandbox
-  );
-
-  assert.deepEqual(
-    buttons.map((button) =>
-      button.textContent
-    ),
-    ["When", "you", "speak"]
-  );
-  assert.equal(
-    buttons[0].classes.has(
-      "ps-coach-word-passed"
-    ),
-    true
-  );
-  assert.equal(
-    buttons[1].classes.has(
-      "ps-coach-word-live-passed"
-    ),
-    true
-  );
-  assert.equal(
-    buttons[1].classes.has(
-      "ps-coach-word-active"
-    ),
-    true
-  );
-  assert.equal(
-    buttons[2].classes.has(
-      "ps-coach-word-retry"
-    ),
-    true
-  );
+  assert.ok(targetRenderer, "transcript target renderer was not found");
+  assert.match(openHelper[0], /isPronunciationCoachOpen\s*=\s*true/);
+  assert.match(openHelper[0], /pronunciationCoachOverlay\.classList\.remove\(\s*"ps-open"\s*\)/s);
+  assert.doesNotMatch(openHelper[0], /pronunciationCoachOverlay\.classList\.add\(\s*"ps-open"\s*\)/s);
+  assert.match(targetRenderer[0], /subtitleBox\.replaceChildren\(\)/);
+  assert.match(targetRenderer[0], /subtitleBox\.dataset\.finalizedSentenceId = sentence\.id/);
+  assert.match(targetRenderer[0], /createImmediateStudySegments\(sentence\.text\)/);
+  assert.match(content, /function renderChunkedSubtitle\([\s\S]*?subtitleBox\.dataset\.finalizedSentenceId = currentFinalizedSentence\?\.id \|\| ""/s);
+  assert.match(css, /Inline Pronunciation Coach/);
+  assert.match(css, /button\[data-study-text\]\.ps-coach-word-passed[\s\S]*?color:\s*#8bd3ad !important/s);
+  assert.match(css, /button\[data-study-text\]\.ps-coach-word-retry[\s\S]*?color:\s*#e2a0a0 !important/s);
 });
 
-test("Pronunciation Coach waits for translation and never listens while video plays", () => {
-  const readyHelper = content.match(
-    /function isPronunciationCoachTranslationReady\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function tryStartPronunciationCoachAfterTranslation)/
-  );
+test("pronunciation recognition starts only from explicit Say actions and never depends on translation", () => {
   const startHelper = content.match(
-    /function startPronunciationCoachRecognition\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function preparePronunciationCoachSentence)/
+    /function startPronunciationCoachRecognition\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function handlePronunciationSpeakAction)/
   );
-  const openHelper = content.match(
-    /function openPronunciationCoach\([\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function closePronunciationCoach)/
+  const sayHelper = content.match(
+    /function handlePronunciationSpeakAction\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function handlePronunciationSkipAction)/
+  );
+  const translationObserver = content.match(
+    /const pronunciationCoachTranslationObserver\s*=[\s\S]*?\.observe\([\s\S]*?\);/
   );
 
-  assert.ok(readyHelper, "translation readiness helper was not found");
   assert.ok(startHelper, "coach recognition starter was not found");
-  assert.ok(openHelper, "coach open helper was not found");
+  assert.ok(sayHelper, "explicit Say handler was not found");
+  assert.ok(translationObserver, "translation observer was not found");
+  assert.match(startHelper[0], /userActionToken !== pronunciationExplicitUserActionToken/);
+  assert.match(startHelper[0], /!video \|\| !video\.paused/);
+  assert.match(startHelper[0], /recognition\.maxAlternatives\s*=\s*5/);
+  assert.match(startHelper[0], /recognition\.start\(\)/);
+  assert.doesNotMatch(startHelper[0], /isPronunciationCoachTranslationReady\(/);
+  assert.match(sayHelper[0], /beginPronunciationAttempt\(\)/);
   assert.match(
-    readyHelper[0],
-    /translationBox\.textContent[\s\S]*?Çevriliyor/s
+    sayHelper[0],
+    /startPronunciationCoachRecognition\(\s*attempt,\s*pronunciationExplicitUserActionToken\s*\)/s
   );
-  assert.match(
-    startHelper[0],
-    /!video\.paused[\s\S]*?!isPronunciationCoachTranslationReady\(\)/s
-  );
-  assert.match(
-    startHelper[0],
-    /const stopCoachForVideoPlayback[\s\S]*?stopPronunciationCoachRecognition\(\s*false\s*\)/s
-  );
-  assert.match(
-    startHelper[0],
-    /video\.addEventListener\(\s*"play",\s*stopCoachForVideoPlayback/s
-  );
+  assert.doesNotMatch(translationObserver[0], /startPronunciationCoachRecognition|tryStartPronunciationCoachAfterTranslation|recognition\.start/);
   assert.match(
     content,
-    /pronunciationCoachTranslationObserver[\s\S]*?tryStartPronunciationCoachAfterTranslation\(\)/s
-  );
-  assert.match(
-    content,
-    /const runPauseSpeakUpdate = \(\) => \{[\s\S]*?!pronunciationCoachVideo\.paused[\s\S]*?stopPronunciationCoachRecognition\(false\)/s
-  );
-  assert.doesNotMatch(
-    openHelper[0],
-    /schedulePronunciationCoachRestart\(\s*220\s*\)/s
+    /const runPauseSpeakUpdate = \(\) => \{[\s\S]*?!pronunciationCoachVideo\.paused[\s\S]*?invalidatePronunciationAttempt\(\)[\s\S]*?stopPronunciationCoachRecognition\(false\)/s
   );
 });
 
 test("subtitle card and right transcript controls use their nearby buttons", () => {
   const topHandler = content.match(
-    /panelVisibilityButton\.addEventListener\([\s\S]*?\r?\n\);\r?\n(?=\r?\nsubtitleVisibilityButton\.addEventListener)/
+    /panelVisibilityButton\.addEventListener\([\s\S]*?\r?\n\);\r?\n(?=\r?\nspeedButton\.addEventListener)/
   );
   const dockHandler = content.match(
     /transcriptButton\.addEventListener\([\s\S]*?\r?\n\);\r?\n(?=\r?\ntranscriptCloseButton\.addEventListener)/
@@ -2672,40 +2465,36 @@ test("three mouse clicks or taps toggle a black privacy curtain and keep video p
   );
 });
 
-test("a completed selected chunk immediately advances to the next unfinished chunk", () => {
+test("a completed selected chunk advances without automatically restarting recognition", () => {
   const helper = content.match(
-    /function advancePronunciationCoach\(\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function commitPronunciationCoachResult)/
+    /function advancePronunciationCoach\([^)]*\) \{[\s\S]*?\r?\n  \}\r?\n(?=\r?\n  function commitPronunciationCoachResult)/
   );
 
   assert.ok(helper);
 
   const sandbox = {
+    pronunciationCoachChunkHelpActive: true,
     pronunciationCoachChunks: [
       { complete: false },
       { complete: false },
       { complete: true }
     ],
     pronunciationCoachChunkIndex: 2,
-    pronunciationCoachLiveMatches:
-      new Set(),
+    activePronunciationAttempt: null,
+    pronunciationCoachLiveMatches: new Set(),
     pronunciationCoachActiveWordIndex: 4,
     pronunciationCoachLastHeard: "done",
-    pronunciationCoachHeard: {
-      textContent: ""
-    },
-    pronunciationCoachStatus: {
-      textContent: ""
-    },
-    isPronunciationCoachChunkComplete:
-      (chunk) => chunk.complete,
+    pronunciationCoachHeard: { textContent: "" },
+    pronunciationCoachStatus: { textContent: "" },
+    isPronunciationCoachChunkComplete: (chunk) => chunk.complete,
     renderPronunciationCoach: () => {},
-    finishPronunciationCoachSentence:
-      () => {},
-    schedulePronunciationCoachRestart:
-      (delay) => {
-        sandbox.restartDelay = delay;
-      },
-    restartDelay: null,
+    finishPronunciationCoachSentence: () => {},
+    setPronunciationPracticeState: (state, message) => {
+      sandbox.state = state;
+      sandbox.message = message;
+    },
+    state: null,
+    message: null,
     result: null
   };
 
@@ -2714,16 +2503,11 @@ test("a completed selected chunk immediately advances to the next unfinished chu
     sandbox
   );
 
-  assert.equal(
-    sandbox.pronunciationCoachChunkIndex,
-    0
-  );
-  assert.equal(sandbox.restartDelay, 220);
+  assert.equal(sandbox.pronunciationCoachChunkIndex, 0);
   assert.equal(sandbox.result, false);
-  assert.match(
-    content,
-    /advancePronunciationCoach\(\);\s*\}, 180\)/s
-  );
+  assert.equal(sandbox.state, "ready");
+  assert.match(sandbox.message, /Söyle/);
+  assert.doesNotMatch(helper[0], /schedulePronunciationCoachRestart|startPronunciationCoachRecognition/);
 });
 
 test("clicking the middle of a phrase selects its full contiguous range", () => {
@@ -2798,16 +2582,69 @@ test("Netflix and YouTube seeking remain on the page bridge", () => {
   );
 });
 
-test("all subtitle export choices remain available", () => {
+test("subtitle export UI keeps every format but exposes English as the only download language", () => {
   for (const value of [
     '"srt"',
     '"vtt"',
     '"timed-txt"',
-    '"plain-txt"',
-    '"bilingual"'
+    '"plain-txt"'
   ]) {
     assert.match(content, new RegExp(value));
   }
 
+  const languageOptions = content.match(/for \(const \[language, label\] of \[[\s\S]*?exportMenu\.append/);
+  assert.ok(languageOptions);
+  assert.match(languageOptions[0], /\["en", "İngilizce"\]/);
+  assert.doesNotMatch(languageOptions[0], /Türkçe · çevrilen satırlar|İki dilli|"tr"|"bilingual"/);
+  assert.match(content, /if \(language === "tr"\)/);
+  assert.match(content, /if \(language === "bilingual"\)/);
   assert.match(content, /replace\(\/\\\[[^\n]+\\\]/);
+});
+
+test("pronunciation UI keeps the card action and restores the finalized-sentence shortcut to the balanced player bar", () => {
+  const subtitleActions = content.match(/subtitleActionsRow\.replaceChildren\([\s\S]*?\);/);
+  const commandRow = content.match(/commandRow\.append\([\s\S]*?\);/);
+  assert.ok(subtitleActions);
+  assert.ok(commandRow);
+  assert.match(subtitleActions[0], /pronunciationCoachButton/);
+  assert.match(commandRow[0], /pronunciationDock[\s\S]*?playbackCommandGroup[\s\S]*?utilityCommandGroup/);
+  assert.match(content, /pronunciationDock\.append\([\s\S]*?pronunciationMenuButton[\s\S]*?replayButton/);
+  assert.match(content, /playbackCommandGroup\.append\(\s*previousSentenceButton,\s*playPauseButton,\s*nextSentenceButton\s*\)/s);
+  assert.match(content, /pronunciationPracticeActions\.append\([\s\S]*?pronunciationPracticeContinuousButton/);
+  assert.doesNotMatch(content, /setPronunciationPopoverRow|pronunciationPopover|pronunciationContinuousPolicyButton/);
+  assert.doesNotMatch(css, /ps-pronunciation-popover/);
+  assert.match(css, /R11 player alignment patch/);
+  assert.match(css, /\.ps-command-row\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\)/);
+  assert.match(css, /\.ps-playback-command-group\s*\{[\s\S]*?grid-template-columns:\s*minmax\(92px, 108px\) 78px minmax\(92px, 108px\)/);
+  assert.match(css, /\.ps-utility-command-group \.ps-command-button\s*\{[\s\S]*?min-height:\s*62px !important;/);
+});
+
+
+
+
+
+test("pronunciation practice actions use the full card width before responsive wrapping", () => {
+  assert.match(
+    css,
+    /#pausespeak-status-panel \.ps-pronunciation-practice-actions\s*\{[\s\S]*?width:\s*100% !important;[\s\S]*?max-width:\s*none !important;[\s\S]*?flex-flow:\s*row wrap !important;[\s\S]*?gap:\s*8px 6px !important;/
+  );
+  assert.match(
+    content,
+    /pronunciationPracticeActions\.append\(\s*pronunciationPracticeSpeakButton,\s*pronunciationPracticeListenButton,\s*pronunciationPracticeRestartButton,\s*pronunciationPracticeContinuousButton,\s*pronunciationPracticeSkipButton,\s*pronunciationPracticeContinueButton\s*\)/s
+  );
+  assert.match(content, /setPauseSpeakButton\(pronunciationPracticeRestartButton, "replay", "Baştan al"\)/);
+  assert.match(content, /pronunciationPracticeRestartButton\.addEventListener\("click"[\s\S]*?handlePronunciationRestartAction\(\)/s);
+});
+
+test("More menu owns Turkish voice and Auto Pause with readable existing SVG icons", () => {
+  const moreMenu = content.match(/moreMenu\.replaceChildren\([\s\S]*?\);/);
+  const utilityGroup = content.match(/utilityCommandGroup\.append\([\s\S]*?\);/);
+  assert.ok(moreMenu);
+  assert.ok(utilityGroup);
+  assert.match(moreMenu[0], /pronunciationPracticeToggleButton[\s\S]*turkishTranslationSpeechToggleButton[\s\S]*automaticPauseToggleButton[\s\S]*usageButton[\s\S]*helpButton/);
+  assert.doesNotMatch(utilityGroup[0], /turkishTranslationSpeechToggleButton|automaticPauseToggleButton/);
+  assert.match(content, /turkishTranslationSpeechToggleButton\.className\s*=\s*\n\s*"ps-menu-button ps-more-toggle-option"/);
+  assert.match(content, /automaticPauseToggleButton\.className\s*=\s*\n\s*"ps-menu-button ps-more-toggle-option"/);
+  assert.match(css, /\.ps-more-toggle-option svg\s*\{[\s\S]*?width:\s*21px !important;[\s\S]*?height:\s*21px !important;/);
+  assert.match(css, /R10 final control simplification/);
 });

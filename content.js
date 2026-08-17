@@ -224,6 +224,10 @@ const isNextWordKey =
         return;
       }
 
+      markPronunciationMediaInteraction(
+        video.paused ? "play" : "pause"
+      );
+
       if (video.paused) {
         void video.play();
       } else {
@@ -286,6 +290,44 @@ const usageTtsDurationApiUrl =
   let completedEndTimeMs = null;
   let lastVideoFound = null;
   let lastPlaybackMediaKey = "";
+
+  const pronunciationPracticeStorageKey =
+    "pausespeak-pronunciation-practice-enabled-v1";
+  let isPronunciationPracticeEnabled = false;
+  let isPronunciationContinuousSessionActive = false;
+  let pronunciationContinuousResumeBoundary = null;
+  let pronunciationContinuousAutoContinueAttemptId = 0;
+  let pronunciationContinuousSessionGeneration = 0;
+  let pronunciationContinuousAutoSpeakPending = null;
+  let pronunciationContinuousAutoSpeakSentenceId = "";
+  let finalizedSentenceGeneration = 0;
+  let currentFinalizedSentence = null;
+  const finalizedSentenceHistory = [];
+  let activePronunciationSentence = null;
+  let pronunciationAttemptGeneration = 0;
+  let activePronunciationAttempt = null;
+  let pronunciationPracticeState = "idle";
+  let pronunciationPracticeMode = "single";
+  let mediaInteractionGeneration = 0;
+  let pronunciationControlledMediaUntil = 0;
+  let pronunciationControlledMediaEventGeneration = 0;
+  const pronunciationControlledMediaEventTokens = new Map();
+  let pronunciationSafetyVideo = null;
+  let pronunciationSafetyHandlers = null;
+  const pronunciationExplicitUserActionToken =
+    Symbol("pausespeak-pronunciation-explicit-user-action");
+
+  try {
+    isPronunciationPracticeEnabled =
+      localStorage.getItem(
+        pronunciationPracticeStorageKey
+      ) === "true";
+  } catch (error) {
+    console.debug(
+      "PauseSpeak telaffuz tercihi okunamadı.",
+      error
+    );
+  }
 
   let isReplayStarting = false;
   let activeReplayRequestId = null;
@@ -392,10 +434,13 @@ let privacyHeartbeatAt = Date.now();
   let pronunciationCoachRestartCount = 0;
   let pronunciationCoachRestartTimeout = null;
   let pronunciationCoachSilenceTimeout = null;
+  const pronunciationCoachInactivityTimeoutMs = 9000;
   let pronunciationCoachAdvanceTimeout = null;
   let pronunciationCoachSentence = "";
   let pronunciationCoachChunks = [];
   let pronunciationCoachChunkIndex = 0;
+  let pronunciationCoachFailedAttemptCount = 0;
+  let pronunciationCoachChunkHelpActive = false;
   let pronunciationCoachLiveMatches = new Set();
   let pronunciationCoachActiveWordIndex = -1;
   let pronunciationCoachLastHeard = "";
@@ -582,6 +627,12 @@ nowSpeakBox.textContent = "Henüz söylenecek bir cümle yok.";
 
 pronunciationToggleButton.textContent =
   "Telaffuz: Kapalı";
+
+  const pronunciationPracticeToggleButton =
+    document.createElement("button");
+  pronunciationPracticeToggleButton.type = "button";
+  pronunciationPracticeToggleButton.className =
+    "ps-menu-button ps-more-toggle-option";
   const turkishTranslationSpeechToggleButton =
   document.createElement("button");
 
@@ -900,6 +951,66 @@ automaticPauseToggleButton.textContent =
   pronunciationCoachActions.className =
     "ps-pronunciation-coach-actions";
 
+  const pronunciationPracticeRow =
+    document.createElement("div");
+  pronunciationPracticeRow.className =
+    "ps-pronunciation-practice-row";
+  pronunciationPracticeRow.hidden = true;
+
+  const pronunciationPracticeFeedback =
+    document.createElement("div");
+  pronunciationPracticeFeedback.className =
+    "ps-pronunciation-practice-feedback";
+  pronunciationPracticeFeedback.setAttribute("role", "status");
+
+  const pronunciationPracticeActions =
+    document.createElement("div");
+  pronunciationPracticeActions.className =
+    "ps-pronunciation-practice-actions";
+
+  const pronunciationPracticeSpeakButton =
+    document.createElement("button");
+  pronunciationPracticeSpeakButton.type = "button";
+  pronunciationPracticeSpeakButton.className =
+    "ps-pronunciation-practice-primary";
+
+  const pronunciationPracticeListenButton =
+    document.createElement("button");
+  pronunciationPracticeListenButton.type = "button";
+
+  const pronunciationPracticeRestartButton =
+    document.createElement("button");
+  pronunciationPracticeRestartButton.type = "button";
+  pronunciationPracticeRestartButton.className =
+    "ps-pronunciation-practice-secondary";
+
+  const pronunciationPracticeSkipButton =
+    document.createElement("button");
+  pronunciationPracticeSkipButton.type = "button";
+
+  const pronunciationPracticeContinueButton =
+    document.createElement("button");
+  pronunciationPracticeContinueButton.type = "button";
+
+  const pronunciationPracticeContinuousButton =
+    document.createElement("button");
+  pronunciationPracticeContinuousButton.type = "button";
+  pronunciationPracticeContinuousButton.className =
+    "ps-pronunciation-practice-secondary";
+
+  pronunciationPracticeActions.append(
+    pronunciationPracticeSpeakButton,
+    pronunciationPracticeListenButton,
+    pronunciationPracticeRestartButton,
+    pronunciationPracticeContinuousButton,
+    pronunciationPracticeSkipButton,
+    pronunciationPracticeContinueButton
+  );
+  pronunciationPracticeRow.append(
+    pronunciationPracticeFeedback,
+    pronunciationPracticeActions
+  );
+
   const pronunciationCoachListenButton =
     document.createElement("button");
   pronunciationCoachListenButton.type =
@@ -1161,6 +1272,8 @@ automaticPauseToggleButton.textContent =
     }
   }
 
+
+
   const topBar =
     document.createElement("div");
   topBar.className = "ps-topbar";
@@ -1295,6 +1408,37 @@ automaticPauseToggleButton.textContent =
   commandRow.className =
     "ps-command-row";
 
+  const pronunciationDock =
+    document.createElement("div");
+  pronunciationDock.className =
+    "ps-pronunciation-dock";
+  pronunciationDock.setAttribute(
+    "aria-label",
+    "Telaffuz kontrolleri"
+  );
+
+  const pronunciationMenuButton =
+    document.createElement("button");
+  pronunciationMenuButton.type = "button";
+  pronunciationMenuButton.className =
+    "ps-command-button ps-pronunciation-shortcut";
+  pronunciationMenuButton.title =
+    "Bu cümleyi çalış";
+  pronunciationMenuButton.setAttribute(
+    "aria-label",
+    pronunciationMenuButton.title
+  );
+
+  const playbackCommandGroup =
+    document.createElement("div");
+  playbackCommandGroup.className =
+    "ps-playback-command-group";
+
+  const utilityCommandGroup =
+    document.createElement("div");
+  utilityCommandGroup.className =
+    "ps-utility-command-group";
+
   const seekBackwardButton =
     document.createElement("button");
   seekBackwardButton.type = "button";
@@ -1323,33 +1467,13 @@ automaticPauseToggleButton.textContent =
   seekForwardButton.title =
     "10 saniye ileri git";
 
-  const audioSubtitleButton =
-    document.createElement("button");
-  audioSubtitleButton.type = "button";
-  audioSubtitleButton.className =
-    "ps-command-button";
-  audioSubtitleButton.title =
-    "Ses ve altyazı seçenekleri";
-
   const settingsMenu =
     document.createElement("div");
   settingsMenu.className =
     "ps-popup-menu ps-popup-top";
 
-  const audioMenu =
-    document.createElement("div");
-  audioMenu.className =
-    "ps-popup-menu ps-popup-bottom";
-
   moreMenu.className =
     "ps-popup-menu ps-popup-top";
-
-  const subtitleVisibilityButton =
-    document.createElement("button");
-  subtitleVisibilityButton.type =
-    "button";
-  subtitleVisibilityButton.textContent =
-    "Çeviri kartını gizle";
 
   const helpButton =
     document.createElement("button");
@@ -1927,6 +2051,7 @@ Object.assign(chunkBox.style, {
   moreButton,
   speakButton,
   pronunciationToggleButton,
+  pronunciationPracticeToggleButton,
   turkishTranslationSpeechToggleButton,
   automaticPauseToggleButton,
   transcriptButton,
@@ -2145,6 +2270,7 @@ moreButton.textContent =
 [
   speakButton,
   pronunciationToggleButton,
+  pronunciationPracticeToggleButton,
   turkishTranslationSpeechToggleButton,
   automaticPauseToggleButton,
   transcriptButton,
@@ -4622,6 +4748,7 @@ function requestNetflixSeek(
   targetTimeMs,
   pendingMessage = "Video konumu değiştiriliyor…"
 ) {
+  markPronunciationMediaInteraction("seek");
   const normalizedTargetTimeMs =
     Math.max(
       0,
@@ -4724,6 +4851,18 @@ function renderTranscriptPanel() {
       ` · ${indexedCues.length} sonuç`;
   }
 
+  const pronunciationTargetByCueIndex = new Map();
+  const pronunciationLastCueIndexBySentenceId = new Map();
+
+  if (isPronunciationPracticeEnabled) {
+    cues.forEach((cue, cueIndex) => {
+      const target = findFinalizedSentenceForTranscriptCue(cue);
+      if (!target?.id) return;
+      pronunciationTargetByCueIndex.set(cueIndex, target);
+      pronunciationLastCueIndexBySentenceId.set(target.id, cueIndex);
+    });
+  }
+
   for (const { cue, index } of
     indexedCues) {
     const row = document.createElement(
@@ -4766,6 +4905,33 @@ function renderTranscriptPanel() {
       lineHeight: "1.45"
     });
 
+    const pronunciationTarget =
+      pronunciationTargetByCueIndex.get(index) || null;
+    const shouldRenderPronunciationAction = Boolean(
+      pronunciationTarget?.id &&
+      pronunciationLastCueIndexBySentenceId.get(pronunciationTarget.id) === index
+    );
+    let transcriptPronunciationAction = null;
+
+    if (shouldRenderPronunciationAction) {
+      transcriptPronunciationAction = document.createElement("span");
+      transcriptPronunciationAction.className = "ps-transcript-pronunciation-action";
+      transcriptPronunciationAction.setAttribute("role", "button");
+      transcriptPronunciationAction.setAttribute("tabindex", "0");
+      transcriptPronunciationAction.setAttribute("aria-label", "Bu cümleyi çalış");
+      transcriptPronunciationAction.title = "Bu cümleyi çalış";
+      transcriptPronunciationAction.insertAdjacentHTML("afterbegin", getPauseSpeakIcon("coach"));
+      const openTranscriptPractice = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openPronunciationCoach(pronunciationTarget, "single");
+      };
+      transcriptPronunciationAction.addEventListener("click", openTranscriptPractice);
+      transcriptPronunciationAction.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") openTranscriptPractice(event);
+      });
+    }
+
     row.append(time, text);
 
     row.addEventListener(
@@ -4777,7 +4943,14 @@ function renderTranscriptPanel() {
       }
     );
 
-    transcriptList.appendChild(row);
+    if (transcriptPronunciationAction) {
+      const rowShell = document.createElement("div");
+      rowShell.className = "ps-transcript-row-shell";
+      rowShell.append(row, transcriptPronunciationAction);
+      transcriptList.appendChild(rowShell);
+    } else {
+      transcriptList.appendChild(row);
+    }
   }
 
   if (
@@ -6872,6 +7045,306 @@ async function improveCurrentWithTerra(
     return retryWords;
   }
 
+  function createFinalizedSentenceIdentity(
+    text,
+    startTimeMs,
+    endTimeMs
+  ) {
+    const cleanSentence = cleanText(text);
+
+    if (!cleanSentence) {
+      return null;
+    }
+
+    finalizedSentenceGeneration += 1;
+
+    return Object.freeze({
+      id: `${getPlaybackMediaKey()}:sentence:${finalizedSentenceGeneration}`,
+      mediaKey: getPlaybackMediaKey(),
+      text: cleanSentence,
+      startTimeMs: Math.max(0, Number(startTimeMs) || 0),
+      endTimeMs: Math.max(
+        Number(endTimeMs) || 0,
+        (Number(startTimeMs) || 0) + 800
+      )
+    });
+  }
+
+  function rememberFinalizedSentence(sentence) {
+    if (!sentence) {
+      return;
+    }
+
+    currentFinalizedSentence = sentence;
+    finalizedSentenceHistory.push(sentence);
+
+    if (finalizedSentenceHistory.length > 240) {
+      finalizedSentenceHistory.splice(
+        0,
+        finalizedSentenceHistory.length - 240
+      );
+    }
+  }
+
+  function findFinalizedSentenceForTranscriptCue(cue) {
+    if (!cue) {
+      return null;
+    }
+
+    const mediaKey = getPlaybackMediaKey();
+    const cueStart = Number(cue.startTimeMs) || 0;
+    const cueEnd = Math.max(cueStart, Number(cue.endTimeMs) || cueStart);
+    const cueText = normalizeTranscriptText(cue.text).toLocaleLowerCase("en-US");
+
+    for (let index = finalizedSentenceHistory.length - 1; index >= 0; index -= 1) {
+      const sentence = finalizedSentenceHistory[index];
+
+      if (sentence.mediaKey !== mediaKey) {
+        continue;
+      }
+
+      const overlaps =
+        sentence.startTimeMs <= cueEnd + 250 &&
+        sentence.endTimeMs >= cueStart - 250;
+      const sentenceText = normalizeTranscriptText(sentence.text)
+        .toLocaleLowerCase("en-US");
+      const textMatches =
+        !cueText ||
+        sentenceText.includes(cueText) ||
+        cueText.includes(sentenceText);
+
+      if (overlaps && textMatches) {
+        return sentence;
+      }
+    }
+
+    return null;
+  }
+
+  function invalidatePronunciationAttempt() {
+    pronunciationAttemptGeneration += 1;
+    activePronunciationAttempt = null;
+    pronunciationCoachShouldRestart = false;
+  }
+
+  function beginPronunciationAttempt() {
+    if (!activePronunciationSentence) {
+      return null;
+    }
+
+    pronunciationAttemptGeneration += 1;
+    activePronunciationAttempt = Object.freeze({
+      id: pronunciationAttemptGeneration,
+      sentenceId: activePronunciationSentence.id
+    });
+    return activePronunciationAttempt;
+  }
+
+  function isPronunciationAttemptCurrent(
+    sentenceId,
+    attemptId,
+    recognition = null
+  ) {
+    return Boolean(
+      activePronunciationSentence &&
+      activePronunciationAttempt &&
+      activePronunciationSentence.id === sentenceId &&
+      activePronunciationAttempt.sentenceId === sentenceId &&
+      activePronunciationAttempt.id === attemptId &&
+      (!recognition || pronunciationCoachRecognition === recognition)
+    );
+  }
+
+  function createPronunciationControlledMediaEventToken(type, durationMs = 1400) {
+    const normalizedType = String(type || "").toLowerCase();
+    if (!normalizedType) return null;
+    pronunciationControlledMediaEventGeneration += 1;
+    const token = Object.freeze({
+      id: pronunciationControlledMediaEventGeneration,
+      type: normalizedType,
+      expiresAt: Date.now() + Math.max(0, Number(durationMs) || 0)
+    });
+    pronunciationControlledMediaEventTokens.set(normalizedType, token);
+    return token;
+  }
+
+  function clearPronunciationControlledMediaEventToken(token) {
+    if (!token) return;
+    const current = pronunciationControlledMediaEventTokens.get(token.type);
+    if (current?.id === token.id) {
+      pronunciationControlledMediaEventTokens.delete(token.type);
+    }
+  }
+
+  function consumePronunciationControlledMediaEventToken(type) {
+    const normalizedType = String(type || "").toLowerCase();
+    const token = pronunciationControlledMediaEventTokens.get(normalizedType);
+    if (!token) return false;
+    pronunciationControlledMediaEventTokens.delete(normalizedType);
+    return token.expiresAt >= Date.now();
+  }
+
+  function clearPronunciationControlledMediaEventTokens() {
+    pronunciationControlledMediaEventTokens.clear();
+  }
+
+  function allowPronunciationControlledMedia(durationMs = 900) {
+    pronunciationControlledMediaUntil = Math.max(
+      pronunciationControlledMediaUntil,
+      Date.now() + durationMs
+    );
+  }
+
+  function markPronunciationMediaInteraction(reason = "media") {
+    mediaInteractionGeneration += 1;
+    invalidatePronunciationAttempt();
+
+    if (reason === "play" || reason === "seek") {
+      stopPronunciationCoachRecognition(false);
+
+      if (isPronunciationCoachOpen) {
+        pronunciationPracticeState = "ready";
+        pronunciationCoachStatus.textContent =
+          reason === "play"
+            ? "Video oynarken mikrofon kapalı"
+            : "Video konumu değişti — yeniden Söyle'ye bas";
+        renderPronunciationCoach();
+      }
+    }
+  }
+
+  function ensurePronunciationMediaSafetyListeners(video) {
+    if (!video || pronunciationSafetyVideo === video) {
+      return;
+    }
+
+    if (pronunciationSafetyVideo && pronunciationSafetyHandlers) {
+      pronunciationSafetyVideo.removeEventListener("play", pronunciationSafetyHandlers.play);
+      pronunciationSafetyVideo.removeEventListener("pause", pronunciationSafetyHandlers.pause);
+      pronunciationSafetyVideo.removeEventListener("seeking", pronunciationSafetyHandlers.seeking);
+    }
+
+    const onMediaInteraction = (reason) => () => {
+      if (consumePronunciationControlledMediaEventToken(reason)) {
+        return;
+      }
+      if (Date.now() <= pronunciationControlledMediaUntil) {
+        return;
+      }
+      markPronunciationMediaInteraction(reason);
+    };
+
+    pronunciationSafetyHandlers = {
+      play: onMediaInteraction("play"),
+      pause: onMediaInteraction("pause"),
+      seeking: onMediaInteraction("seek")
+    };
+    pronunciationSafetyVideo = video;
+    video.addEventListener("play", pronunciationSafetyHandlers.play);
+    video.addEventListener("pause", pronunciationSafetyHandlers.pause);
+    video.addEventListener("seeking", pronunciationSafetyHandlers.seeking);
+  }
+
+  function pauseVideoForPronunciation(video) {
+    if (!video || video.paused) {
+      return false;
+    }
+    const controlledPauseToken =
+      createPronunciationControlledMediaEventToken("pause");
+    try {
+      video.pause();
+      return true;
+    } catch (error) {
+      clearPronunciationControlledMediaEventToken(controlledPauseToken);
+      return false;
+    }
+  }
+
+  async function playVideoForPronunciation(video) {
+    if (!video) {
+      return false;
+    }
+    const controlledPlayToken =
+      createPronunciationControlledMediaEventToken("play", 1400);
+    try {
+      await video.play();
+      return true;
+    } catch (error) {
+      clearPronunciationControlledMediaEventToken(controlledPlayToken);
+      return false;
+    }
+  }
+
+  function updatePronunciationFeatureUI() {
+    const pronunciationFeatureLabel = isPronunciationPracticeEnabled
+      ? "Telaffuz alıştırmaları: Açık"
+      : "Telaffuz alıştırmaları: Kapalı";
+    setPauseSpeakButton(
+      pronunciationPracticeToggleButton,
+      "coach",
+      pronunciationFeatureLabel
+    );
+    pronunciationPracticeToggleButton.title = pronunciationFeatureLabel;
+    pronunciationPracticeToggleButton.setAttribute("aria-label", pronunciationFeatureLabel);
+    pronunciationPracticeToggleButton.setAttribute(
+      "aria-pressed",
+      String(isPronunciationPracticeEnabled)
+    );
+
+    const continuousActionLabel = isPronunciationContinuousSessionActive
+      ? "Konuşarak ilerlemeyi bitir"
+      : "Konuşarak ilerle";
+    setPauseSpeakButton(
+      pronunciationPracticeContinuousButton,
+      isPronunciationContinuousSessionActive ? "close" : "next",
+      continuousActionLabel
+    );
+    pronunciationPracticeContinuousButton.title = continuousActionLabel;
+    pronunciationPracticeContinuousButton.setAttribute(
+      "aria-label",
+      continuousActionLabel
+    );
+    pronunciationPracticeContinuousButton.setAttribute(
+      "aria-pressed",
+      String(isPronunciationContinuousSessionActive)
+    );
+
+    setPauseSpeakButton(
+      pronunciationMenuButton,
+      "coach",
+      "Telaffuz"
+    );
+    pronunciationMenuButton.classList.toggle(
+      "ps-active",
+      isPronunciationCoachOpen
+    );
+    pronunciationMenuButton.disabled =
+      !isPronunciationPracticeEnabled || !currentFinalizedSentence;
+    pronunciationMenuButton.title = "Bu cümleyi çalış";
+    pronunciationMenuButton.setAttribute("aria-label", pronunciationMenuButton.title);
+    pronunciationMenuButton.setAttribute(
+      "aria-pressed",
+      String(isPronunciationCoachOpen)
+    );
+
+    pronunciationCoachButton.classList.toggle(
+      "ps-pronunciation-unavailable",
+      !isPronunciationPracticeEnabled
+    );
+    pronunciationCoachButton.disabled =
+      !isPronunciationPracticeEnabled || !currentFinalizedSentence;
+    pronunciationCoachButton.title = "Bu cümleyi çalış";
+    pronunciationCoachButton.setAttribute("aria-label", pronunciationCoachButton.title);
+  }
+
+  function setPronunciationPracticeState(state, message = "") {
+    pronunciationPracticeState = state;
+    if (message) {
+      pronunciationCoachStatus.textContent = message;
+    }
+    renderPronunciationCoach();
+  }
+
   function createPronunciationCoachParts(
     text
   ) {
@@ -6970,29 +7443,78 @@ async function improveCurrentWithTerra(
     );
   }
 
+  function getPronunciationCoachPhoneticKey(text) {
+    const token = getWordTokens(text).join("");
+    if (!token) return "";
+    const groups = {
+      b: "1", f: "1", p: "1", v: "1",
+      c: "2", g: "2", j: "2", k: "2", q: "2", s: "2", x: "2", z: "2",
+      d: "3", t: "3",
+      l: "4",
+      m: "5", n: "5",
+      r: "6"
+    };
+    let key = "";
+    let previous = "";
+    for (const character of token) {
+      const group = groups[character] || "";
+      if (!group) continue;
+      if (group !== previous) key += group;
+      previous = group;
+    }
+    return key;
+  }
+
+  function getPronunciationCoachProperNamePhoneticEvidence(
+    targetText,
+    spokenText,
+    fuzzyScore
+  ) {
+    const target = getWordTokens(targetText).join("");
+    const spoken = getWordTokens(spokenText).join("");
+    if (!target || !spoken) {
+      return { phoneticMatch: false, supported: false };
+    }
+    const targetKey = getPronunciationCoachPhoneticKey(target);
+    const spokenKey = getPronunciationCoachPhoneticKey(spoken);
+    const maximumLength = Math.max(target.length, spoken.length);
+    const lengthRatio = Math.min(target.length, spoken.length) / maximumLength;
+    const fuzzyFloor = maximumLength >= 6 ? 0.28 : 0.5;
+    const phoneticMatch = Boolean(targetKey && targetKey === spokenKey);
+    return {
+      phoneticMatch,
+      supported:
+        phoneticMatch &&
+        lengthRatio >= 0.72 &&
+        fuzzyScore >= fuzzyFloor
+    };
+  }
+
   function isPronunciationCoachWordMatch(
     targetText,
-    spokenText
+    spokenText,
+    isProperName = false
   ) {
-    const target = getWordTokens(
-      targetText
-    ).join("");
-    const score =
-      getPronunciationCoachWordSimilarity(
+    const target = getWordTokens(targetText).join("");
+    const score = getPronunciationCoachWordSimilarity(targetText, spokenText);
+    const threshold = isProperName
+      ? target.length <= 3 ? 0.66 : target.length <= 5 ? 0.62 : 0.58
+      : target.length <= 3 ? 1 : target.length <= 5 ? 0.8 : 0.72;
+    const fuzzySuccess = score >= threshold;
+    if (!isProperName || fuzzySuccess) {
+      return { success: fuzzySuccess, score };
+    }
+    const phoneticEvidence =
+      getPronunciationCoachProperNamePhoneticEvidence(
         targetText,
-        spokenText
+        spokenText,
+        score
       );
-
-    const threshold =
-      target.length <= 3
-        ? 1
-        : target.length <= 5
-          ? 0.8
-          : 0.72;
-
     return {
-      success: score >= threshold,
-      score
+      success: phoneticEvidence.supported,
+      score: phoneticEvidence.supported
+        ? Math.max(score, 0.68 + score * 0.2)
+        : score
     };
   }
 
@@ -7000,81 +7522,56 @@ async function improveCurrentWithTerra(
     wordReferences,
     spokenText
   ) {
-    const spokenTokens =
-      getWordTokens(spokenText);
+    const spokenTokens = getWordTokens(spokenText);
     const matchedKeys = new Set();
+    const totalWeight = wordReferences.reduce(
+      (total, reference) => total + (reference.word.weight || 1),
+      0
+    );
+    let matchedWeight = 0;
+    let criticalMatchedCount = 0;
+    let properNameMatchedCount = 0;
     let spokenCursor = 0;
     let totalScore = 0;
 
     for (const reference of wordReferences) {
       let bestMatch = null;
-      const targetTokenCount = Math.max(
-        1,
-        getWordTokens(
-          reference.word.text
-        ).length
-      );
-
-      for (
-        let startIndex = spokenCursor;
-        startIndex < spokenTokens.length;
-        startIndex += 1
-      ) {
-        const maximumWindow = Math.min(
-          spokenTokens.length - startIndex,
-          targetTokenCount + 1,
-          3
-        );
-
-        for (
-          let windowSize = 1;
-          windowSize <= maximumWindow;
-          windowSize += 1
-        ) {
-          const spokenWindow =
-            spokenTokens
-              .slice(
-                startIndex,
-                startIndex + windowSize
-              )
-              .join(" ");
-          const comparison =
-            isPronunciationCoachWordMatch(
-              reference.word.text,
-              spokenWindow
-            );
-
-          if (
-            !comparison.success ||
-            (
-              bestMatch &&
-              comparison.score <=
-                bestMatch.score
-            )
-          ) {
+      const targetTokenCount = Math.max(1, getWordTokens(reference.word.text).length);
+      for (let startIndex = spokenCursor; startIndex < spokenTokens.length; startIndex += 1) {
+        const maximumWindow = Math.min(spokenTokens.length - startIndex, targetTokenCount + 1, 3);
+        for (let windowSize = 1; windowSize <= maximumWindow; windowSize += 1) {
+          const spokenWindow = spokenTokens.slice(startIndex, startIndex + windowSize).join(" ");
+          const comparison = isPronunciationCoachWordMatch(
+            reference.word.text,
+            spokenWindow,
+            Boolean(reference.word.isProperName)
+          );
+          if (!comparison.success || (bestMatch && comparison.score <= bestMatch.score)) {
             continue;
           }
-
-          bestMatch = {
-            score: comparison.score,
-            endIndex:
-              startIndex + windowSize
-          };
+          bestMatch = { score: comparison.score, endIndex: startIndex + windowSize };
         }
       }
-
       if (!bestMatch) {
         continue;
       }
-
       matchedKeys.add(reference.key);
-      totalScore += bestMatch.score;
+      const weight = reference.word.weight || 1;
+      matchedWeight += weight;
+      totalScore += bestMatch.score * weight;
+      if (weight >= 2) criticalMatchedCount += 1;
+      if (reference.word.isProperName) properNameMatchedCount += 1;
       spokenCursor = bestMatch.endIndex;
     }
-
     return {
       matchedKeys,
-      totalScore
+      totalScore,
+      criticalMatchedCount,
+      properNameMatchedCount,
+      matchedWeight,
+      totalWeight,
+      weightedCoverage: totalWeight > 0 ? matchedWeight / totalWeight : 0,
+      weightedScore: totalWeight > 0 ? totalScore / totalWeight : 0
     };
   }
 
@@ -7103,144 +7600,83 @@ async function improveCurrentWithTerra(
     return names;
   }
 
-  function createPronunciationCoachChunks(
-    sentence,
-    chunks
-  ) {
-    const properNames =
-      getPronunciationCoachProperNames();
-    let globalWordIndex = 0;
-    let nextWordStartsSentence = true;
-    const commonSentenceStarters =
-      new Set([
-        "a", "an", "and", "are", "as", "at",
-        "because", "but", "can", "could", "did", "do",
-        "does", "for", "from", "had", "has", "have",
-        "he", "her", "here", "his", "how", "i", "if",
-        "in", "is", "it", "its", "my", "no", "not",
-        "of", "on", "or", "our", "she", "so", "that",
-        "the", "their", "there", "these", "they", "this",
-        "those", "to", "we", "were", "what", "when",
-        "where", "which", "who", "why", "will", "with",
-        "would", "you", "your"
-      ]);
-
-    return chunks.map(
-      (chunkText, chunkIndex) => {
-        const parts =
-          createPronunciationCoachParts(
-            chunkText
-          ).map((part, partIndex) => {
-            if (part.kind !== "word") {
-              if (/[.!?…]/.test(part.text)) {
-                nextWordStartsSentence =
-                  true;
-              }
-
-              return {
-                ...part,
-                key:
-                  `${chunkIndex}:p:${partIndex}`,
-                state: "punctuation"
-              };
-            }
-
-            const normalizedTokens =
-              getWordTokens(part.text);
-            const normalized =
-              normalizedTokens.join("");
-            const startsSentence =
-              nextWordStartsSentence;
-            nextWordStartsSentence = false;
-            const isCapitalized =
-              /^[A-Z][\p{L}'’-]*$/u.test(
-                part.text
-              );
-            const isAllCaps =
-              part.text.length > 1 &&
-              part.text ===
-                part.text.toUpperCase() &&
-              /[A-Z]/.test(part.text);
-            const looksLikeOpeningName =
-              globalWordIndex === 0 &&
-              isCapitalized &&
-              normalizedTokens.length === 1 &&
-              !commonSentenceStarters.has(
-                normalizedTokens[0]
-              );
-            const isProperName =
-              normalizedTokens.some(
-                (token) =>
-                  properNames.has(token)
-              ) ||
-              isAllCaps ||
-              (
-                globalWordIndex > 0 &&
-                !startsSentence &&
-                part.text !== "I" &&
-                isCapitalized
-              ) ||
-              looksLikeOpeningName;
-            const word = {
-              ...part,
-              key:
-                `${chunkIndex}:w:${globalWordIndex}`,
-              studyIndex:
-                globalWordIndex,
-              normalized,
-              state: isProperName
-                ? "proper"
-                : "pending"
-            };
-
-            globalWordIndex += 1;
-            return word;
-          });
-
-        return {
-          text: chunkText,
-          parts
-        };
-      }
-    );
+  function isPronunciationCoachOptionalFiller(normalizedTokens) {
+    const fillerWords = new Set(["um", "uh", "umm", "uhh", "hmm"]);
+    return normalizedTokens.length === 1 && fillerWords.has(normalizedTokens[0]);
   }
 
-  function getPronunciationCoachWordReferences(
-    onlyCurrentChunk = false
+  function getPronunciationCoachWordWeight(
+    normalizedTokens,
+    isProperName = false
   ) {
-    const references = [];
+    const criticalWords = new Set([
+      "not", "never", "no", "cannot", "dont", "doesnt", "didnt",
+      "cant", "couldnt", "wont", "wouldnt"
+    ]);
+    const lowWeightWords = new Set(["the", "a", "an", "to", "of"]);
+    if (normalizedTokens.some((token) => criticalWords.has(token))) return 2.5;
+    if (isPronunciationCoachOptionalFiller(normalizedTokens)) return 0.05;
+    if (isProperName) return 1.15;
+    if (normalizedTokens.length === 1 && lowWeightWords.has(normalizedTokens[0])) return 0.4;
+    return 1;
+  }
 
-    pronunciationCoachChunks.forEach(
-      (chunk, chunkIndex) => {
-        if (
-          onlyCurrentChunk &&
-          chunkIndex !==
-            pronunciationCoachChunkIndex
-        ) {
-          return;
+  function createPronunciationCoachChunks(sentence, chunks) {
+    const properNames = getPronunciationCoachProperNames();
+    let globalWordIndex = 0;
+    let nextWordStartsSentence = true;
+    const commonSentenceStarters = new Set([
+      "a", "an", "and", "are", "as", "at", "because", "but", "can", "could", "did", "do",
+      "does", "for", "from", "had", "has", "have", "he", "her", "here", "his", "how", "i",
+      "if", "in", "is", "it", "its", "my", "no", "not", "of", "on", "or", "our", "she", "so",
+      "that", "the", "their", "there", "these", "they", "this", "those", "to", "we", "were", "what",
+      "when", "where", "which", "who", "why", "will", "with", "would", "you", "your"
+    ]);
+    return chunks.map((chunkText, chunkIndex) => {
+      const parts = createPronunciationCoachParts(chunkText).map((part, partIndex) => {
+        if (part.kind !== "word") {
+          if (/[.!?…]/.test(part.text)) nextWordStartsSentence = true;
+          return { ...part, key: `${chunkIndex}:p:${partIndex}`, state: "punctuation" };
         }
+        const normalizedTokens = getWordTokens(part.text);
+        const normalized = normalizedTokens.join("");
+        const startsSentence = nextWordStartsSentence;
+        nextWordStartsSentence = false;
+        const isOptionalFiller = isPronunciationCoachOptionalFiller(normalizedTokens);
+        const isCapitalized = /^[A-Z][\p{L}'’-]*$/u.test(part.text);
+        const isAllCaps = part.text.length > 1 && part.text === part.text.toUpperCase() && /[A-Z]/.test(part.text);
+        const looksLikeOpeningName = globalWordIndex === 0 && isCapitalized && normalizedTokens.length === 1 && !commonSentenceStarters.has(normalizedTokens[0]);
+        const isProperName = !isOptionalFiller && (normalizedTokens.some((token) => properNames.has(token)) || isAllCaps || (globalWordIndex > 0 && !startsSentence && part.text !== "I" && isCapitalized) || looksLikeOpeningName);
+        const word = {
+          ...part,
+          key: `${chunkIndex}:w:${globalWordIndex}`,
+          studyIndex: globalWordIndex,
+          normalized,
+          isProperName,
+          isOptionalFiller,
+          weight: getPronunciationCoachWordWeight(normalizedTokens, isProperName),
+          state: "pending"
+        };
+        globalWordIndex += 1;
+        return word;
+      });
+      return { text: chunkText, parts };
+    });
+  }
 
-        chunk.parts.forEach(
-          (word, wordIndex) => {
-            if (
-              word.kind !== "word" ||
-              word.state === "passed" ||
-              word.state === "proper"
-            ) {
-              return;
-            }
-
-            references.push({
-              key: word.key,
-              word,
-              wordIndex,
-              chunkIndex
-            });
-          }
-        );
-      }
-    );
-
+  function getPronunciationCoachWordReferences(onlyCurrentChunk = false) {
+    const references = [];
+    pronunciationCoachChunks.forEach((chunk, chunkIndex) => {
+      if (
+        onlyCurrentChunk &&
+        pronunciationCoachChunkHelpActive &&
+        chunkIndex !== pronunciationCoachChunkIndex
+      ) return;
+      chunk.parts.forEach((word, wordIndex) => {
+        if (word.kind !== "word" || word.state === "passed") return;
+        references.push({ key: word.key, word, wordIndex, chunkIndex });
+      });
+    });
     return references;
   }
 
@@ -7264,6 +7700,15 @@ async function improveCurrentWithTerra(
   }
 
   function getCurrentPronunciationCoachChunk() {
+    if (!pronunciationCoachChunks.length) {
+      return null;
+    }
+    if (!pronunciationCoachChunkHelpActive) {
+      return {
+        text: pronunciationCoachSentence,
+        parts: pronunciationCoachChunks.flatMap((chunk) => chunk.parts)
+      };
+    }
     return (
       pronunciationCoachChunks[
         pronunciationCoachChunkIndex
@@ -7271,38 +7716,25 @@ async function improveCurrentWithTerra(
     );
   }
 
-  function isPronunciationCoachChunkComplete(
-    chunk
-  ) {
-    if (!chunk) {
-      return false;
-    }
-
-    return chunk.parts
-      .filter(
-        (part) =>
-          part.kind === "word"
-      )
-      .every(
-        (word) =>
-          word.state === "passed" ||
-          word.state === "proper"
-      );
+  function isPronunciationCoachChunkComplete(chunk) {
+    if (!chunk) return false;
+    const words = chunk.parts.filter(
+      (part) => part.kind === "word" && !part.isOptionalFiller
+    );
+    if (!words.length) return false;
+    const criticalMissing = words.some((word) => word.weight >= 2 && word.state !== "passed");
+    const properNameMissing = words.some((word) => word.isProperName && word.state !== "passed");
+    if (criticalMissing || properNameMissing) return false;
+    const totalWeight = words.reduce((total, word) => total + (word.weight || 1), 0);
+    const passedWeight = words.reduce((total, word) => total + (word.state === "passed" ? word.weight || 1 : 0), 0);
+    return totalWeight > 0 && passedWeight / totalWeight >= pronunciationSuccessThreshold;
   }
 
   function getPronunciationCoachRemainingCount() {
-    const chunk =
-      getCurrentPronunciationCoachChunk();
-
-    if (!chunk) {
-      return 0;
-    }
-
+    const chunk = getCurrentPronunciationCoachChunk();
+    if (!chunk) return 0;
     return chunk.parts.filter(
-      (part) =>
-        part.kind === "word" &&
-        part.state !== "passed" &&
-        part.state !== "proper"
+      (part) => part.kind === "word" && !part.isOptionalFiller && part.state !== "passed"
     ).length;
   }
 
@@ -7383,43 +7815,11 @@ async function improveCurrentWithTerra(
   }
 
   function tryStartPronunciationCoachAfterTranslation() {
-    if (
-      !isPronunciationCoachSessionActive ||
-      !isPronunciationCoachOpen ||
-      pronunciationCoachManualPause ||
-      pronunciationCoachIsModelSpeaking ||
-      pronunciationCoachRecognition ||
-      pronunciationCoachListening ||
-      !getCurrentPronunciationCoachChunk()
-    ) {
-      return false;
-    }
-
-    const video = getNetflixVideo();
-
-    if (
-      !video ||
-      !video.paused ||
-      !isPronunciationCoachTranslationReady()
-    ) {
-      pronunciationCoachWaitingForTranslation =
-        true;
-      pronunciationCoachStatus.textContent =
-        video && video.paused
-          ? "Çeviri tamamlanınca mikrofon otomatik açılacak"
-          : "Video oynarken mikrofon kapalı";
+    if (isPronunciationCoachOpen) {
+      pronunciationCoachWaitingForTranslation = false;
       renderPronunciationCoach();
-      return false;
     }
-
-    pronunciationCoachWaitingForTranslation =
-      false;
-    pronunciationCoachStatus.textContent =
-      "Çeviri hazır — mikrofon açılıyor";
-    pronunciationCoachShouldRestart = true;
-    renderPronunciationCoach();
-    schedulePronunciationCoachRestart(220);
-    return true;
+    return false;
   }
 
   function getPronunciationCoachStudyContext(
@@ -7536,38 +7936,13 @@ async function improveCurrentWithTerra(
   }
 
   function resumePronunciationCoachAfterStudyMeaning() {
-    const shouldResume =
-      pronunciationCoachResumeAfterMeaning;
-
-    pronunciationCoachResumeAfterMeaning =
-      false;
+    pronunciationCoachResumeAfterMeaning = false;
     pronunciationCoachStudySelection.clear();
-    studyMeaningOverlay.classList.remove(
-      "ps-from-pronunciation-coach"
-    );
-
-    if (
-      !isPronunciationCoachSessionActive ||
-      !isPronunciationCoachOpen
-    ) {
-      return;
-    }
-
-    pronunciationCoachStatus.textContent =
-      shouldResume
-        ? "Kaldığın yerden devam edebilirsin"
-        : "İlerlemen korunuyor";
-    renderPronunciationCoach();
-
-    if (shouldResume) {
-      pronunciationCoachManualPause =
-        false;
-      pronunciationCoachShouldRestart =
-        true;
-      schedulePronunciationCoachRestart(
-        260
-      );
-    }
+    studyMeaningOverlay.classList.remove("ps-from-pronunciation-coach");
+    if (!isPronunciationCoachSessionActive || !isPronunciationCoachOpen) return;
+    pronunciationCoachManualPause = false;
+    pronunciationCoachShouldRestart = false;
+    setPronunciationPracticeState("ready", "Hazır — yeniden Söyle'ye bas");
   }
 
   function selectPronunciationCoachChunk(
@@ -7722,11 +8097,91 @@ async function improveCurrentWithTerra(
     return element;
   }
 
+  function isPronunciationTargetDisplayLocked() {
+    return Boolean(
+      isPronunciationPracticeEnabled &&
+      isPronunciationCoachOpen &&
+      isPronunciationCoachSessionActive &&
+      activePronunciationSentence?.id
+    );
+  }
+
+  function isActivePronunciationSentenceDisplayed() {
+    return Boolean(
+      activePronunciationSentence?.id &&
+      subtitleBox.dataset.pronunciationTargetSentenceId ===
+        activePronunciationSentence.id
+    );
+  }
+
+  function renderActivePronunciationSentenceInSubtitle() {
+    const sentence = activePronunciationSentence;
+    if (
+      !isPronunciationTargetDisplayLocked() ||
+      !sentence?.id ||
+      subtitleBox.dataset.pronunciationTargetSentenceId === sentence.id
+    ) {
+      return false;
+    }
+
+    clearKeyboardStudyMeaningTimer();
+    subtitleBox.replaceChildren();
+    subtitleBox.dataset.finalizedSentenceId = sentence.id;
+    subtitleBox.dataset.pronunciationTargetSentenceId = sentence.id;
+    Object.assign(
+      subtitleBox.style,
+      {
+        display: "flex",
+        flexDirection: "column",
+        flexWrap: "nowrap",
+        alignItems: "stretch",
+        gap: "12px"
+      }
+    );
+
+    const sentenceRow = document.createElement("div");
+    Object.assign(sentenceRow.style, {
+      width: "100%",
+      textAlign: "center"
+    });
+    const sentenceLine = document.createElement("div");
+    Object.assign(sentenceLine.style, {
+      display: "block",
+      textAlign: "center",
+      whiteSpace: "normal"
+    });
+    appendStudySegments(
+      sentenceLine,
+      createImmediateStudySegments(sentence.text)
+    );
+    sentenceRow.appendChild(sentenceLine);
+    subtitleBox.appendChild(sentenceRow);
+    return true;
+  }
+
+  function clearPronunciationCoachStateFromSubtitle() {
+    subtitleBox.classList.remove("ps-inline-coach-active");
+    panel.classList.remove("ps-inline-coach-active");
+    subtitleBox.querySelectorAll("button[data-study-text]").forEach((segmentButton) => {
+      segmentButton.classList.remove(
+        "ps-inline-coach-segment",
+        "ps-coach-word-active",
+        "ps-coach-word-passed",
+        "ps-coach-word-proper",
+        "ps-coach-word-retry",
+        "ps-coach-word-live-passed"
+      );
+      delete segmentButton.dataset.coachWordKey;
+    });
+  }
+
   function applyPronunciationCoachStateToSubtitle() {
     if (
       !isPronunciationCoachOpen ||
-      !isPronunciationCoachSessionActive
+      !isPronunciationCoachSessionActive ||
+      !isActivePronunciationSentenceDisplayed()
     ) {
+      clearPronunciationCoachStateFromSubtitle();
       return;
     }
 
@@ -7927,32 +8382,36 @@ async function improveCurrentWithTerra(
     const chunk =
       getCurrentPronunciationCoachChunk();
 
+    const showAllChunks = Boolean(
+      pronunciationCoachChunkHelpActive &&
+      isPronunciationCoachAllChunksVisible
+    );
     pronunciationCoachProgress.textContent =
-      pronunciationCoachChunks.length
+      pronunciationCoachChunkHelpActive && pronunciationCoachChunks.length
         ? `Parçalar · ${Math.min(
             pronunciationCoachChunkIndex + 1,
             pronunciationCoachChunks.length
           )} / ${pronunciationCoachChunks.length}`
-        : "Parçalar";
+        : "Cümle";
     pronunciationCoachPreviousChunkButton.disabled =
+      !pronunciationCoachChunkHelpActive ||
       pronunciationCoachChunkIndex <= 0 ||
       Boolean(pronunciationCoachVideoPreview);
     pronunciationCoachNextChunkButton.disabled =
+      !pronunciationCoachChunkHelpActive ||
       pronunciationCoachChunkIndex >=
         pronunciationCoachChunks.length - 1 ||
       Boolean(pronunciationCoachVideoPreview);
 
     pronunciationCoachViewToggleButton.disabled =
-      pronunciationCoachChunks.length < 2;
+      !pronunciationCoachChunkHelpActive || pronunciationCoachChunks.length < 2;
     pronunciationCoachViewToggleButton.classList.toggle(
       "ps-active",
-      isPronunciationCoachAllChunksVisible
+      showAllChunks
     );
     pronunciationCoachViewToggleButton.setAttribute(
       "aria-pressed",
-      String(
-        isPronunciationCoachAllChunksVisible
-      )
+      String(showAllChunks)
     );
     setPauseSpeakButton(
       pronunciationCoachViewToggleButton,
@@ -7962,14 +8421,16 @@ async function improveCurrentWithTerra(
         : "Tüm parçalar"
     );
     pronunciationCoachInstruction.textContent =
-      isPronunciationCoachAllChunksVisible
+      showAllChunks
         ? "İstediğin parçayı seç ve doğal biçimde söyle"
-        : "Parçayı doğal biçimde söyle";
+        : pronunciationCoachChunkHelpActive
+          ? "Parçayı doğal biçimde söyle"
+          : "Cümleyi doğal biçimde söyle";
 
     pronunciationCoachWords.replaceChildren();
     pronunciationCoachWords.classList.toggle(
       "ps-all-chunks",
-      isPronunciationCoachAllChunksVisible
+      showAllChunks
     );
 
     if (!chunk) {
@@ -7978,9 +8439,7 @@ async function improveCurrentWithTerra(
       return;
     }
 
-    if (
-      isPronunciationCoachAllChunksVisible
-    ) {
+    if (showAllChunks) {
       pronunciationCoachChunks.forEach(
         (item, chunkIndex) => {
           pronunciationCoachWords.appendChild(
@@ -8035,26 +8494,128 @@ async function improveCurrentWithTerra(
       "ps-listening",
       pronunciationCoachListening
     );
-    pronunciationCoachButton.title =
-      pronunciationCoachListening
-        ? "Dinliyorum — duraklatmak için dokun"
-        : pronunciationCoachManualPause
-          ? "Telaffuza devam et"
-          : pronunciationCoachWaitingForTranslation
-            ? "Çeviri tamamlanınca mikrofon otomatik açılacak"
-          : "Telaffuz Koçu";
+    pronunciationCoachButton.classList.toggle(
+      "ps-active",
+      isPronunciationCoachOpen
+    );
+    pronunciationCoachButton.title = "Bu cümleyi çalış";
     pronunciationCoachButton.setAttribute(
       "aria-label",
       pronunciationCoachButton.title
     );
     pronunciationCoachButton.setAttribute(
       "aria-pressed",
-      String(
-        isPronunciationCoachSessionActive
-      )
+      String(isPronunciationCoachOpen)
     );
 
+    const video = getNetflixVideo();
+    const isPracticeVisible = Boolean(
+      isPronunciationPracticeEnabled &&
+      isPronunciationCoachOpen &&
+      activePronunciationSentence
+    );
+    pronunciationPracticeRow.hidden = !isPracticeVisible;
+
+    if (isPracticeVisible) {
+      renderActivePronunciationSentenceInSubtitle();
+      pronunciationPracticeFeedback.hidden =
+        pronunciationPracticeState === "ready" ||
+        pronunciationPracticeState === "success";
+      pronunciationPracticeFeedback.textContent =
+        pronunciationPracticeState === "retry" && pronunciationCoachChunkHelpActive && chunk
+          ? `Parça ${pronunciationCoachChunkIndex + 1}/${pronunciationCoachChunks.length}: ${chunk.text}`
+          : pronunciationPracticeState === "retry"
+            ? "Bir kez daha deneyelim"
+            : pronunciationPracticeState === "listening"
+              ? "Seni dinliyorum"
+              : "";
+
+      setPauseSpeakButton(
+        pronunciationPracticeSpeakButton,
+        "coach",
+        pronunciationPracticeState === "retry"
+          ? "Tekrar söyle"
+          : pronunciationPracticeState === "listening"
+            ? "Dinliyorum"
+            : "Söyle"
+      );
+      pronunciationPracticeSpeakButton.hidden = pronunciationPracticeState === "success";
+      pronunciationPracticeSpeakButton.disabled =
+        !SpeechRecognitionClass ||
+        pronunciationCoachListening ||
+        Boolean(pronunciationCoachVideoPreview) ||
+        !video ||
+        !video.paused;
+
+      setPauseSpeakButton(pronunciationPracticeListenButton, "speaker", "Dinle");
+      pronunciationPracticeListenButton.hidden = pronunciationPracticeState === "success";
+      pronunciationPracticeListenButton.disabled = Boolean(pronunciationCoachVideoPreview);
+
+      const hasPronunciationProgress = pronunciationCoachChunks.some((coachChunk) =>
+        coachChunk.parts.some((part) => part.kind === "word" && part.state === "passed")
+      );
+      setPauseSpeakButton(pronunciationPracticeRestartButton, "replay", "Baştan al");
+      pronunciationPracticeRestartButton.hidden =
+        !hasPronunciationProgress || pronunciationPracticeState === "listening";
+      pronunciationPracticeRestartButton.disabled =
+        pronunciationCoachListening ||
+        Boolean(pronunciationCoachVideoPreview) ||
+        !video ||
+        !video.paused;
+
+      setPauseSpeakButton(
+        pronunciationPracticeContinuousButton,
+        isPronunciationContinuousSessionActive ? "close" : "next",
+        isPronunciationContinuousSessionActive
+          ? "Konuşarak ilerlemeyi bitir"
+          : "Konuşarak ilerle"
+      );
+      pronunciationPracticeContinuousButton.hidden = false;
+      pronunciationPracticeContinuousButton.disabled = false;
+      pronunciationPracticeContinuousButton.setAttribute(
+        "aria-pressed",
+        String(isPronunciationContinuousSessionActive)
+      );
+
+      setPauseSpeakButton(
+        pronunciationPracticeSkipButton,
+        pronunciationPracticeMode === "continuous" ? "next" : "close",
+        pronunciationPracticeMode === "continuous" ? "Atla" : "Vazgeç"
+      );
+      pronunciationPracticeSkipButton.hidden = pronunciationPracticeState === "success";
+
+      setPauseSpeakButton(pronunciationPracticeContinueButton, "play", "Devam et");
+      pronunciationPracticeContinueButton.hidden = pronunciationPracticeState !== "success";
+    }
+
     applyPronunciationCoachStateToSubtitle();
+    updatePronunciationFeatureUI();
+  }
+
+  function isPronunciationCoachEvaluationBetter(candidate, current) {
+    const candidatePriority = [
+      candidate?.criticalMatchedCount || 0,
+      candidate?.properNameMatchedCount || 0,
+      candidate?.weightedCoverage || 0,
+      candidate?.weightedScore || 0,
+      candidate?.matchedKeys?.size || 0,
+      candidate?.totalScore || 0
+    ];
+    const currentPriority = [
+      current?.criticalMatchedCount || 0,
+      current?.properNameMatchedCount || 0,
+      current?.weightedCoverage || 0,
+      current?.weightedScore || 0,
+      current?.matchedKeys?.size || 0,
+      current?.totalScore || 0
+    ];
+
+    for (let index = 0; index < candidatePriority.length; index += 1) {
+      if (candidatePriority[index] !== currentPriority[index]) {
+        return candidatePriority[index] > currentPriority[index];
+      }
+    }
+    return false;
   }
 
   function evaluatePronunciationCoachText(
@@ -8079,20 +8640,9 @@ async function improveCurrentWithTerra(
         spokenText
       );
 
-    if (
-      currentResult.matchedKeys.size >
-        allResult.matchedKeys.size ||
-      (
-        currentResult.matchedKeys.size ===
-          allResult.matchedKeys.size &&
-        currentResult.totalScore >
-          allResult.totalScore
-      )
-    ) {
-      return currentResult;
-    }
-
-    return allResult;
+    return isPronunciationCoachEvaluationBetter(currentResult, allResult)
+      ? currentResult
+      : allResult;
   }
 
   function choosePronunciationCoachCandidate(
@@ -8101,7 +8651,13 @@ async function improveCurrentWithTerra(
     let best = {
       text: "",
       matchedKeys: new Set(),
-      totalScore: 0
+      totalScore: 0,
+      criticalMatchedCount: 0,
+      properNameMatchedCount: 0,
+      matchedWeight: 0,
+      totalWeight: 0,
+      weightedCoverage: 0,
+      weightedScore: 0
     };
 
     for (const candidate of candidates) {
@@ -8116,22 +8672,10 @@ async function improveCurrentWithTerra(
           text
         );
 
-      if (
-        result.matchedKeys.size >
-          best.matchedKeys.size ||
-        (
-          result.matchedKeys.size ===
-            best.matchedKeys.size &&
-          result.totalScore >
-            best.totalScore
-        )
-      ) {
+      if (isPronunciationCoachEvaluationBetter(result, best)) {
         best = {
           text,
-          matchedKeys:
-            result.matchedKeys,
-          totalScore:
-            result.totalScore
+          ...result
         };
       }
     }
@@ -8171,243 +8715,179 @@ async function improveCurrentWithTerra(
     }
   }
 
-  function schedulePronunciationCoachRestart(
-    delayMs = 450
-  ) {
-    if (
-      !isPronunciationCoachSessionActive ||
-      !isPronunciationCoachOpen ||
-      pronunciationCoachManualPause ||
-      pronunciationCoachIsModelSpeaking
-    ) {
-      return;
+  function schedulePronunciationCoachRestart(delayMs = 450) {
+    if (pronunciationCoachRestartTimeout) {
+      clearTimeout(pronunciationCoachRestartTimeout);
+      pronunciationCoachRestartTimeout = null;
     }
-
-    if (
-      pronunciationCoachRestartTimeout
-    ) {
-      clearTimeout(
-        pronunciationCoachRestartTimeout
-      );
-    }
-
-    pronunciationCoachRestartTimeout =
-      setTimeout(() => {
-        pronunciationCoachRestartTimeout =
-          null;
-        startPronunciationCoachRecognition();
-      }, delayMs);
+    // Recognition restarts never originate here; continuous auto-Speak reuses the guarded Speak action.
+    void delayMs;
   }
 
-  function stopPronunciationCoachRecognition(
-    shouldRestart = false
-  ) {
-    if (
-      pronunciationCoachSilenceTimeout
-    ) {
-      clearTimeout(
-        pronunciationCoachSilenceTimeout
-      );
-      pronunciationCoachSilenceTimeout =
-        null;
+  function stopPronunciationCoachRecognition(shouldRestart = false) {
+    if (pronunciationCoachSilenceTimeout) {
+      clearTimeout(pronunciationCoachSilenceTimeout);
+      pronunciationCoachSilenceTimeout = null;
     }
-
-    pronunciationCoachShouldRestart =
-      shouldRestart;
-
-    if (!pronunciationCoachRecognition) {
-      pronunciationCoachListening = false;
-      renderPronunciationCoach();
-
-      if (shouldRestart) {
-        schedulePronunciationCoachRestart();
-      }
-
-      return;
-    }
-
+    pronunciationCoachShouldRestart = false;
+    void shouldRestart;
+    const recognition = pronunciationCoachRecognition;
+    pronunciationCoachRecognition = null;
+    pronunciationCoachListening = false;
+    if (!recognition) return;
     try {
-      if (shouldRestart) {
-        pronunciationCoachRecognition.stop();
-      } else {
-        pronunciationCoachRecognition.abort();
-      }
+      recognition.abort();
     } catch (error) {
-      console.warn(
-        "PauseSpeak Telaffuz Koçu mikrofon durdurma uyarısı:",
-        error
-      );
+      console.warn("PauseSpeak telaffuz mikrofonu durdurulamadı:", error);
     }
   }
 
-  function finishPronunciationCoachSentence() {
+  function finishPronunciationCoachSentence(completedAttempt = activePronunciationAttempt) {
+    const continuousSessionGeneration = pronunciationContinuousSessionGeneration;
+    const shouldAutoContinue = Boolean(
+      pronunciationPracticeMode === "continuous" &&
+      isPronunciationContinuousSessionActive &&
+      completedAttempt &&
+      activePronunciationSentence?.id === completedAttempt.sentenceId
+    );
+    invalidatePronunciationAttempt();
     stopPronunciationCoachRecognition(false);
-    pronunciationCoachWaitingForTranslation =
-      true;
     pronunciationCoachLiveMatches.clear();
     pronunciationCoachActiveWordIndex = -1;
-    pronunciationCoachStatus.textContent =
-      "Cümle tamamlandı — video devam ediyor";
-    pronunciationCoachHeard.textContent =
-      "Tüm kelimeler tamamlandı";
-    panel.classList.add(
-      "ps-inline-coach-complete"
-    );
+    pronunciationCoachStatus.textContent = "";
+    pronunciationCoachHeard.textContent = "";
+    panel.classList.add("ps-inline-coach-complete");
+    pronunciationPracticeState = "success";
     renderPronunciationCoach();
 
-    pronunciationCoachAdvanceTimeout =
-      setTimeout(async () => {
-        pronunciationCoachAdvanceTimeout =
-          null;
-        isPronunciationCoachOpen = false;
-        pronunciationCoachOverlay.classList.remove(
-          "ps-open"
-        );
-        pronunciationCoachOverlay.setAttribute(
-          "aria-hidden",
-          "true"
-        );
-        panel.classList.remove(
-          "ps-inline-coach-complete"
-        );
-        renderChunkedSubtitle();
-
-        const video = getNetflixVideo();
-
-        if (!video) {
-          return;
+    if (
+      shouldAutoContinue &&
+      pronunciationContinuousAutoContinueAttemptId !== completedAttempt.id
+    ) {
+      pronunciationContinuousAutoContinueAttemptId = completedAttempt.id;
+      const completedSentenceId = completedAttempt.sentenceId;
+      window.setTimeout(() => {
+        if (
+          pronunciationPracticeMode === "continuous" &&
+          isPronunciationContinuousSessionActive &&
+          continuousSessionGeneration === pronunciationContinuousSessionGeneration &&
+          isPronunciationCoachOpen &&
+          pronunciationPracticeState === "success" &&
+          activePronunciationSentence?.id === completedSentenceId &&
+          pronunciationContinuousAutoContinueAttemptId === completedAttempt.id
+        ) {
+          pronunciationContinuousAutoSpeakPending = Object.freeze({
+            sourceSentenceId: completedSentenceId,
+            sourceAttemptId: completedAttempt.id,
+            mediaKey: activePronunciationSentence.mediaKey,
+            mediaGeneration: mediaInteractionGeneration,
+            sessionGeneration: continuousSessionGeneration
+          });
+          handlePronunciationContinueAction();
         }
-
-        try {
-          await video.play();
-          status.textContent =
-            "▶️ Telaffuz Koçu yeni cümleyi bekliyor";
-        } catch (error) {
-          status.textContent =
-            "Telaffuz tamamlandı — videoyu oynatabilirsin";
-        }
-      }, 850);
+      }, 0);
+    }
   }
 
-  function advancePronunciationCoach() {
-    const chunkCount =
-      pronunciationCoachChunks.length;
+  function advancePronunciationCoach(completedAttempt = activePronunciationAttempt) {
+    if (!pronunciationCoachChunkHelpActive) {
+      finishPronunciationCoachSentence(completedAttempt);
+      return true;
+    }
+    const chunkCount = pronunciationCoachChunks.length;
     let nextChunkIndex = -1;
-
-    for (
-      let offset = 1;
-      offset <= chunkCount;
-      offset += 1
-    ) {
-      const candidateIndex =
-        (
-          pronunciationCoachChunkIndex +
-          offset
-        ) % chunkCount;
-
-      if (
-        !isPronunciationCoachChunkComplete(
-          pronunciationCoachChunks[
-            candidateIndex
-          ]
-        )
-      ) {
+    for (let offset = 1; offset <= chunkCount; offset += 1) {
+      const candidateIndex = (pronunciationCoachChunkIndex + offset) % chunkCount;
+      if (!isPronunciationCoachChunkComplete(pronunciationCoachChunks[candidateIndex])) {
         nextChunkIndex = candidateIndex;
         break;
       }
     }
-
     if (nextChunkIndex < 0) {
-      renderPronunciationCoach();
-      finishPronunciationCoachSentence();
+      finishPronunciationCoachSentence(completedAttempt);
       return true;
     }
-
-    pronunciationCoachChunkIndex =
-      nextChunkIndex;
+    pronunciationCoachChunkIndex = nextChunkIndex;
     pronunciationCoachLiveMatches.clear();
     pronunciationCoachActiveWordIndex = -1;
     pronunciationCoachLastHeard = "";
-    pronunciationCoachHeard.textContent =
-      "Sıradaki parça hazır";
-    pronunciationCoachStatus.textContent =
-      "Parçayı doğal biçimde söyle";
-    renderPronunciationCoach();
-    schedulePronunciationCoachRestart(
-      220
-    );
+    pronunciationCoachHeard.textContent = "Sıradaki parça hazır";
+    setPronunciationPracticeState("ready", "Hazır — Söyle'ye bas");
     return false;
   }
 
-  function commitPronunciationCoachResult(
-    result
-  ) {
-    for (const key of result.matchedKeys) {
-      const word =
-        findPronunciationCoachWord(key);
-
-      if (
-        word &&
-        word.state !== "proper"
-      ) {
-        word.state = "passed";
-      }
+  function activatePronunciationCoachChunkHelp() {
+    if (pronunciationCoachChunkHelpActive) {
+      return;
     }
-
-    const currentChunk =
-      getCurrentPronunciationCoachChunk();
-
-    if (currentChunk) {
-      currentChunk.parts.forEach(
-        (word) => {
-          if (
-            word.kind === "word" &&
-            word.state === "pending"
-          ) {
-            word.state = "retry";
-          }
-        }
-      );
-    }
-
+    pronunciationCoachChunkHelpActive = true;
+    const firstIncompleteIndex = pronunciationCoachChunks.findIndex(
+      (chunk) => !isPronunciationCoachChunkComplete(chunk)
+    );
+    pronunciationCoachChunkIndex = Math.max(0, firstIncompleteIndex);
     pronunciationCoachLiveMatches.clear();
     pronunciationCoachActiveWordIndex = -1;
+  }
 
-    if (
-      isPronunciationCoachChunkComplete(
-        currentChunk
-      )
-    ) {
-      pronunciationCoachStatus.textContent =
-        "Parça tamamlandı";
-      pronunciationCoachHeard.textContent =
-        result.text
-          ? `Duyduğum: ${result.text}`
-          : "Parça tamamlandı";
-      renderPronunciationCoach();
-      stopPronunciationCoachRecognition(
-        false
-      );
-      pronunciationCoachAdvanceTimeout =
-        setTimeout(() => {
-          pronunciationCoachAdvanceTimeout =
-            null;
-          advancePronunciationCoach();
-        }, 180);
+  function markPronunciationCoachImportantRetries() {
+    const targetChunk = getCurrentPronunciationCoachChunk();
+    if (!targetChunk) return;
+    const unresolvedWords = targetChunk.parts.filter(
+      (word) => word.kind === "word" && word.state !== "passed"
+    );
+    const requiredWords = unresolvedWords.filter(
+      (word) => word.weight >= 2 || word.isProperName
+    );
+    const wordsToHighlight = requiredWords.length
+      ? requiredWords
+      : unresolvedWords.filter((word) => (word.weight || 1) >= 1);
+    wordsToHighlight.forEach((word) => {
+      word.state = "retry";
+    });
+  }
+
+  function preservePronunciationCoachProgress(result) {
+    for (const key of result?.matchedKeys || []) {
+      const word = findPronunciationCoachWord(key);
+      if (word) word.state = "passed";
+    }
+  }
+
+  function commitPronunciationCoachResult(result) {
+    const completedAttempt = activePronunciationAttempt;
+    preservePronunciationCoachProgress(result);
+    pronunciationCoachLiveMatches.clear();
+    pronunciationCoachActiveWordIndex = -1;
+    invalidatePronunciationAttempt();
+    stopPronunciationCoachRecognition(false);
+
+    const currentTarget = getCurrentPronunciationCoachChunk();
+    if (isPronunciationCoachChunkComplete(currentTarget)) {
+      currentTarget?.parts.forEach((word) => {
+        if (word.kind === "word" && word.state === "retry" && (word.weight || 1) < 0.5) {
+          word.state = "pending";
+        }
+      });
+      pronunciationCoachHeard.textContent = result.text ? `Duyduğum: ${result.text}` : "Parça anlaşıldı";
+      advancePronunciationCoach(completedAttempt);
       return;
     }
 
-    const remaining =
-      getPronunciationCoachRemainingCount();
-    pronunciationCoachStatus.textContent =
-      remaining === 1
-        ? "1 kelime kaldı — kırmızı kelimeyi veya parçayı söyle"
-        : `${remaining} kelime kaldı — sadece kırmızıları veya parçayı söyle`;
-    pronunciationCoachHeard.textContent =
-      result.text
-        ? `Duyduğum: ${result.text}`
-        : "Seni dinlemeye devam ediyorum";
-    renderPronunciationCoach();
+    pronunciationCoachFailedAttemptCount += 1;
+    if (pronunciationCoachFailedAttemptCount >= 3) {
+      activatePronunciationCoachChunkHelp();
+    }
+    if (pronunciationCoachFailedAttemptCount >= 2) {
+      markPronunciationCoachImportantRetries();
+    }
+
+    pronunciationCoachHeard.textContent = result.text ? `Duyduğum: ${result.text}` : "İlerlemen korunuyor";
+    setPronunciationPracticeState(
+      "retry",
+      pronunciationCoachFailedAttemptCount >= 3
+        ? "Cümleyi doğal parçalara bölelim"
+        : "Bir kez daha deneyelim"
+    );
   }
 
   function applyPronunciationCoachCandidates(
@@ -8431,9 +8911,21 @@ async function improveCurrentWithTerra(
       `Duyduğum: ${result.text}`;
 
     if (isFinal) {
-      commitPronunciationCoachResult(
-        result
-      );
+      preservePronunciationCoachProgress(result);
+      pronunciationCoachLiveMatches.clear();
+
+      if (
+        isPronunciationCoachChunkComplete(
+          getCurrentPronunciationCoachChunk()
+        )
+      ) {
+        commitPronunciationCoachResult(result);
+        return;
+      }
+
+      pronunciationPracticeState = "listening";
+      pronunciationCoachStatus.textContent = "Seni dinliyorum";
+      renderPronunciationCoach();
       return;
     }
 
@@ -8469,295 +8961,279 @@ async function improveCurrentWithTerra(
     renderPronunciationCoach();
   }
 
-  function startPronunciationCoachRecognition() {
+  function startPronunciationCoachRecognition(
+    attempt,
+    userActionToken
+  ) {
     const video = getNetflixVideo();
-
     if (
+      userActionToken !== pronunciationExplicitUserActionToken ||
+      !attempt ||
       !SpeechRecognitionClass ||
+      !isPronunciationPracticeEnabled ||
       !isPronunciationCoachSessionActive ||
       !isPronunciationCoachOpen ||
       pronunciationCoachRecognition ||
-      pronunciationCoachManualPause ||
       pronunciationCoachIsModelSpeaking ||
-      !getCurrentPronunciationCoachChunk()
-    ) {
+      !activePronunciationSentence ||
+      !getCurrentPronunciationCoachChunk() ||
+      !isPronunciationAttemptCurrent(attempt.sentenceId, attempt.id)
+    ) return;
+
+    if (!video || !video.paused) {
+      invalidatePronunciationAttempt();
+      setPronunciationPracticeState("ready", "Video oynarken mikrofon kapalı");
       return;
     }
 
-    if (
-      !video ||
-      !video.paused ||
-      !isPronunciationCoachTranslationReady()
-    ) {
-      if (
-        isPronunciationCoachSessionActive &&
-        isPronunciationCoachOpen &&
-        !pronunciationCoachManualPause &&
-        !pronunciationCoachIsModelSpeaking
-      ) {
-        pronunciationCoachWaitingForTranslation =
-          true;
-        pronunciationCoachStatus.textContent =
-          video && video.paused
-            ? "Çeviri tamamlanınca mikrofon otomatik açılacak"
-            : "Video oynarken mikrofon kapalı";
-        renderPronunciationCoach();
-      }
-      return;
-    }
-
-    pronunciationCoachWaitingForTranslation =
-      false;
-
-    const recognition =
-      new SpeechRecognitionClass();
+    const recognition = new SpeechRecognitionClass();
+    const sentenceId = attempt.sentenceId;
+    const attemptId = attempt.id;
     recognition.lang = "en-US";
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 5;
-
-    pronunciationCoachRecognition =
-      recognition;
-    pronunciationCoachShouldRestart =
-      true;
+    pronunciationCoachRecognition = recognition;
+    pronunciationCoachShouldRestart = false;
     pronunciationCoachHadSpeech = false;
-    const stopCoachForVideoPlayback = () => {
-      if (
-        pronunciationCoachRecognition !==
-          recognition
-      ) {
-        return;
-      }
-
-      pronunciationCoachWaitingForTranslation =
-        true;
-      pronunciationCoachShouldRestart =
-        false;
-      pronunciationCoachStatus.textContent =
-        "Video oynarken mikrofon kapalı";
-      stopPronunciationCoachRecognition(
-        false
-      );
-    };
-
-    video.addEventListener(
-      "play",
-      stopCoachForVideoPlayback,
-      { once: true }
-    );
 
     recognition.onstart = () => {
+      if (!isPronunciationAttemptCurrent(sentenceId, attemptId, recognition)) {
+        try { recognition.abort(); } catch (error) {}
+        return;
+      }
       pronunciationCoachListening = true;
-      pronunciationCoachStatus.textContent =
-        "Seni dinliyorum";
-      pronunciationCoachHeard.textContent =
-        pronunciationCoachLastHeard
-          ? `Duyduğum: ${pronunciationCoachLastHeard}`
-          : "Konuşmaya başlayabilirsin";
+      pronunciationPracticeState = "listening";
+      pronunciationCoachStatus.textContent = "Seni dinliyorum";
+      pronunciationCoachHeard.textContent = "Konuşmaya başlayabilirsin";
       renderPronunciationCoach();
     };
 
     recognition.onresult = (event) => {
+      if (!isPronunciationAttemptCurrent(sentenceId, attemptId, recognition)) return;
       const candidates = [];
-      const resultCount =
-        event.results.length;
-
-      if (!resultCount) {
-        return;
-      }
-
-      const latestIndex =
-        resultCount - 1;
-      const latestResult =
-        event.results[latestIndex];
-      const alternativeCount =
-        Math.min(
-          latestResult.length,
-          5
-        );
-
-      for (
-        let alternativeIndex = 0;
-        alternativeIndex <
-          alternativeCount;
-        alternativeIndex += 1
-      ) {
+      const resultCount = event.results.length;
+      if (!resultCount) return;
+      const latestIndex = resultCount - 1;
+      const latestResult = event.results[latestIndex];
+      const alternativeCount = Math.min(latestResult.length, 5);
+      for (let alternativeIndex = 0; alternativeIndex < alternativeCount; alternativeIndex += 1) {
         const transcriptParts = [];
-
-        for (
-          let resultIndex = 0;
-          resultIndex < resultCount;
-          resultIndex += 1
-        ) {
-          const selectedAlternative =
-            resultIndex === latestIndex
-              ? alternativeIndex
-              : 0;
-          const transcript = cleanText(
-            event.results[resultIndex][
-              selectedAlternative
-            ]?.transcript || ""
-          );
-
-          if (transcript) {
-            transcriptParts.push(
-              transcript
-            );
-          }
+        for (let resultIndex = 0; resultIndex < resultCount; resultIndex += 1) {
+          const selectedAlternative = resultIndex === latestIndex ? alternativeIndex : 0;
+          const transcript = cleanText(event.results[resultIndex][selectedAlternative]?.transcript || "");
+          if (transcript) transcriptParts.push(transcript);
         }
-
-        candidates.push(
-          transcriptParts.join(" ")
-        );
+        candidates.push(transcriptParts.join(" "));
       }
-
-      applyPronunciationCoachCandidates(
-        candidates,
-        latestResult.isFinal
-      );
-
-      if (
-        pronunciationCoachSilenceTimeout
-      ) {
-        clearTimeout(
-          pronunciationCoachSilenceTimeout
-        );
-      }
-
-      pronunciationCoachSilenceTimeout =
-        setTimeout(() => {
-          pronunciationCoachSilenceTimeout =
-            null;
-
-          if (
-            pronunciationCoachRecognition ===
-              recognition &&
-            pronunciationCoachListening
-          ) {
-            stopPronunciationCoachRecognition(
-              true
-            );
-          }
-        }, 3200);
+      applyPronunciationCoachCandidates(candidates, latestResult.isFinal);
+      if (!isPronunciationAttemptCurrent(sentenceId, attemptId, recognition)) return;
+      if (pronunciationCoachSilenceTimeout) clearTimeout(pronunciationCoachSilenceTimeout);
+      pronunciationCoachSilenceTimeout = setTimeout(() => {
+        pronunciationCoachSilenceTimeout = null;
+        if (isPronunciationAttemptCurrent(sentenceId, attemptId, recognition)) {
+          commitPronunciationCoachResult({
+            matchedKeys: pronunciationCoachLiveMatches,
+            text: pronunciationCoachLastHeard
+          });
+        }
+      }, pronunciationCoachInactivityTimeoutMs);
     };
 
     recognition.onerror = (event) => {
-      if (
-        event.error === "aborted" &&
-        !pronunciationCoachShouldRestart
-      ) {
-        return;
-      }
-
-      if (
-        event.error === "not-allowed" ||
-        event.error ===
-          "service-not-allowed"
-      ) {
-        pronunciationCoachShouldRestart =
-          false;
-        pronunciationCoachManualPause =
-          true;
-        pronunciationCoachStatus.textContent =
-          "Mikrofon iznini Chrome site ayarlarından aç";
-        pronunciationCoachHeard.textContent =
-          "İlerlemen korunuyor";
-        return;
-      }
-
-      pronunciationCoachRestartCount += 1;
-      pronunciationCoachShouldRestart =
-        true;
+      if (!isPronunciationAttemptCurrent(sentenceId, attemptId, recognition)) return;
+      preservePronunciationCoachProgress({
+        matchedKeys: pronunciationCoachLiveMatches
+      });
+      pronunciationCoachLiveMatches.clear();
+      pronunciationCoachRecognition = null;
+      invalidatePronunciationAttempt();
+      pronunciationCoachShouldRestart = false;
+      pronunciationCoachListening = false;
       pronunciationCoachStatus.textContent =
-        event.error === "no-speech"
-          ? "Seni bekliyorum — ilerlemen korunuyor"
-          : "Mikrofon yeniden bağlanıyor — ilerlemen korunuyor";
-      pronunciationCoachHeard.textContent =
-        "Bu teknik kesinti yanlış sayılmadı";
+        event.error === "not-allowed" || event.error === "service-not-allowed"
+          ? "Mikrofon iznini Chrome site ayarlarından aç"
+          : event.error === "no-speech"
+            ? "Bir kez daha deneyelim"
+            : "Mikrofon kesildi — yeniden Söyle'ye bas";
+      pronunciationPracticeState = "retry";
+      renderPronunciationCoach();
     };
 
     recognition.onend = () => {
-      video.removeEventListener(
-        "play",
-        stopCoachForVideoPlayback
-      );
-
-      if (
-        pronunciationCoachRecognition ===
-        recognition
-      ) {
-        pronunciationCoachRecognition =
-          null;
-      }
-
+      if (!isPronunciationAttemptCurrent(sentenceId, attemptId, recognition)) return;
+      pronunciationCoachRecognition = null;
       pronunciationCoachListening = false;
-      renderPronunciationCoach();
-
-      if (
-        pronunciationCoachShouldRestart &&
-        isPronunciationCoachSessionActive &&
-        isPronunciationCoachOpen &&
-        !pronunciationCoachManualPause &&
-        !pronunciationCoachIsModelSpeaking
-      ) {
-        schedulePronunciationCoachRestart(
-          Math.min(
-            2200,
-            420 +
-              pronunciationCoachRestartCount *
-                450
-          )
-        );
+      pronunciationCoachShouldRestart = false;
+      if (pronunciationPracticeState === "listening") {
+        commitPronunciationCoachResult({
+          matchedKeys: pronunciationCoachLiveMatches,
+          text: pronunciationCoachLastHeard
+        });
+        return;
       }
+      invalidatePronunciationAttempt();
+      renderPronunciationCoach();
     };
 
     try {
       recognition.start();
     } catch (error) {
-      video.removeEventListener(
-        "play",
-        stopCoachForVideoPlayback
-      );
-      pronunciationCoachRecognition =
-        null;
+      pronunciationCoachRecognition = null;
       pronunciationCoachListening = false;
-      pronunciationCoachStatus.textContent =
-        "Mikrofon hazırlanamadı — tekrar dokun";
-      renderPronunciationCoach();
+      invalidatePronunciationAttempt();
+      setPronunciationPracticeState("retry", "Mikrofon hazırlanamadı — yeniden Söyle'ye bas");
     }
   }
 
-  function preparePronunciationCoachSentence(
-    sentence
-  ) {
-    const cleanSentence =
-      cleanText(sentence);
-    const availableChunks =
-      currentSubtitleChunks.length
-        ? [...currentSubtitleChunks]
-        : createFallbackSubtitleChunks(
-            cleanSentence
-          );
-    const chunks =
-      availableChunks.length
-        ? availableChunks
-        : [cleanSentence];
+  function handlePronunciationSpeakAction() {
+    if (
+      !isPronunciationPracticeEnabled ||
+      !isPronunciationCoachOpen ||
+      !activePronunciationSentence ||
+      pronunciationPracticeState === "success" ||
+      pronunciationCoachListening ||
+      pronunciationCoachRecognition
+    ) return;
+    const video = getNetflixVideo();
+    if (!video || !video.paused) {
+      setPronunciationPracticeState("ready", "Video oynarken mikrofon kapalı");
+      return;
+    }
+    pronunciationCoachManualPause = false;
+    pronunciationCoachStatus.textContent = "Mikrofon hazırlanıyor";
+    pronunciationPracticeState = "ready";
+    const attempt = beginPronunciationAttempt();
+    if (!attempt) return;
+    renderPronunciationCoach();
+    startPronunciationCoachRecognition(attempt, pronunciationExplicitUserActionToken);
+  }
 
-    pronunciationCoachSentence =
-      cleanSentence;
-    pronunciationCoachChunks =
-      createPronunciationCoachChunks(
-        cleanSentence,
-        chunks
-      );
+  function handlePronunciationRestartAction() {
+    if (
+      !isPronunciationPracticeEnabled ||
+      !isPronunciationCoachOpen ||
+      !activePronunciationSentence
+    ) return;
+    const video = getNetflixVideo();
+    if (!video || !video.paused) return;
+    invalidatePronunciationAttempt();
+    clearPronunciationCoachTimers();
+    stopPronunciationCoachRecognition(false);
+    preparePronunciationCoachSentence(activePronunciationSentence.text);
+  }
+
+  function maybeAutoStartPronunciationContinuousTarget(sentence, pendingTransition) {
+    if (
+      !pendingTransition ||
+      pronunciationContinuousAutoSpeakPending !== pendingTransition ||
+      !sentence ||
+      !isPronunciationPracticeEnabled ||
+      !isPronunciationContinuousSessionActive ||
+      pendingTransition.sessionGeneration !== pronunciationContinuousSessionGeneration ||
+      pendingTransition.mediaGeneration !== mediaInteractionGeneration ||
+      pendingTransition.mediaKey !== sentence.mediaKey ||
+      pendingTransition.sourceSentenceId === sentence.id ||
+      pendingTransition.sourceAttemptId !== pronunciationContinuousAutoContinueAttemptId ||
+      pronunciationContinuousAutoSpeakSentenceId === sentence.id ||
+      !isPronunciationCoachOpen ||
+      pronunciationPracticeMode !== "continuous" ||
+      activePronunciationSentence?.id !== sentence.id ||
+      currentFinalizedSentence?.id !== sentence.id
+    ) {
+      return;
+    }
+
+    const video = getNetflixVideo();
+    if (
+      !video ||
+      !video.paused ||
+      pronunciationCoachListening ||
+      pronunciationCoachRecognition ||
+      pronunciationPracticeState !== "ready"
+    ) {
+      pronunciationContinuousAutoSpeakPending = null;
+      return;
+    }
+
+    pronunciationContinuousAutoSpeakPending = null;
+    pronunciationContinuousAutoSpeakSentenceId = sentence.id;
+    handlePronunciationSpeakAction();
+  }
+
+  function markPronunciationContinuousResumeBoundary() {
+    if (!isPronunciationContinuousSessionActive || !activePronunciationSentence) {
+      pronunciationContinuousResumeBoundary = null;
+      return;
+    }
+    pronunciationContinuousResumeBoundary = {
+      mediaKey: activePronunciationSentence.mediaKey,
+      text: cleanText(activePronunciationSentence.text),
+      endTimeMs: Number(activePronunciationSentence.endTimeMs) || 0
+    };
+  }
+
+  function isPronunciationContinuousResumeDuplicate(sentence) {
+    const boundary = pronunciationContinuousResumeBoundary;
+    if (!boundary || !sentence || sentence.mediaKey !== boundary.mediaKey) {
+      return false;
+    }
+    return (
+      cleanText(sentence.text) === boundary.text &&
+      Number(sentence.startTimeMs) <= boundary.endTimeMs + 900 &&
+      Number(sentence.endTimeMs) <= boundary.endTimeMs + 5000
+    );
+  }
+
+  function handlePronunciationSkipAction() {
+    const mode = pronunciationPracticeMode;
+    const keepContinuous = mode === "continuous" && isPronunciationContinuousSessionActive;
+    const cancelContinuous = mode !== "continuous" && isPronunciationContinuousSessionActive;
+    const video = getNetflixVideo();
+    if (keepContinuous) markPronunciationContinuousResumeBoundary();
+    if (cancelContinuous) {
+      isPronunciationContinuousSessionActive = false;
+      pronunciationContinuousSessionGeneration += 1;
+      pronunciationContinuousResumeBoundary = null;
+      pronunciationContinuousAutoSpeakPending = null;
+      pronunciationContinuousAutoSpeakSentenceId = "";
+    }
+    closePronunciationCoach(true, false);
+    if (keepContinuous && video) void playVideoForPronunciation(video);
+  }
+
+  function handlePronunciationContinueAction() {
+    const video = getNetflixVideo();
+    if (isPronunciationContinuousSessionActive) {
+      markPronunciationContinuousResumeBoundary();
+    }
+    closePronunciationCoach(true, false);
+    if (video) void playVideoForPronunciation(video);
+  }
+
+  function preparePronunciationCoachSentence(sentence) {
+    const cleanSentence = cleanText(sentence);
+    const canReuseCurrentChunks = Boolean(
+      activePronunciationSentence &&
+      currentFinalizedSentence &&
+      activePronunciationSentence.id === currentFinalizedSentence.id
+    );
+    const availableChunks =
+      canReuseCurrentChunks && currentSubtitleChunks.length
+        ? [...currentSubtitleChunks]
+        : createFallbackSubtitleChunks(cleanSentence);
+    const chunks = availableChunks.length ? availableChunks : [cleanSentence];
+    pronunciationCoachSentence = cleanSentence;
+    pronunciationCoachChunks = createPronunciationCoachChunks(cleanSentence, chunks);
     pronunciationCoachChunkIndex = 0;
+    pronunciationCoachFailedAttemptCount = 0;
+    pronunciationCoachChunkHelpActive = false;
     pronunciationCoachLiveMatches.clear();
     pronunciationCoachActiveWordIndex = -1;
     pronunciationCoachLastHeard = "";
-    pronunciationCoachHeard.textContent =
-      "Konuşmaya başlayabilirsin";
-    pronunciationCoachStatus.textContent =
-      "Parçayı doğal biçimde söyle";
+    pronunciationCoachHeard.textContent = "Hazır";
+    pronunciationCoachStatus.textContent = "Hazır — Söyle'ye bas";
+    pronunciationPracticeState = "ready";
     renderPronunciationCoach();
   }
 
@@ -8858,414 +9334,177 @@ async function improveCurrentWithTerra(
   function refreshPronunciationCoachProperNames() {
     if (
       !pronunciationCoachChunks.length ||
-      pronunciationCoachSentence !==
-        cleanText(
-          completedBox.textContent
-        )
-    ) {
-      return;
-    }
-
-    const properNames =
-      getPronunciationCoachProperNames();
-
-    pronunciationCoachChunks.forEach(
-      (chunk) => {
-        chunk.parts.forEach((word) => {
-          if (
-            word.kind !== "word" ||
-            word.state === "passed"
-          ) {
-            return;
-          }
-
-          const tokens =
-            getWordTokens(word.text);
-
-          if (
-            tokens.some((token) =>
-              properNames.has(token)
-            )
-          ) {
-            word.state = "proper";
-          }
-        });
-      }
-    );
-
+      !activePronunciationSentence ||
+      pronunciationCoachSentence !== activePronunciationSentence.text
+    ) return;
+    const properNames = getPronunciationCoachProperNames();
+    pronunciationCoachChunks.forEach((chunk) => {
+      chunk.parts.forEach((word) => {
+        if (word.kind !== "word" || word.state === "passed" || word.isOptionalFiller) return;
+        const tokens = getWordTokens(word.text);
+        if (tokens.some((token) => properNames.has(token))) {
+          word.isProperName = true;
+          word.weight = getPronunciationCoachWordWeight(tokens, true);
+        }
+      });
+    });
     renderPronunciationCoach();
-
-    if (
-      isPronunciationCoachOpen &&
-      isPronunciationCoachChunkComplete(
-        getCurrentPronunciationCoachChunk()
-      )
-    ) {
-      advancePronunciationCoach();
-    }
   }
 
-  function openPronunciationCoach(
-    sentence,
-    activateSession = true
-  ) {
-    const cleanSentence =
-      cleanText(sentence);
-
-    if (
-      !cleanSentence ||
-      cleanSentence ===
-        "Henüz tamamlanan cümle yok."
-    ) {
-      status.textContent =
-        "Telaffuz Koçu için önce bir cümle tamamlanmalı";
+  function openPronunciationCoach(target, mode = "single") {
+    if (!isPronunciationPracticeEnabled) return;
+    const sentence =
+      typeof target === "object" && target
+        ? target
+        : currentFinalizedSentence && cleanText(target) === currentFinalizedSentence.text
+          ? currentFinalizedSentence
+          : null;
+    if (!sentence || !sentence.id) {
+      status.textContent = "Çalışmak için tamamlanmış bir cümle seç";
       return;
     }
-
-    if (activateSession) {
-      isPronunciationCoachSessionActive =
-        true;
-    }
-
-    pronunciationCoachButton.classList.add(
-      "ps-active"
-    );
-    pronunciationCoachButton.setAttribute(
-      "aria-pressed",
-      "true"
-    );
-    pronunciationCoachManualPause = false;
-    pronunciationCoachWaitingForTranslation =
-      true;
-    pronunciationCoachRestartCount = 0;
-    panel.classList.remove(
-      "ps-inline-coach-complete"
-    );
+    invalidatePronunciationAttempt();
+    stopPronunciationCoachRecognition(false);
+    clearPronunciationCoachTimers();
+    activePronunciationSentence = sentence;
+    pronunciationPracticeMode = mode === "continuous" ? "continuous" : "single";
+    isPronunciationCoachSessionActive = true;
     isPronunciationCoachOpen = true;
-    pronunciationCoachOverlay.classList.remove(
-      "ps-open"
-    );
-    pronunciationCoachOverlay.setAttribute(
-      "aria-hidden",
-      "true"
-    );
-
-    stopPronunciationCoachRecognition(false);
-    clearPronunciationCoachTimers();
-    const shouldPreserveProgress =
-      !activateSession &&
-      pronunciationCoachSentence ===
-        cleanSentence &&
-      pronunciationCoachChunks.length > 0;
-
-    if (shouldPreserveProgress) {
-      renderPronunciationCoach();
-    } else {
-      preparePronunciationCoachSentence(
-        cleanSentence
-      );
-    }
-
-    renderPronunciationCoach();
-
+    pronunciationCoachManualPause = false;
+    pronunciationCoachWaitingForTranslation = false;
+    pronunciationCoachRestartCount = 0;
+    panel.classList.remove("ps-inline-coach-complete");
+    pronunciationCoachOverlay.classList.remove("ps-open");
+    pronunciationCoachOverlay.setAttribute("aria-hidden", "true");
+    preparePronunciationCoachSentence(sentence.text);
     const video = getNetflixVideo();
-
-    if (video && !video.paused) {
-      video.pause();
-    }
-
+    if (video && !video.paused) pauseVideoForPronunciation(video);
     if (!SpeechRecognitionClass) {
-      pronunciationCoachStatus.textContent =
-        "Bu tarayıcı canlı konuşma tanımayı desteklemiyor";
-      pronunciationCoachMicButton.disabled =
-        true;
-      return;
+      pronunciationCoachStatus.textContent = "Bu tarayıcı canlı konuşma tanımayı desteklemiyor";
     }
-
-    pronunciationCoachMicButton.disabled =
-      false;
-
-    if (
-      isPronunciationCoachChunkComplete(
-        getCurrentPronunciationCoachChunk()
-      )
-    ) {
-      advancePronunciationCoach();
-      return;
-    }
-
-    tryStartPronunciationCoachAfterTranslation();
+    renderPronunciationCoach();
+    showInterfaceControls(true);
   }
 
-  function closePronunciationCoach(
-    endSession = true,
-    resumeVideo = false
-  ) {
+  function closePronunciationCoach(endSession = true, resumeVideo = false) {
+    void resumeVideo;
+    invalidatePronunciationAttempt();
     clearPronunciationCoachTimers();
     stopPronunciationCoachRecognition(false);
-
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
-
-    pronunciationCoachIsModelSpeaking =
-      false;
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    pronunciationCoachIsModelSpeaking = false;
     pronunciationCoachManualPause = false;
-    pronunciationCoachWaitingForTranslation =
-      false;
+    pronunciationCoachWaitingForTranslation = false;
+    pronunciationCoachResumeAfterMeaning = false;
+    const shouldCloseCoachStudyMeaning =
+      studyMeaningOverlay.classList.contains("ps-from-pronunciation-coach");
     isPronunciationCoachOpen = false;
-    pronunciationCoachOverlay.classList.remove(
-      "ps-open"
-    );
-    pronunciationCoachOverlay.setAttribute(
-      "aria-hidden",
-      "true"
-    );
-    panel.classList.remove(
-      "ps-inline-coach-active",
-      "ps-inline-coach-complete"
-    );
-    subtitleBox.classList.remove(
-      "ps-inline-coach-active"
-    );
-
-    if (
-      studyMeaningOverlay.classList.contains(
-        "ps-from-pronunciation-coach"
-      )
-    ) {
-      pronunciationCoachResumeAfterMeaning =
-        false;
+    pronunciationPracticeState = "idle";
+    activePronunciationSentence = null;
+    pronunciationCoachFailedAttemptCount = 0;
+    pronunciationCoachChunkHelpActive = false;
+    pronunciationCoachVideoPreview = null;
+    pronunciationCoachOverlay.classList.remove("ps-open");
+    pronunciationCoachOverlay.setAttribute("aria-hidden", "true");
+    panel.classList.remove("ps-inline-coach-active", "ps-inline-coach-complete");
+    subtitleBox.classList.remove("ps-inline-coach-active");
+    pronunciationCoachStudySelection.clear();
+    if (shouldCloseCoachStudyMeaning) {
       closeStudyMeaningPanel(false);
     }
-
-    pronunciationCoachStudySelection.clear();
-
-    if (!resumeVideo) {
-      const video = getNetflixVideo();
-
-      if (video && !video.paused) {
-        video.pause();
-      }
-    }
-
-    if (endSession) {
-      isPronunciationCoachSessionActive =
-        false;
-      pronunciationCoachButton.classList.remove(
-        "ps-active"
-      );
-      pronunciationCoachButton.setAttribute(
-        "aria-pressed",
-        "false"
-      );
-    }
-
-    pronunciationCoachButton.classList.remove(
-      "ps-listening"
-    );
-    pronunciationCoachButton.title =
-      "Telaffuz Koçu";
-    pronunciationCoachButton.setAttribute(
-      "aria-label",
-      pronunciationCoachButton.title
-    );
+    pronunciationPracticeRow.hidden = true;
+    if (endSession) isPronunciationCoachSessionActive = false;
+    pronunciationCoachButton.classList.remove("ps-active", "ps-listening");
+    pronunciationCoachButton.setAttribute("aria-pressed", "false");
     renderChunkedSubtitle();
-
-    if (pronunciationCoachVideoPreview) {
-      pronunciationCoachVideoPreview
-        .resumeRecognition = false;
-      pronunciationCoachVideoPreview
-        .resumeVideoAfterReturn =
-        resumeVideo;
-
-      if (
-        pronunciationCoachVideoPreview.phase ===
-        "starting"
-      ) {
-        pronunciationCoachVideoPreview
-          .cancelRequested = true;
-      } else if (
-        pronunciationCoachVideoPreview.phase !==
-        "returning"
-      ) {
-        beginPronunciationCoachVideoReturn();
-      }
-
-      return;
-    }
-
-    if (!resumeVideo) {
-      return;
-    }
-
-    const video = getNetflixVideo();
-
-    if (video) {
-      void video.play();
-    }
+    updatePronunciationFeatureUI();
   }
 
   function getPronunciationCoachVideoRange() {
     const video = getNetflixVideo();
-
-    if (
-      !video ||
-      completedStartTimeMs === null
-    ) {
-      return null;
-    }
-
-    const currentTimeMs =
-      Number(video.currentTime) * 1000;
-    const returnTimeMs =
-      Number.isFinite(currentTimeMs)
-        ? Math.max(0, currentTimeMs)
-        : completedStartTimeMs;
-    const sentenceEndTimeMs = Math.max(
-      Number(completedEndTimeMs) || 0,
-      completedStartTimeMs + 1200
-    );
-
+    const sentence = activePronunciationSentence;
+    if (!video || !sentence) return null;
+    const currentTimeMs = Number(video.currentTime) * 1000;
+    const returnTimeMs = Number.isFinite(currentTimeMs) ? Math.max(0, currentTimeMs) : sentence.endTimeMs;
     return {
-      startTimeMs:
-        completedStartTimeMs,
-      endTimeMs: sentenceEndTimeMs,
-      returnTimeMs
+      startTimeMs: sentence.startTimeMs,
+      endTimeMs: Math.max(sentence.endTimeMs, sentence.startTimeMs + 1200),
+      returnTimeMs,
+      sentenceId: sentence.id,
+      mediaGeneration: mediaInteractionGeneration
     };
   }
 
-  function finishPronunciationCoachVideoPreview(
-    message
-  ) {
-    const preview =
-      pronunciationCoachVideoPreview;
-
-    if (!preview) {
-      return;
-    }
-
+  function finishPronunciationCoachVideoPreview(message) {
+    const preview = pronunciationCoachVideoPreview;
+    if (!preview) return;
     pronunciationCoachVideoPreview = null;
-    pronunciationCoachIsModelSpeaking =
-      false;
-    pronunciationCoachManualPause =
-      !preview.resumeRecognition;
-
-    if (isPronunciationCoachOpen) {
-      pronunciationCoachStatus.textContent =
-        message || "Şimdi sen söyle";
-      pronunciationCoachHeard.textContent =
-        "İlerlemen kaldığı yerden korunuyor";
+    pronunciationCoachIsModelSpeaking = false;
+    pronunciationCoachManualPause = false;
+    if (isPronunciationCoachOpen && activePronunciationSentence?.id === preview.sentenceId) {
+      pronunciationCoachStatus.textContent = message || "Hazır — Söyle'ye bas";
+      pronunciationPracticeState =
+        pronunciationPracticeState === "success" ? "success" :
+        pronunciationPracticeState === "retry" ? "retry" : "ready";
       renderPronunciationCoach();
-
-      if (preview.resumeRecognition) {
-        schedulePronunciationCoachRestart(
-          280
-        );
-      }
-    }
-
-    if (preview.resumeVideoAfterReturn) {
-      const video = getNetflixVideo();
-
-      if (video) {
-        void video.play();
-      }
     }
   }
 
   function beginPronunciationCoachVideoReturn() {
-    const preview =
-      pronunciationCoachVideoPreview;
-
+    const preview = pronunciationCoachVideoPreview;
+    if (!preview || preview.phase === "returning") return;
     if (
-      !preview ||
-      preview.phase === "returning"
+      preview.mediaGeneration !== mediaInteractionGeneration ||
+      activePronunciationSentence?.id !== preview.sentenceId
     ) {
+      finishPronunciationCoachVideoPreview("Hazır — Söyle'ye bas");
       return;
     }
-
     const video = getNetflixVideo();
-
     if (video && !video.paused) {
-      video.pause();
+      pauseVideoForPronunciation(video);
     }
-
     preview.phase = "returning";
-    preview.requestId =
-      `coach-return-${Date.now()}-${Math.random()}`;
+    preview.requestId = `coach-return-${Date.now()}-${Math.random()}`;
     preview.requestedAt = Date.now();
-
-    if (isPronunciationCoachOpen) {
-      pronunciationCoachStatus.textContent =
-        "Video konumu geri yükleniyor";
-      renderPronunciationCoach();
-    }
-
-    window.postMessage(
-      {
-        source: "PAUSESPEAK_EXTENSION",
-        type:
-          "PAUSESPEAK_COACH_RETURN_REQUEST",
-        requestId: preview.requestId,
-        targetTimeMs:
-          preview.returnTimeMs
-      },
-      "*"
-    );
+    allowPronunciationControlledMedia(1500);
+    window.postMessage({
+      source: "PAUSESPEAK_EXTENSION",
+      type: "PAUSESPEAK_COACH_RETURN_REQUEST",
+      requestId: preview.requestId,
+      targetTimeMs: preview.returnTimeMs
+    }, "*");
   }
 
   function playCurrentPronunciationCoachChunk() {
-    if (pronunciationCoachVideoPreview) {
-      return;
-    }
-
-    const range =
-      getPronunciationCoachVideoRange();
-
+    if (pronunciationCoachVideoPreview) return;
+    const range = getPronunciationCoachVideoRange();
     if (!range) {
-      pronunciationCoachStatus.textContent =
-        "Videodan dinlenecek cümle bulunamadı";
+      pronunciationCoachStatus.textContent = "Videodan dinlenecek cümle bulunamadı";
+      renderPronunciationCoach();
       return;
     }
-
-    const resumeRecognition =
-      !pronunciationCoachManualPause;
-
+    invalidatePronunciationAttempt();
     clearPronunciationCoachTimers();
     stopPronunciationCoachRecognition(false);
     pronunciationCoachManualPause = true;
-    pronunciationCoachIsModelSpeaking =
-      true;
+    pronunciationCoachIsModelSpeaking = true;
     pronunciationCoachVideoPreview = {
       ...range,
       phase: "starting",
-      requestId:
-        `coach-preview-${Date.now()}-${Math.random()}`,
+      requestId: `coach-preview-${Date.now()}-${Math.random()}`,
       requestedAt: Date.now(),
-      resumeRecognition,
-      resumeVideoAfterReturn: false,
       cancelRequested: false
     };
-    pronunciationCoachStatus.textContent =
-      `${getPlaybackPlatformLabel()} videosundan cümle hazırlanıyor`;
-    pronunciationCoachHeard.textContent =
-      "Cümlenin özgün sesini dinle";
+    pronunciationCoachStatus.textContent = `${getPlaybackPlatformLabel()} videosundan cümleyi dinliyorsun`;
     renderPronunciationCoach();
-
-    window.postMessage(
-      {
-        source: "PAUSESPEAK_EXTENSION",
-        type:
-          "PAUSESPEAK_COACH_PREVIEW_REQUEST",
-        requestId:
-          pronunciationCoachVideoPreview
-            .requestId,
-        targetTimeMs:
-          range.startTimeMs
-      },
-      "*"
-    );
+    allowPronunciationControlledMedia(1500);
+    window.postMessage({
+      source: "PAUSESPEAK_EXTENSION",
+      type: "PAUSESPEAK_COACH_PREVIEW_REQUEST",
+      requestId: pronunciationCoachVideoPreview.requestId,
+      targetTimeMs: range.startTimeMs
+    }, "*");
   }
 
   function updatePronunciationCoachVideoPreview() {
@@ -9273,6 +9512,14 @@ async function improveCurrentWithTerra(
       pronunciationCoachVideoPreview;
 
     if (!preview) {
+      return;
+    }
+
+    if (
+      preview.mediaGeneration !== mediaInteractionGeneration ||
+      activePronunciationSentence?.id !== preview.sentenceId
+    ) {
+      finishPronunciationCoachVideoPreview("Hazır — Söyle'ye bas");
       return;
     }
 
@@ -9331,6 +9578,14 @@ async function improveCurrentWithTerra(
         data.source !== "PAUSESPEAK_PAGE" ||
         data.requestId !== preview.requestId
       ) {
+        return;
+      }
+
+      if (
+        preview.mediaGeneration !== mediaInteractionGeneration ||
+        activePronunciationSentence?.id !== preview.sentenceId
+      ) {
+        finishPronunciationCoachVideoPreview("Hazır — Söyle'ye bas");
         return;
       }
 
@@ -10049,9 +10304,19 @@ Object.assign(
 
 function renderChunkedSubtitle() {
   clearKeyboardStudyMeaningTimer();
+
+  if (isPronunciationTargetDisplayLocked()) {
+    renderActivePronunciationSentenceInSubtitle();
+    applyPronunciationCoachStateToSubtitle();
+    return;
+  }
+
+  delete subtitleBox.dataset.pronunciationTargetSentenceId;
+  subtitleBox.dataset.finalizedSentenceId = currentFinalizedSentence?.id || "";
   const shouldDecoratePronunciationCoach =
     isPronunciationCoachOpen &&
-    isPronunciationCoachSessionActive;
+    isPronunciationCoachSessionActive &&
+    isActivePronunciationSentenceDisplayed();
 
   subtitleBox.classList.toggle(
     "ps-inline-coach-active",
@@ -12619,23 +12884,13 @@ speakButton.disabled =
 function scheduleAutomaticSpeechStart(
   delayMs = 350
 ) {
+  // Legacy lifecycle shim. Automatic microphone starts remain disabled here;
+  // the continuous finalized-target auto-Speak path is handled separately.
+  void delayMs;
   if (autoSpeechStartTimeout) {
-    clearTimeout(
-      autoSpeechStartTimeout
-    );
+    clearTimeout(autoSpeechStartTimeout);
+    autoSpeechStartTimeout = null;
   }
-
-  if (!SpeechRecognitionClass) {
-    return;
-  }
-
-  autoSpeechStartTimeout =
-    setTimeout(() => {
-      autoSpeechStartTimeout =
-        null;
-
-      startSpeechRecognition();
-    }, delayMs);
 }
   async function startChunkPractice(
   shouldStartSpeech =
@@ -13553,90 +13808,12 @@ speakButton.textContent =
   }
 
   function startSpeechRecognition() {
-    if (
-      completedStartTimeMs ===
-        null ||
-      completedBox.textContent ===
-        "Henüz tamamlanan cümle yok."
-    ) {
-      status.textContent =
-        "Önce tamamlanan bir İngilizce cümle gerekli.";
-
-      return;
-    }
-
-    if (
-      !SpeechRecognitionClass
-    ) {
-      spokenBox.textContent =
-        "Bu tarayıcıda konuşma tanıma desteklenmiyor.";
-
-      status.textContent =
-        "Konuşma tanıma desteklenmiyor";
-
-      return;
-    }
-
-    if (
-      speechRecognition &&
-      isSpeechListening
-    ) {
-      return;
-    }
-
-    const video =
-      getNetflixVideo();
-
-    if (
-      video &&
-      !video.paused
-    ) {
-      video.pause();
-    }
-
+    // Legacy pronunciation UI is intentionally detached from microphone ownership.
+    // Keep the old implementation scaffolding for later cleanup, but do not allow
+    // it to bypass the explicit Söyle / Tekrar söyle lifecycle.
     clearSpeechSilenceTimeout();
-
-    speechRecognitionHasResult =
-      false;
-
-    speechRecognitionHadError =
-      false;
-
-    recognizedSpeechText = "";
-
-    spokenBox.textContent =
-      "Mikrofon hazırlanıyor...";
-
-    speechRecognition =
-      createSpeechRecognition();
-
-    if (!speechRecognition) {
-      spokenBox.textContent =
-        "Konuşma tanıma başlatılamadı.";
-
-      return;
-    }
-
-    try {
-      speechRecognition.start();
-    } catch (error) {
-      speechRecognition = null;
-      isSpeechListening = false;
-
-      speakButton.textContent =
-        "🎤 Konuş";
-
-      spokenBox.textContent =
-        "Mikrofon başlatılamadı. Birkaç saniye sonra tekrar dene.";
-
-      status.textContent =
-        "❌ Mikrofon başlatılamadı";
-
-      console.error(
-        "PauseSpeak mikrofon başlatma hatası:",
-        error
-      );
-    }
+    speechRecognitionWasCancelled = true;
+    return false;
   }
 
   speakButton.addEventListener(
@@ -13661,7 +13838,6 @@ speakButton.textContent =
   ) {
     [
       settingsMenu,
-      audioMenu,
       moreMenu
     ].forEach((menu) => {
       if (menu === exceptMenu) {
@@ -13703,6 +13879,45 @@ speakButton.textContent =
       );
     }
   );
+
+pronunciationMenuButton.addEventListener(
+  "click",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isPronunciationPracticeEnabled) return;
+    if (isPronunciationCoachOpen && pronunciationPracticeMode === "single") {
+      closePronunciationCoach(true, false);
+      return;
+    }
+    openPronunciationCoach(currentFinalizedSentence, "single");
+  }
+);
+
+pronunciationPracticeToggleButton.addEventListener(
+  "click",
+  () => {
+    isPronunciationPracticeEnabled = !isPronunciationPracticeEnabled;
+    try {
+      localStorage.setItem(
+        pronunciationPracticeStorageKey,
+        String(isPronunciationPracticeEnabled)
+      );
+    } catch (error) {
+      console.debug("PauseSpeak telaffuz tercihi kaydedilemedi.", error);
+    }
+    if (!isPronunciationPracticeEnabled) {
+      isPronunciationContinuousSessionActive = false;
+      pronunciationContinuousSessionGeneration += 1;
+      pronunciationContinuousResumeBoundary = null;
+      pronunciationContinuousAutoSpeakPending = null;
+      pronunciationContinuousAutoSpeakSentenceId = "";
+      closePronunciationCoach(true, false);
+    }
+    updatePronunciationFeatureUI();
+  }
+);
+
 
 pronunciationToggleButton.addEventListener(
   "click",
@@ -13766,13 +13981,20 @@ turkishTranslationSpeechToggleButton.addEventListener(
     isTurkishTranslationSpeechEnabled =
       !isTurkishTranslationSpeechEnabled;
 
-    turkishTranslationSpeechToggleButton.textContent =
+    setPauseSpeakButton(
+      turkishTranslationSpeechToggleButton,
+      "speaker",
       isTurkishTranslationSpeechEnabled
         ? "Türkçe Ses: Açık"
-        : "Türkçe Ses: Kapalı";
-        if (!isTurkishTranslationSpeechEnabled) {
-  stopTranslationSpeech();
-}
+        : "Türkçe Ses: Kapalı"
+    );
+    turkishTranslationSpeechToggleButton.setAttribute(
+      "aria-pressed",
+      String(isTurkishTranslationSpeechEnabled)
+    );
+    if (!isTurkishTranslationSpeechEnabled) {
+      stopTranslationSpeech();
+    }
   }
 );
 automaticPauseToggleButton.addEventListener(
@@ -13781,12 +14003,17 @@ automaticPauseToggleButton.addEventListener(
     isAutomaticPauseEnabled =
       !isAutomaticPauseEnabled;
 
-    automaticPauseToggleButton.textContent =
+    setPauseSpeakButton(
+      automaticPauseToggleButton,
+      "pause",
       isAutomaticPauseEnabled
         ? "Otomatik Durdurma: Açık"
-        : "Otomatik Durdurma: Kapalı";
-
-
+        : "Otomatik Durdurma: Kapalı"
+    );
+    automaticPauseToggleButton.setAttribute(
+      "aria-pressed",
+      String(isAutomaticPauseEnabled)
+    );
   }
 );
   function finishSentence(video) {
@@ -13800,9 +14027,10 @@ automaticPauseToggleButton.addEventListener(
     }
 
     cancelTerraImprovement();
+    const wasReplayPlaybackActive = isReplayPlaybackActive;
 
     if (
-      !isReplayPlaybackActive &&
+      !wasReplayPlaybackActive &&
       completedStartTimeMs !== null
     ) {
       previousSentenceText =
@@ -13834,7 +14062,7 @@ void loadStudySegments(
 );
 
 if (
-  isReplayPlaybackActive
+  wasReplayPlaybackActive
 ) {
   isReplayPlaybackActive =
     false;
@@ -13894,10 +14122,25 @@ if (
       currentTime * 1000
     );
 
-updateTerraImproveButtonState();
+    const finalizedSentence =
+      wasReplayPlaybackActive
+        ? currentFinalizedSentence
+        : createFinalizedSentenceIdentity(
+            fullSentence,
+            completedStartTimeMs,
+            completedEndTimeMs
+          );
 
-pronunciationCoachButton.disabled =
-  false;
+    if (!wasReplayPlaybackActive) {
+      rememberFinalizedSentence(finalizedSentence);
+    }
+
+    const isContinuousResumeDuplicate =
+      isPronunciationContinuousSessionActive &&
+      isPronunciationContinuousResumeDuplicate(finalizedSentence);
+
+updateTerraImproveButtonState();
+updatePronunciationFeatureUI();
 
 replayButton.disabled =
   false;
@@ -13911,7 +14154,7 @@ if (isAutomaticRetryReplay) {
 }
     spokenBox.textContent =
       SpeechRecognitionClass
-        ? "Mikrofon otomatik açılıyor..."
+        ? "Konuşmak için düğmeye bas."
         : "Bu tarayıcıda konuşma tanıma desteklenmiyor.";
 
     speakButton.textContent =
@@ -13936,9 +14179,10 @@ if (
   video &&
   !video.paused &&
   isAutomaticPauseEnabled &&
-  shouldPauseForSentence
+  shouldPauseForSentence &&
+  !isContinuousResumeDuplicate
 ) {
-  video.pause();
+  pauseVideoForPronunciation(video);
 
   status.textContent =
     "⏸️ Cümle bitti — video durduruldu";
@@ -13975,14 +14219,28 @@ if (
 }
 
 if (
-  isPronunciationCoachSessionActive &&
-  shouldPauseForSentence
+  isPronunciationPracticeEnabled &&
+  isPronunciationContinuousSessionActive &&
+  finalizedSentence &&
+  !isContinuousResumeDuplicate &&
+  (!isPronunciationCoachOpen || pronunciationPracticeMode === "continuous")
 ) {
-  setTimeout(() => {
-    openPronunciationCoach(
-      fullSentence,
-      false
-    );
+  pronunciationContinuousResumeBoundary = null;
+  const continuousMediaGeneration = mediaInteractionGeneration;
+  const continuousAutoSpeakPending = pronunciationContinuousAutoSpeakPending;
+  window.setTimeout(() => {
+    if (
+      isPronunciationPracticeEnabled &&
+      isPronunciationContinuousSessionActive &&
+      currentFinalizedSentence?.id === finalizedSentence.id &&
+      continuousMediaGeneration === mediaInteractionGeneration
+    ) {
+      openPronunciationCoach(finalizedSentence, "continuous");
+      maybeAutoStartPronunciationContinuousTarget(
+        finalizedSentence,
+        continuousAutoSpeakPending
+      );
+    }
   }, 0);
 }
   }
@@ -13995,10 +14253,6 @@ function setSubtitlePanelVisibility(
   subtitleHiddenAtSentence = "";
   panel.style.display =
     shouldShow ? "block" : "none";
-  subtitleVisibilityButton.textContent =
-    shouldShow
-      ? "Çeviri kartını gizle"
-      : "Çeviri kartını göster";
   transcriptButton.classList.toggle(
     "ps-active",
     shouldShow
@@ -14295,7 +14549,6 @@ function showInterfaceControls(
       const video = getNetflixVideo();
       const hasOpenMenu = [
         settingsMenu,
-        audioMenu,
         moreMenu
       ].some((menu) =>
         menu.classList.contains(
@@ -14434,7 +14687,8 @@ if (isReplayStarting) {
       currentSubtitle =
         newSubtitle;
 
-      if (newSubtitle) {
+      if (newSubtitle && !isPronunciationTargetDisplayLocked()) {
+        delete subtitleBox.dataset.pronunciationTargetSentenceId;
         subtitleBox.textContent =
           newSubtitle;
       }
@@ -14504,13 +14758,19 @@ if (isReplayStarting) {
         didFinishSentence &&
         Boolean(video?.paused);
 
-      if (!shouldKeepCompletedSentence) {
+      if (
+        !shouldKeepCompletedSentence &&
+        !isPronunciationTargetDisplayLocked()
+      ) {
+        delete subtitleBox.dataset.pronunciationTargetSentenceId;
         subtitleBox.textContent =
           newSubtitle;
       }
     } else if (
-      !previousSubtitle
+      !previousSubtitle &&
+      !isPronunciationTargetDisplayLocked()
     ) {
+      delete subtitleBox.dataset.pronunciationTargetSentenceId;
       subtitleBox.textContent =
         "Altyazı bekleniyor...";
     }
@@ -14602,6 +14862,13 @@ function playStoredPreviousSentence() {
       return;
     }
 
+    const previousPronunciationSentence =
+      findFinalizedSentenceForTranscriptCue({
+        text: previousSentenceText,
+        startTimeMs: previousSentenceStartTimeMs,
+        endTimeMs: previousSentenceEndTimeMs
+      });
+
     completedBox.textContent =
       previousSentenceText;
 
@@ -14625,8 +14892,10 @@ function playStoredPreviousSentence() {
     replayButton.disabled =
       false;
 
-    pronunciationCoachButton.disabled =
-      false;
+    if (previousPronunciationSentence) {
+      currentFinalizedSentence = previousPronunciationSentence;
+    }
+    updatePronunciationFeatureUI();
 
     resetPronunciationPractice();
 
@@ -14674,6 +14943,7 @@ previousSentenceButton.addEventListener(
       }
 
       stopSpeechRecognition();
+      markPronunciationMediaInteraction("seek");
       video.pause();
 
       isReplayPlaybackActive =
@@ -14773,6 +15043,7 @@ previousSentenceButton.addEventListener(
       }
 
       stopSpeechRecognition();
+      markPronunciationMediaInteraction("pause");
       video.pause();
 
       status.textContent =
@@ -14794,6 +15065,7 @@ previousSentenceButton.addEventListener(
       }
 
       stopSpeechRecognition();
+      markPronunciationMediaInteraction("play");
 
       try {
         await video.play();
@@ -14867,6 +15139,26 @@ setPauseSpeakButton(
   "coach",
   "Konuş"
 );
+setPauseSpeakButton(
+  pronunciationMenuButton,
+  "coach",
+  "Telaffuz"
+);
+setPauseSpeakButton(
+  pronunciationPracticeToggleButton,
+  "coach",
+  "Telaffuz alıştırmaları: Kapalı"
+);
+setPauseSpeakButton(
+  pronunciationPracticeContinuousButton,
+  "next",
+  "Konuşarak ilerle"
+);
+setPauseSpeakButton(pronunciationPracticeSpeakButton, "coach", "Söyle");
+setPauseSpeakButton(pronunciationPracticeListenButton, "speaker", "Dinle");
+setPauseSpeakButton(pronunciationPracticeRestartButton, "replay", "Baştan al");
+setPauseSpeakButton(pronunciationPracticeSkipButton, "close", "Vazgeç");
+setPauseSpeakButton(pronunciationPracticeContinueButton, "play", "Devam et");
 
 moreButton.className =
   "ps-icon-button";
@@ -14877,7 +15169,7 @@ setPauseSpeakButton(
 );
 
 previousSentenceButton.className =
-  "ps-side-nav ps-previous";
+  "ps-command-button ps-sentence-nav";
 previousSentenceButton.title =
   "Önceki cümleyi tekrar oynat";
 setPauseSpeakButton(
@@ -14886,6 +15178,8 @@ setPauseSpeakButton(
   "Önceki cümle"
 );
 
+nextSentenceButton.className =
+  "ps-command-button ps-sentence-nav";
 setPauseSpeakButton(
   nextSentenceButton,
   "next",
@@ -14899,6 +15193,11 @@ setPauseSpeakButton(
   button.className =
     "ps-command-button";
 });
+
+turkishTranslationSpeechToggleButton.className =
+  "ps-menu-button ps-more-toggle-option";
+automaticPauseToggleButton.className =
+  "ps-menu-button ps-more-toggle-option";
 
 setPauseSpeakButton(
   replayButton,
@@ -14931,10 +15230,21 @@ transcriptButton.setAttribute(
   transcriptButton.title
 );
 setPauseSpeakButton(
-  audioSubtitleButton,
-  "audio",
-  "Ses ve altyazı"
+  turkishTranslationSpeechToggleButton,
+  "speaker",
+  "Türkçe Ses: Kapalı"
 );
+turkishTranslationSpeechToggleButton.setAttribute("aria-pressed", "false");
+turkishTranslationSpeechToggleButton.title = "Türkçe sesi aç veya kapat";
+turkishTranslationSpeechToggleButton.setAttribute("aria-label", turkishTranslationSpeechToggleButton.title);
+setPauseSpeakButton(
+  automaticPauseToggleButton,
+  "pause",
+  "Otomatik Durdurma: Açık"
+);
+automaticPauseToggleButton.setAttribute("aria-pressed", "true");
+automaticPauseToggleButton.title = "Otomatik durdurmayı aç veya kapat";
+automaticPauseToggleButton.setAttribute("aria-label", automaticPauseToggleButton.title);
 setPauseSpeakButton(
   playerShellToggleButton,
   "chevronDown"
@@ -14946,13 +15256,6 @@ settingsMenuTitle.className =
   "ps-menu-title";
 settingsMenuTitle.textContent =
   "PauseSpeak ayarları";
-
-const audioMenuTitle =
-  document.createElement("div");
-audioMenuTitle.className =
-  "ps-menu-title";
-audioMenuTitle.textContent =
-  "Ses ve altyazı";
 
 const moreMenuTitle =
   document.createElement("div");
@@ -14976,18 +15279,16 @@ settingsMenu.append(
   opacitySetting
 );
 
-audioMenu.append(
-  audioMenuTitle,
-  turkishTranslationSpeechToggleButton,
-  automaticPauseToggleButton,
-  subtitleVisibilityButton
-);
-
 moreMenu.replaceChildren(
   moreMenuTitle,
+  pronunciationPracticeToggleButton,
+  turkishTranslationSpeechToggleButton,
+  automaticPauseToggleButton,
   usageButton,
   helpButton
 );
+
+updatePronunciationFeatureUI();
 
   mediaCopy.append(
     mediaTitle
@@ -15012,6 +15313,7 @@ panel.replaceChildren(
   subtitleBox,
   translationBox,
   subtitleActionsRow,
+  pronunciationPracticeRow,
   title,
   status,
   subtitleTitle,
@@ -15050,13 +15352,22 @@ progressRow.append(
   progressRange,
   durationLabel
 );
-commandRow.append(
-  replayButton,
-  seekBackwardButton,
+pronunciationDock.append(
+  pronunciationMenuButton,
+  replayButton
+);
+playbackCommandGroup.append(
+  previousSentenceButton,
   playPauseButton,
-  seekForwardButton,
-  transcriptButton,
-  audioSubtitleButton
+  nextSentenceButton
+);
+utilityCommandGroup.append(
+  transcriptButton
+);
+commandRow.append(
+  pronunciationDock,
+  playbackCommandGroup,
+  utilityCommandGroup
 );
 playerShell.append(
   playerShellToggleButton,
@@ -15100,9 +15411,7 @@ for (const [format, label] of [
 }
 
 for (const [language, label] of [
-  ["en", "İngilizce"],
-  ["tr", "Türkçe · çevrilen satırlar"],
-  ["bilingual", "İki dilli"]
+  ["en", "İngilizce"]
 ]) {
   const languageButton =
     document.createElement("button");
@@ -15141,11 +15450,8 @@ transcriptPanel.replaceChildren(
 controlsPanel.replaceChildren(
   topBar,
   panel,
-  previousSentenceButton,
-  nextSentenceButton,
   playerShell,
   settingsMenu,
-  audioMenu,
   moreMenu
 );
 improveTranslationButton.addEventListener(
@@ -15161,7 +15467,6 @@ const pronunciationCoachTranslationObserver =
   new MutationObserver(() => {
     if (isPronunciationCoachOpen) {
       renderPronunciationCoach();
-      tryStartPronunciationCoachAfterTranslation();
     }
   });
 
@@ -15180,22 +15485,12 @@ pronunciationCoachButton.addEventListener(
     event.preventDefault();
     event.stopPropagation();
     closePauseSpeakMenus();
-
-    if (
-      isPronunciationCoachSessionActive &&
-      isPronunciationCoachOpen
-    ) {
-      closePronunciationCoach(
-        true,
-        false
-      );
+    if (!isPronunciationPracticeEnabled) return;
+    if (isPronunciationCoachOpen && pronunciationPracticeMode === "single") {
+      closePronunciationCoach(true, false);
       return;
     }
-
-    openPronunciationCoach(
-      completedBox.textContent,
-      true
-    );
+    openPronunciationCoach(currentFinalizedSentence, "single");
   }
 );
 
@@ -15288,33 +15583,62 @@ pronunciationCoachMicButton.addEventListener(
   (event) => {
     event.preventDefault();
     event.stopPropagation();
-
-    if (
-      pronunciationCoachIsModelSpeaking
-    ) {
-      window.speechSynthesis?.cancel();
-      pronunciationCoachIsModelSpeaking =
-        false;
-    }
-
-    if (pronunciationCoachListening) {
-      pronunciationCoachManualPause =
-        true;
-      pronunciationCoachStatus.textContent =
-        "Mikrofon duraklatıldı — ilerlemen korunuyor";
-      stopPronunciationCoachRecognition(
-        false
-      );
-      return;
-    }
-
-    pronunciationCoachManualPause =
-      false;
-    pronunciationCoachStatus.textContent =
-      "Mikrofon hazırlanıyor";
-    startPronunciationCoachRecognition();
+    handlePronunciationSpeakAction();
   }
 );
+
+pronunciationPracticeSpeakButton.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  handlePronunciationSpeakAction();
+});
+pronunciationPracticeListenButton.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  playCurrentPronunciationCoachChunk();
+});
+pronunciationPracticeRestartButton.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  handlePronunciationRestartAction();
+});
+pronunciationPracticeContinuousButton.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  if (!isPronunciationPracticeEnabled) return;
+  isPronunciationContinuousSessionActive = !isPronunciationContinuousSessionActive;
+  pronunciationContinuousSessionGeneration += 1;
+  pronunciationContinuousResumeBoundary = null;
+  pronunciationContinuousAutoSpeakPending = null;
+  pronunciationContinuousAutoSpeakSentenceId = "";
+  if (
+    isPronunciationContinuousSessionActive &&
+    isPronunciationCoachOpen &&
+    activePronunciationSentence
+  ) {
+    pronunciationPracticeMode = "continuous";
+  }
+  if (
+    !isPronunciationContinuousSessionActive &&
+    pronunciationPracticeMode === "continuous" &&
+    isPronunciationCoachOpen
+  ) {
+    closePronunciationCoach(true, false);
+    return;
+  }
+  updatePronunciationFeatureUI();
+  renderPronunciationCoach();
+});
+pronunciationPracticeSkipButton.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  handlePronunciationSkipAction();
+});
+pronunciationPracticeContinueButton.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  handlePronunciationContinueAction();
+});
 
 document.addEventListener(
   "keydown",
@@ -15336,6 +15660,7 @@ document.addEventListener(
   },
   true
 );
+
 
 interfaceCloseButton.addEventListener(
   "click",
@@ -15368,15 +15693,6 @@ settingsButton.addEventListener(
     togglePauseSpeakMenu(
       settingsMenu
     );
-  }
-);
-
-audioSubtitleButton.addEventListener(
-  "click",
-  (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    togglePauseSpeakMenu(audioMenu);
   }
 );
 
@@ -15447,15 +15763,6 @@ panelVisibilityButton.addEventListener(
   }
 );
 
-subtitleVisibilityButton.addEventListener(
-  "click",
-  () => {
-    setSubtitlePanelVisibility(
-      isSubtitlePanelHidden
-    );
-  }
-);
-
 speedButton.addEventListener(
   "click",
   () => {
@@ -15516,6 +15823,9 @@ playPauseButton.addEventListener(
     }
 
     stopSpeechRecognition();
+    markPronunciationMediaInteraction(
+      video.paused ? "play" : "pause"
+    );
 
     if (video.paused) {
       try {
@@ -16168,6 +16478,19 @@ function resetPlaybackMediaContext(
   mediaKey
 ) {
   lastPlaybackMediaKey = mediaKey;
+  mediaInteractionGeneration += 1;
+  invalidatePronunciationAttempt();
+  clearPronunciationControlledMediaEventTokens();
+  pronunciationControlledMediaUntil = 0;
+  isPronunciationContinuousSessionActive = false;
+  pronunciationContinuousSessionGeneration += 1;
+  pronunciationContinuousResumeBoundary = null;
+  pronunciationContinuousAutoSpeakPending = null;
+  pronunciationContinuousAutoSpeakSentenceId = "";
+  currentFinalizedSentence = null;
+  activePronunciationSentence = null;
+  finalizedSentenceHistory.length = 0;
+  finalizedSentenceGeneration = 0;
   currentSubtitle = "";
   sentenceParts = [];
   sentenceStartTime = null;
@@ -16218,7 +16541,7 @@ function resetPlaybackMediaContext(
     `${getPlaybackPlatformLabel()} altyazı verisi bekleniyor…`;
   replayButton.disabled = true;
   previousSentenceButton.disabled = true;
-  pronunciationCoachButton.disabled = true;
+  updatePronunciationFeatureUI();
 
   if (
     transcriptOverlay.style.display !==
@@ -16275,6 +16598,7 @@ const runPauseSpeakUpdate = () => {
 
   const pronunciationCoachVideo =
     getNetflixVideo();
+  ensurePronunciationMediaSafetyListeners(pronunciationCoachVideo);
 
   if (
     isPronunciationCoachSessionActive &&
@@ -16285,12 +16609,15 @@ const runPauseSpeakUpdate = () => {
       pronunciationCoachListening
     )
   ) {
+    invalidatePronunciationAttempt();
     pronunciationCoachWaitingForTranslation =
-      true;
+      false;
     pronunciationCoachShouldRestart = false;
     stopPronunciationCoachRecognition(false);
     pronunciationCoachStatus.textContent =
       "Video oynarken mikrofon kapalı";
+    pronunciationPracticeState = "ready";
+    renderPronunciationCoach();
   }
 
   if (

@@ -3942,8 +3942,9 @@ button.ps-coach-word:focus-visible,
 #pausespeak-status-panel .ps-subtitle-actions {
   position: static !important;
   inset: auto !important;
-  width: 100% !important;
+  width: auto !important;
   min-width: 0 !important;
+  flex: 1 1 0;
   min-height: 40px !important;
   margin: 14px 0 0 !important;
   padding: 0 !important;
@@ -4257,5 +4258,1023 @@ button.ps-coach-word:focus-visible,
       var(
         --ps-subtitle-card-mobile-padding-bottom
       ) !important;
+  }
+}
+
+/* PauseSpeak controlled pronunciation practice -----------------------
+   Uses the existing subtitle card and SVG/button language. */
+#pausespeak-pronunciation-coach-button.ps-pronunciation-unavailable {
+  display: none !important;
+}
+
+#pausespeak-status-panel .ps-pronunciation-practice-row[hidden] {
+  display: none !important;
+}
+
+#pausespeak-status-panel .ps-pronunciation-practice-row {
+  width: 100% !important;
+  min-width: 0 !important;
+  margin: 10px 0 0 !important;
+  padding: 10px 0 0 !important;
+  border-top: 1px solid rgba(189, 218, 225, 0.12) !important;
+}
+
+#pausespeak-status-panel .ps-pronunciation-practice-feedback {
+  margin: 0 0 8px !important;
+  color: #edf2f3 !important;
+  font-size: 13px !important;
+  font-weight: 650 !important;
+  line-height: 1.35 !important;
+}
+
+#pausespeak-status-panel .ps-pronunciation-practice-actions {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  display: flex !important;
+  flex-flow: row wrap !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 8px 6px !important;
+  box-sizing: border-box !important;
+}
+
+#pausespeak-status-panel .ps-pronunciation-practice-actions button {
+  appearance: none !important;
+  min-height: var(--ps-subtitle-card-action-height, 40px) !important;
+  padding: 0 11px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  color: #edf2f3 !important;
+  background: rgba(49, 69, 78, calc(var(--ps-ui-opacity) * 0.72)) !important;
+  border: 1px solid rgba(133, 194, 209, 0.2) !important;
+  border-radius: 12px !important;
+  font: inherit !important;
+  font-size: 12px !important;
+  font-weight: 650 !important;
+  cursor: pointer !important;
+}
+
+#pausespeak-status-panel .ps-pronunciation-practice-actions button svg,
+.ps-transcript-pronunciation-action svg {
+  width: 20px !important;
+  height: 20px !important;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 1.8 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+#pausespeak-status-panel .ps-pronunciation-practice-actions button:hover,
+#pausespeak-status-panel .ps-pronunciation-practice-actions button:focus-visible {
+  color: #f7fdff !important;
+  background: rgba(35, 126, 153, var(--ps-ui-opacity)) !important;
+  border-color: #58c7e5 !important;
+  outline: none !important;
+}
+
+#pausespeak-status-panel .ps-pronunciation-practice-actions button:disabled {
+  cursor: default !important;
+  opacity: 0.42 !important;
+}
+
+#pausespeak-status-panel .ps-pronunciation-practice-primary {
+  background: linear-gradient(
+    145deg,
+    rgba(67, 183, 210, var(--ps-ui-opacity)),
+    rgba(35, 126, 153, var(--ps-ui-opacity))
+  ) !important;
+}
+
+.ps-transcript-row-shell {
+  position: relative;
+}
+
+.ps-transcript-row-shell > button {
+  padding-right: 50px !important;
+}
+
+.ps-transcript-row-shell > .ps-transcript-pronunciation-action {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  transform: translateY(-50%);
+  z-index: 1;
+}
+
+.ps-transcript-pronunciation-action {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  color: #7bd7ea;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.ps-transcript-pronunciation-action:hover,
+.ps-transcript-pronunciation-action:focus-visible {
+  color: #f7fdff;
+  background: rgba(88, 199, 229, 0.18);
+  outline: none;
+}
+
+@media (max-width: 680px) {
+  #pausespeak-status-panel .ps-pronunciation-practice-row {
+    margin-top: 8px !important;
+    padding-top: 8px !important;
+  }
+
+  #pausespeak-status-panel .ps-pronunciation-practice-actions {
+    gap: 6px !important;
+  }
+
+  #pausespeak-status-panel .ps-pronunciation-practice-actions button {
+    min-height: var(--ps-subtitle-card-action-height, 36px) !important;
+    padding: 0 9px !important;
+  }
+}
+
+/* R9 pronunciation shortcut bar ---------------------------------------------
+   Keep a single Telaffuz entry point on the left and center playback visually
+   without changing any underlying pronunciation lifecycle behavior. */
+.ps-command-row {
+  grid-template-columns: minmax(104px, 0.7fr) minmax(386px, 1.95fr) minmax(244px, 1.08fr) !important;
+  gap: clamp(8px, 1vw, 14px) !important;
+}
+
+.ps-command-row::before {
+  display: none !important;
+  content: none !important;
+}
+
+.ps-pronunciation-dock,
+.ps-playback-command-group,
+.ps-utility-command-group {
+  min-width: 0;
+  align-items: center;
+}
+
+.ps-pronunciation-dock {
+  position: relative;
+  display: flex;
+  justify-content: flex-start;
+  justify-self: stretch;
+}
+
+.ps-pronunciation-shortcut {
+  width: min(108px, 100%) !important;
+  min-height: 50px !important;
+  height: 50px !important;
+  padding: 6px 10px !important;
+  gap: 6px !important;
+  color: rgba(224, 235, 238, 0.86) !important;
+  background: rgba(49, 69, 78, calc(var(--ps-ui-opacity) * 0.3)) !important;
+  border: 1px solid rgba(133, 194, 209, 0.14) !important;
+  border-radius: 12px !important;
+}
+
+.ps-pronunciation-shortcut svg {
+  width: 22px !important;
+  height: 22px !important;
+}
+
+.ps-pronunciation-shortcut:hover,
+.ps-pronunciation-shortcut:focus-visible,
+.ps-pronunciation-shortcut.ps-active {
+  color: var(--ps-blue-strong) !important;
+  background: rgba(88, 199, 229, calc(var(--ps-ui-opacity) * 0.09)) !important;
+  border-color: rgba(88, 199, 229, 0.22) !important;
+}
+
+.ps-playback-command-group {
+  display: grid;
+  grid-template-columns: minmax(92px, 1.18fr) minmax(92px, 1fr) 72px minmax(92px, 1fr);
+  gap: clamp(4px, 0.75vw, 10px);
+}
+
+.ps-playback-command-group .ps-command-button,
+.ps-utility-command-group .ps-command-button {
+  width: 100% !important;
+}
+
+.ps-playback-command-group .ps-play-pause {
+  justify-self: center;
+}
+
+.ps-sentence-nav svg {
+  width: 28px !important;
+  height: 28px !important;
+}
+
+.ps-utility-command-group {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(72px, 1fr));
+  gap: clamp(4px, 0.65vw, 9px);
+}
+
+@media (max-width: 1100px) {
+  .ps-command-row {
+    grid-template-columns: minmax(92px, 0.55fr) minmax(300px, 1.55fr) minmax(188px, 0.92fr) !important;
+    gap: 5px !important;
+  }
+
+  .ps-pronunciation-shortcut {
+    width: min(96px, 100%) !important;
+    min-height: 48px !important;
+    height: 48px !important;
+    font-size: 10px !important;
+  }
+
+  .ps-pronunciation-shortcut svg {
+    width: 21px !important;
+    height: 21px !important;
+  }
+
+  .ps-playback-command-group {
+    grid-template-columns: minmax(72px, 1fr) minmax(72px, 1fr) 58px minmax(72px, 1fr);
+    gap: 3px;
+  }
+
+  .ps-utility-command-group {
+    grid-template-columns: repeat(3, minmax(48px, 1fr));
+    gap: 2px;
+  }
+}
+
+@media (max-width: 760px) {
+  .ps-command-row {
+    grid-template-columns: 1fr 1fr !important;
+    grid-template-areas:
+      "pronunciation utility"
+      "playback playback";
+    gap: 3px 6px !important;
+  }
+
+  .ps-pronunciation-dock {
+    grid-area: pronunciation;
+  }
+
+  .ps-playback-command-group {
+    grid-area: playback;
+    grid-template-columns: repeat(4, minmax(42px, auto));
+    justify-content: center;
+    gap: 3px;
+  }
+
+  .ps-utility-command-group {
+    grid-area: utility;
+    grid-template-columns: repeat(3, 36px);
+    justify-content: end;
+    gap: 2px;
+  }
+
+  .ps-pronunciation-shortcut {
+    width: auto !important;
+    min-width: 78px !important;
+    min-height: 36px !important;
+    height: 36px !important;
+    padding: 0 8px !important;
+    flex-direction: row !important;
+    border-radius: 10px !important;
+  }
+
+  .ps-pronunciation-shortcut svg {
+    width: 19px !important;
+    height: 19px !important;
+  }
+
+  .ps-playback-command-group .ps-command-button,
+  .ps-utility-command-group .ps-command-button {
+    min-width: 36px !important;
+  }
+
+  .ps-playback-command-group .ps-command-button span,
+  .ps-utility-command-group .ps-command-button span {
+    display: none !important;
+  }
+}
+
+@media (max-width: 520px) {
+  .ps-pronunciation-shortcut {
+    min-width: 36px !important;
+    width: 36px !important;
+    padding: 0 !important;
+  }
+
+  .ps-pronunciation-shortcut span {
+    display: none !important;
+  }
+
+  .ps-playback-command-group {
+    grid-template-columns: repeat(4, minmax(36px, auto));
+  }
+
+  .ps-playback-command-group .ps-command-button,
+  .ps-playback-command-group .ps-command-button.ps-play-pause,
+  .ps-utility-command-group .ps-command-button {
+    width: 36px !important;
+    min-width: 36px !important;
+    height: 36px !important;
+    min-height: 36px !important;
+  }
+
+  .ps-playback-command-group .ps-command-button.ps-play-pause {
+    width: 46px !important;
+    height: 46px !important;
+    min-height: 46px !important;
+  }
+
+  .ps-utility-command-group {
+    grid-template-columns: repeat(3, 32px);
+  }
+
+  .ps-utility-command-group .ps-command-button {
+    width: 32px !important;
+    min-width: 32px !important;
+    height: 34px !important;
+    min-height: 34px !important;
+  }
+}
+
+@media (max-width: 1100px) {
+  .ps-command-row {
+    grid-template-columns: minmax(76px, 0.5fr) minmax(286px, 1.5fr) minmax(185px, 0.9fr) !important;
+    gap: 5px !important;
+  }
+
+  .ps-pronunciation-shortcut {
+    width: min(92px, 100%) !important;
+    min-height: 52px !important;
+    height: 52px !important;
+    font-size: 10px !important;
+  }
+
+  .ps-pronunciation-shortcut svg {
+    width: 21px !important;
+    height: 21px !important;
+  }
+
+  .ps-playback-command-group {
+    grid-template-columns: minmax(58px, 1fr) 48px 62px 48px minmax(58px, 1fr);
+    gap: 2px;
+  }
+
+  .ps-utility-command-group {
+    grid-template-columns: repeat(3, minmax(48px, 1fr));
+    gap: 2px;
+  }
+}
+
+@media (max-width: 760px) {
+  .ps-command-row {
+    grid-template-columns: 1fr 1fr !important;
+    grid-template-areas:
+      "pronunciation utility"
+      "playback playback";
+    gap: 3px 6px !important;
+  }
+
+  .ps-pronunciation-dock {
+    grid-area: pronunciation;
+  }
+
+  .ps-playback-command-group {
+    grid-area: playback;
+    grid-template-columns: 44px 42px 52px 42px;
+    justify-content: center;
+    gap: 2px;
+  }
+
+  .ps-playback-command-group > :nth-child(n) {
+    grid-column: auto;
+  }
+
+  .ps-utility-command-group {
+    grid-area: utility;
+    grid-template-columns: repeat(3, 36px);
+    justify-content: end;
+    gap: 2px;
+  }
+
+  .ps-pronunciation-shortcut {
+    width: auto !important;
+    min-width: 74px !important;
+    min-height: 36px !important;
+    height: 36px !important;
+    padding: 0 8px !important;
+    flex-direction: row !important;
+    border-radius: 10px !important;
+  }
+
+  .ps-pronunciation-shortcut svg {
+    width: 19px !important;
+    height: 19px !important;
+  }
+
+  .ps-playback-command-group .ps-command-button,
+  .ps-utility-command-group .ps-command-button {
+    min-width: 36px !important;
+  }
+
+  .ps-playback-command-group .ps-command-button span,
+  .ps-utility-command-group .ps-command-button span {
+    display: none !important;
+  }
+}
+
+@media (max-width: 520px) {
+  .ps-pronunciation-shortcut {
+    min-width: 36px !important;
+    width: 36px !important;
+    padding: 0 !important;
+  }
+
+  .ps-pronunciation-shortcut span {
+    display: none !important;
+  }
+
+  .ps-playback-command-group {
+    grid-template-columns: 38px 38px 46px 38px;
+  }
+
+  .ps-playback-command-group .ps-command-button,
+  .ps-playback-command-group .ps-command-button.ps-play-pause,
+  .ps-utility-command-group .ps-command-button {
+    width: 36px !important;
+    min-width: 36px !important;
+    height: 36px !important;
+    min-height: 36px !important;
+  }
+
+  .ps-playback-command-group .ps-command-button.ps-play-pause {
+    width: 46px !important;
+    height: 46px !important;
+    min-height: 46px !important;
+  }
+
+  .ps-utility-command-group {
+    grid-template-columns: repeat(3, 32px);
+  }
+
+  .ps-utility-command-group .ps-command-button {
+    width: 32px !important;
+    min-width: 32px !important;
+    height: 34px !important;
+    min-height: 34px !important;
+  }
+}
+
+/* R8 UI polish --------------------------------------------------------------
+   Visual-only refinement for the existing player hierarchy. Keep controls
+   breathable, keep Play/Pause central, and make the anchored pronunciation
+   popover readable without introducing a new visual theme. */
+.ps-command-row {
+  grid-template-columns: minmax(116px, 0.72fr) minmax(430px, 2fr) minmax(276px, 1.12fr) !important;
+  gap: clamp(12px, 1.25vw, 20px) !important;
+  align-items: center !important;
+}
+
+.ps-pronunciation-dock,
+.ps-playback-command-group,
+.ps-utility-command-group {
+  min-height: 76px;
+}
+
+.ps-pronunciation-shortcut,
+.ps-playback-command-group .ps-command-button:not(.ps-play-pause),
+.ps-utility-command-group .ps-command-button {
+  min-height: 68px !important;
+  height: 68px !important;
+  padding: 10px 8px !important;
+  gap: 8px !important;
+  border-radius: 13px !important;
+  font-size: 12px !important;
+  line-height: 1.22 !important;
+}
+
+.ps-pronunciation-shortcut {
+  width: min(116px, 100%) !important;
+  color: rgba(224, 235, 238, 0.9) !important;
+  background: rgba(49, 69, 78, calc(var(--ps-ui-opacity) * 0.28)) !important;
+  border: 1px solid rgba(133, 194, 209, 0.13) !important;
+  box-shadow: none !important;
+}
+
+.ps-pronunciation-shortcut svg {
+  width: 25px !important;
+  height: 25px !important;
+}
+
+.ps-pronunciation-shortcut:hover,
+.ps-pronunciation-shortcut:focus-visible,
+.ps-pronunciation-shortcut.ps-active {
+  color: var(--ps-blue-strong) !important;
+  background: rgba(88, 199, 229, calc(var(--ps-ui-opacity) * 0.075)) !important;
+  border-color: rgba(88, 199, 229, 0.24) !important;
+  box-shadow: none !important;
+}
+
+.ps-playback-command-group {
+  grid-template-columns: minmax(116px, 1.14fr) minmax(104px, 1fr) 80px minmax(104px, 1fr) !important;
+  gap: clamp(7px, 0.85vw, 12px) !important;
+  align-items: center !important;
+}
+
+.ps-playback-command-group .ps-command-button:not(.ps-play-pause),
+.ps-utility-command-group .ps-command-button {
+  color: rgba(235, 241, 243, 0.88) !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+}
+
+.ps-playback-command-group .ps-command-button:not(.ps-play-pause):hover,
+.ps-playback-command-group .ps-command-button:not(.ps-play-pause):focus-visible,
+.ps-utility-command-group .ps-command-button:hover,
+.ps-utility-command-group .ps-command-button:focus-visible,
+.ps-utility-command-group .ps-command-button.ps-active {
+  color: #f4f8f9 !important;
+  background: rgba(88, 199, 229, calc(var(--ps-ui-opacity) * 0.07)) !important;
+  border-color: rgba(133, 194, 209, 0.12) !important;
+  box-shadow: none !important;
+}
+
+.ps-playback-command-group .ps-command-button svg,
+.ps-utility-command-group .ps-command-button svg {
+  margin-bottom: 1px;
+}
+
+.ps-playback-command-group .ps-play-pause {
+  width: 78px !important;
+  min-width: 78px !important;
+  height: 78px !important;
+  min-height: 78px !important;
+  padding: 0 !important;
+  justify-self: center !important;
+  border-color: rgba(123, 215, 234, 0.24) !important;
+  box-shadow: 0 8px 24px rgba(3, 12, 16, 0.2) !important;
+}
+
+.ps-playback-command-group .ps-play-pause:hover,
+.ps-playback-command-group .ps-play-pause:focus-visible {
+  box-shadow: 0 8px 24px rgba(3, 12, 16, 0.24) !important;
+}
+
+.ps-utility-command-group {
+  grid-template-columns: repeat(3, minmax(84px, 1fr)) !important;
+  gap: clamp(7px, 0.75vw, 11px) !important;
+  align-items: center !important;
+}
+
+@media (max-width: 1100px) {
+  .ps-command-row {
+    grid-template-columns: minmax(100px, 0.62fr) minmax(360px, 1.78fr) minmax(220px, 1fr) !important;
+    gap: 8px !important;
+  }
+
+  .ps-pronunciation-dock,
+  .ps-playback-command-group,
+  .ps-utility-command-group {
+    min-height: 68px;
+  }
+
+  .ps-pronunciation-shortcut,
+  .ps-playback-command-group .ps-command-button:not(.ps-play-pause),
+  .ps-utility-command-group .ps-command-button {
+    min-height: 60px !important;
+    height: 60px !important;
+    padding: 8px 6px !important;
+    gap: 6px !important;
+    font-size: 10.5px !important;
+  }
+
+  .ps-pronunciation-shortcut {
+    width: min(102px, 100%) !important;
+  }
+
+  .ps-playback-command-group {
+    grid-template-columns: minmax(94px, 1.12fr) minmax(82px, 1fr) 68px minmax(82px, 1fr) !important;
+    gap: 4px !important;
+  }
+
+  .ps-playback-command-group .ps-play-pause {
+    width: 68px !important;
+    min-width: 68px !important;
+    height: 68px !important;
+    min-height: 68px !important;
+  }
+
+  .ps-utility-command-group {
+    grid-template-columns: repeat(3, minmax(64px, 1fr)) !important;
+    gap: 4px !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .ps-command-row {
+    grid-template-columns: minmax(82px, 1fr) minmax(126px, 1fr) !important;
+    grid-template-areas:
+      "pronunciation utility"
+      "playback playback" !important;
+    gap: 7px 9px !important;
+  }
+
+  .ps-pronunciation-dock,
+  .ps-utility-command-group {
+    min-height: 46px;
+  }
+
+  .ps-playback-command-group {
+    min-height: 58px;
+    grid-template-columns: repeat(4, minmax(44px, auto)) !important;
+    justify-content: center !important;
+    gap: 7px !important;
+  }
+
+  .ps-pronunciation-shortcut {
+    width: auto !important;
+    min-width: 84px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 0 10px !important;
+    gap: 7px !important;
+  }
+
+  .ps-pronunciation-shortcut svg {
+    width: 20px !important;
+    height: 20px !important;
+  }
+
+  .ps-playback-command-group .ps-command-button:not(.ps-play-pause),
+  .ps-utility-command-group .ps-command-button {
+    width: 42px !important;
+    min-width: 42px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 0 !important;
+  }
+
+  .ps-playback-command-group .ps-command-button span,
+  .ps-utility-command-group .ps-command-button span {
+    display: none !important;
+  }
+
+  .ps-playback-command-group .ps-play-pause {
+    width: 56px !important;
+    min-width: 56px !important;
+    height: 56px !important;
+    min-height: 56px !important;
+  }
+
+  .ps-utility-command-group {
+    grid-template-columns: repeat(3, 42px) !important;
+    justify-content: end !important;
+    gap: 5px !important;
+  }
+}
+
+@media (max-width: 520px) {
+  .ps-pronunciation-shortcut {
+    width: 42px !important;
+    min-width: 42px !important;
+    padding: 0 !important;
+  }
+
+  .ps-pronunciation-shortcut > span {
+    display: none !important;
+  }
+
+  .ps-playback-command-group {
+    grid-template-columns: repeat(4, minmax(38px, auto)) !important;
+    gap: 5px !important;
+  }
+
+  .ps-playback-command-group .ps-command-button:not(.ps-play-pause),
+  .ps-utility-command-group .ps-command-button {
+    width: 38px !important;
+    min-width: 38px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+  }
+
+  .ps-playback-command-group .ps-play-pause {
+    width: 50px !important;
+    min-width: 50px !important;
+    height: 50px !important;
+    min-height: 50px !important;
+  }
+
+  .ps-utility-command-group {
+    grid-template-columns: repeat(3, 36px) !important;
+    gap: 4px !important;
+  }
+
+  .ps-utility-command-group .ps-command-button {
+    width: 36px !important;
+    min-width: 36px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+  }
+}
+
+/* R9 pronunciation UI placement ---------------------------------------------
+   Master feature control lives in PauseSpeak settings. The player-bar
+   pronunciation control is now a direct single-practice shortcut, while
+   continuous-session control stays inside the existing practice action row. */
+.ps-settings-pronunciation-toggle {
+  width: 100% !important;
+  min-height: 42px !important;
+  padding: 9px 10px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 9px !important;
+  color: rgba(237, 244, 246, 0.9) !important;
+  background: rgba(255, 255, 255, 0.045) !important;
+  border: 1px solid rgba(133, 194, 209, 0.12) !important;
+  border-radius: 11px !important;
+}
+
+.ps-settings-pronunciation-toggle svg {
+  width: 18px !important;
+  height: 18px !important;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 1.8 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  flex: 0 0 auto;
+}
+
+.ps-settings-pronunciation-toggle:hover,
+.ps-settings-pronunciation-toggle:focus-visible,
+.ps-settings-pronunciation-toggle[aria-pressed="true"] {
+  color: var(--ps-blue-strong) !important;
+  background: rgba(88, 199, 229, calc(var(--ps-ui-opacity) * 0.08)) !important;
+  border-color: rgba(88, 199, 229, 0.2) !important;
+  outline: none !important;
+}
+
+.ps-pronunciation-shortcut:disabled {
+  opacity: 0.42 !important;
+  cursor: default !important;
+}
+
+#pausespeak-status-panel .ps-pronunciation-practice-secondary {
+  background: rgba(49, 69, 78, calc(var(--ps-ui-opacity) * 0.48)) !important;
+  border-color: rgba(133, 194, 209, 0.14) !important;
+}
+
+#pausespeak-status-panel .ps-pronunciation-practice-secondary[aria-pressed="true"] {
+  color: var(--ps-blue-strong) !important;
+  background: rgba(88, 199, 229, calc(var(--ps-ui-opacity) * 0.08)) !important;
+  border-color: rgba(88, 199, 229, 0.2) !important;
+}
+
+/* R10 final control simplification -----------------------------------------
+   Turkish voice and Auto Pause keep their existing state/handlers but live
+   in the existing More menu. The main player bar keeps only frequent actions. */
+.ps-command-row {
+  grid-template-columns: minmax(116px, 0.72fr) minmax(430px, 2.15fr) minmax(92px, 0.48fr) !important;
+}
+
+.ps-utility-command-group {
+  grid-template-columns: minmax(84px, 112px) !important;
+  justify-content: end !important;
+  justify-self: end !important;
+  width: 100% !important;
+}
+
+.ps-more-toggle-option {
+  min-height: 48px !important;
+  padding: 10px 12px !important;
+  gap: 11px !important;
+}
+
+.ps-more-toggle-option svg {
+  width: 21px !important;
+  height: 21px !important;
+  flex: 0 0 21px !important;
+  color: rgba(224, 235, 238, 0.88) !important;
+  stroke: currentColor !important;
+}
+
+.ps-more-toggle-option > span {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ps-more-toggle-option[aria-pressed="true"] {
+  color: var(--ps-blue-strong) !important;
+  background-color: rgba(88, 199, 229, calc(var(--ps-ui-opacity) * 0.08)) !important;
+  border-color: rgba(88, 199, 229, 0.16) !important;
+}
+
+.ps-more-toggle-option[aria-pressed="true"] svg {
+  color: var(--ps-blue-strong) !important;
+}
+
+@media (max-width: 1100px) {
+  .ps-command-row {
+    grid-template-columns: minmax(100px, 0.62fr) minmax(360px, 1.9fr) minmax(70px, 0.42fr) !important;
+  }
+
+  .ps-utility-command-group {
+    grid-template-columns: minmax(60px, 84px) !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .ps-command-row {
+    grid-template-columns: minmax(82px, 1fr) minmax(48px, 0.42fr) !important;
+    grid-template-areas:
+      "pronunciation utility"
+      "playback playback" !important;
+  }
+
+  .ps-utility-command-group {
+    grid-template-columns: 42px !important;
+    justify-content: end !important;
+  }
+}
+
+@media (max-width: 520px) {
+  .ps-utility-command-group {
+    grid-template-columns: 36px !important;
+  }
+}
+
+/* R11 player alignment patch -----------------------------------------------
+   Keep the existing controls and handlers, but give Play/Pause a true center
+   axis. Frequent left/right actions live in equal outer tracks so neither
+   side can push the sentence-navigation group off center. */
+.ps-command-row {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) !important;
+  grid-template-areas: none !important;
+  gap: clamp(8px, 1vw, 14px) !important;
+  align-items: center !important;
+}
+
+.ps-pronunciation-dock {
+  grid-column: 1;
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(96px, 108px));
+  justify-content: end !important;
+  justify-self: stretch !important;
+  gap: clamp(5px, 0.65vw, 9px) !important;
+  min-width: 0 !important;
+}
+
+.ps-pronunciation-dock .ps-command-button {
+  width: 100% !important;
+  min-height: 68px !important;
+  height: 68px !important;
+  padding: 10px 7px !important;
+  gap: 7px !important;
+  font-size: 11.5px !important;
+  line-height: 1.2 !important;
+}
+
+.ps-playback-command-group {
+  grid-column: 2;
+  grid-template-columns: minmax(92px, 108px) 78px minmax(92px, 108px) !important;
+  justify-content: center !important;
+  justify-self: center !important;
+  gap: clamp(7px, 0.8vw, 11px) !important;
+}
+
+.ps-utility-command-group {
+  grid-column: 3;
+  grid-template-columns: minmax(92px, 108px) !important;
+  justify-content: start !important;
+  justify-self: stretch !important;
+  width: auto !important;
+  gap: 0 !important;
+}
+
+.ps-utility-command-group .ps-command-button {
+  min-height: 62px !important;
+  height: 62px !important;
+  padding: 8px 7px !important;
+  gap: 6px !important;
+  font-size: 11.5px !important;
+}
+
+@media (max-width: 1100px) {
+  .ps-pronunciation-dock {
+    grid-template-columns: repeat(2, minmax(82px, 94px));
+    gap: 4px !important;
+  }
+
+  .ps-pronunciation-dock .ps-command-button {
+    min-height: 60px !important;
+    height: 60px !important;
+    padding: 8px 5px !important;
+    gap: 5px !important;
+    font-size: 10px !important;
+  }
+
+  .ps-playback-command-group {
+    grid-template-columns: minmax(78px, 92px) 68px minmax(78px, 92px) !important;
+    gap: 4px !important;
+  }
+
+  .ps-utility-command-group {
+    grid-template-columns: minmax(78px, 92px) !important;
+  }
+
+  .ps-utility-command-group .ps-command-button {
+    min-height: 58px !important;
+    height: 58px !important;
+    padding: 7px 5px !important;
+    font-size: 10px !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .ps-command-row {
+    grid-template-columns: minmax(0, 1fr) 42px !important;
+    grid-template-areas:
+      "pronunciation utility"
+      "playback playback" !important;
+    gap: 6px 8px !important;
+  }
+
+  .ps-pronunciation-dock {
+    grid-area: pronunciation !important;
+    grid-column: auto;
+    grid-template-columns: repeat(2, 42px);
+    justify-content: start !important;
+    gap: 5px !important;
+  }
+
+  .ps-playback-command-group {
+    grid-area: playback !important;
+    grid-column: auto;
+    grid-template-columns: 42px 56px 42px !important;
+    justify-content: center !important;
+    gap: 7px !important;
+  }
+
+  .ps-utility-command-group {
+    grid-area: utility !important;
+    grid-column: auto;
+    grid-template-columns: 42px !important;
+    justify-content: end !important;
+    justify-self: end !important;
+  }
+
+  .ps-pronunciation-dock .ps-command-button,
+  .ps-utility-command-group .ps-command-button {
+    width: 42px !important;
+    min-width: 42px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 0 !important;
+  }
+
+  .ps-pronunciation-dock .ps-command-button span,
+  .ps-playback-command-group .ps-command-button span,
+  .ps-utility-command-group .ps-command-button span {
+    display: none !important;
+  }
+}
+
+@media (max-width: 520px) {
+  .ps-command-row {
+    grid-template-columns: minmax(0, 1fr) 36px !important;
+  }
+
+  .ps-pronunciation-dock {
+    grid-template-columns: repeat(2, 38px);
+    gap: 4px !important;
+  }
+
+  .ps-pronunciation-dock .ps-command-button {
+    width: 38px !important;
+    min-width: 38px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+  }
+
+  .ps-playback-command-group {
+    grid-template-columns: 38px 50px 38px !important;
+    gap: 5px !important;
+  }
+
+  .ps-utility-command-group {
+    grid-template-columns: 36px !important;
+  }
+
+  .ps-utility-command-group .ps-command-button {
+    width: 36px !important;
+    min-width: 36px !important;
+    height: 38px !important;
+    min-height: 38px !important;
   }
 }
